@@ -5,7 +5,7 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **23 of the 32 figures below come from that sitting.** The other 9 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `gzip-first-pass` (`055c8d27`), `gzip-resident` (`055c8d27`), `gzseek-backend` (`39744f33`), `gzseek-spacing` (`4691536e`), `inflate-throughput` (`d2cf15c4`), `long-line-resident` (`6dd4523c`), `parallel-scan-throughput` (`de2f6076`), `release-profile` (`ef442ad6`), `resumable-reader-micro` (`0fd33bd3`).
+**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **23 of the 32 figures below come from that sitting.** The other 9 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `gzip-first-pass` (`055c8d27`), `gzip-resident` (`055c8d27`), `gzseek-backend` (`39744f33`), `gzseek-spacing` (`4691536e`), `inflate-throughput` (`d2cf15c4`), `long-line-resident` (`93428ef7`), `parallel-scan-throughput` (`de2f6076`), `release-profile` (`ef442ad6`), `resumable-reader-micro` (`0fd33bd3`).
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -4268,211 +4268,270 @@ download adds to a task's charge are unmeasured.
 
 ## What a held line holds resident
 
-<!-- figure: long-line-resident — taken at `6dd4523c` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure long-line-resident` -->
+<!-- figure: long-line-resident — taken at `93428ef7` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure long-line-resident` -->
 
-| Lines | default parse, 1j | default parse, 4j | strict parse, 1j | strict parse, 4j | query, 1p | query, 4p |
-|---|---|---|---|---|---|---|
-| text, 32 MiB | **119.44 MiB** (119.14–119.45) | **185.14 MiB** (175.68–186.88) | **119.50 MiB** (119.07–119.61) | **189.10 MiB** (137.16–219.10) | **147.68 MiB** (147.12–149.64) | **316.06 MiB** (310.36–318.02) |
-| text, 128 MiB | **407.27 MiB** (407.11–407.37) | **429.14 MiB** (427.17–605.08) | **407.20 MiB** (406.93–407.32) | **427.29 MiB** (425.29–601.36) | **435.59 MiB** (435.25–435.59) | **1021.84 MiB** (1013.59–1080.14) |
-| text, 288 MiB | **827.38 MiB** (827.22–827.47) | **938.46 MiB** (876.59–941.36) | **827.00 MiB** (826.80–827.25) | **956.91 MiB** (939.00–1004.74) | **853.63 MiB** (852.90–854.85) | **3001.68 MiB** (2929.87–3002.14) |
-| text, 512 MiB | **1563.02 MiB** (1562.73–1563.04) | **1820.66 MiB** (1788.54–1852.80) | **1562.68 MiB** (1562.34–1563.99) | **1836.82 MiB** (1676.68–1868.69) | **1593.94 MiB** (1592.95–1602.66) | **4394.08 MiB** (4323.76–4397.80) |
-| text, 512 MiB, beside the bound | **1563.07 MiB** (1560.59–1563.07) | — | **1564.09 MiB** (1559.99–1564.52) | — | **1592.49 MiB** (1592.36–1593.07) | — |
-| text, the bound, 1,073,741,822 B | **3101.84 MiB** (3099.67–3105.33) | — | **3105.09 MiB** (3104.45–3106.99) | — | **3128.84 MiB** (3128.63–3130.22) | — |
-| escaped, 32 MiB | **131.11 MiB** (131.07–131.78) | **171.49 MiB** (171.17–201.41) | **131.46 MiB** (130.91–131.50) | **225.24 MiB** (197.38–225.56) | **185.24 MiB** (185.20–187.54) | **409.68 MiB** (406.00–433.94) |
-| escaped, 128 MiB | **455.04 MiB** (455.02–455.34) | **522.77 MiB** (489.28–570.95) | **454.98 MiB** (454.70–455.22) | **552.65 MiB** (552.51–556.89) | **515.41 MiB** (515.41–515.41) | **1659.39 MiB** (1478.13–1690.35) |
-| escaped, 288 MiB | **904.65 MiB** (904.40–904.82) | **974.44 MiB** (972.64–977.23) | **905.99 MiB** (905.70–906.12) | **934.72 MiB** (906.76–1002.61) | **965.23 MiB** (965.00–965.34) | **3560.78 MiB** (3276.85–3676.42) |
-| escaped, 512 MiB | **1674.58 MiB** (1674.24–1674.94) | **1728.05 MiB** (1676.44–1821.70) | **1675.11 MiB** (1674.74–1675.13) | **1626.83 MiB** (1625.63–1710.73) | **1704.12 MiB** (1703.62–1704.45) | **5422.70 MiB** (4669.30–5776.04) |
-| escaped, 512 MiB, beside the bound | **1674.72 MiB** (1668.58–1675.30) | — | **1674.71 MiB** (1674.62–1675.23) | — | **1704.16 MiB** (1703.24–1704.33) | — |
-| escaped, the bound, 1,073,741,822 B | **3105.27 MiB** (3104.36–3107.54) | — | **3105.31 MiB** (3101.86–3107.24) | — | **3513.83 MiB** (3395.17–3513.88) | — |
-| bytea, 32 MiB | **135.27 MiB** (135.21–135.40) | **231.37 MiB** (169.10–248.83) | **139.43 MiB** (137.42–139.50) | **201.36 MiB** (172.90–233.04) | **181.79 MiB** (181.09–182.99) | **466.05 MiB** (451.79–485.99) |
-| bytea, 128 MiB | **454.97 MiB** (454.62–456.72) | **491.71 MiB** (490.93–588.57) | **486.55 MiB** (486.50–487.05) | **552.54 MiB** (489.18–553.07) | **548.57 MiB** (547.62–548.57) | **1592.29 MiB** (1585.93–1677.63) |
-| bytea, 288 MiB | **906.03 MiB** (905.71–908.32) | **973.47 MiB** (938.92–986.71) | **937.31 MiB** (936.90–937.46) | **941.20 MiB** (938.66–972.38) | **982.29 MiB** (982.21–982.71) | **3498.84 MiB** (3332.66–3646.77) |
-| bytea, 512 MiB | **1674.69 MiB** (1674.49–1674.79) | **1665.02 MiB** (1660.47–1912.70) | **1866.82 MiB** (1866.25–1867.50) | **1919.74 MiB** (1892.14–2040.01) | **2103.84 MiB** (2103.39–2103.95) | **5708.08 MiB** (5144.84–5804.89) |
-| bytea, 512 MiB, beside the bound | **1675.20 MiB** (1669.61–1675.22) | — | **1866.49 MiB** (1851.06–1866.89) | — | **2104.98 MiB** (2104.09–2105.62) | — |
-| bytea, the bound, 1,073,741,822 B | **3105.36 MiB** (3104.14–3107.88) | — | **3101.53 MiB** (3101.13–3102.23) | — | **3234.50 MiB** (3233.85–3234.81) | — |
+| Lines | default parse, 1j | default parse, 4j | strict parse, 1j | strict parse, 4j | query, 1p | query, 4p | ordering filter, 1j |
+|---|---|---|---|---|---|---|---|
+| text, 32 MiB | **25.06 MiB** (24.99–25.29) | **29.07 MiB** (28.75–29.46) | **25.12 MiB** (24.88–25.47) | **31.24 MiB** (29.26–31.30) | **84.91 MiB** (84.72–84.93) | **195.54 MiB** (194.68–197.31) | — |
+| text, 128 MiB | **27.32 MiB** (27.21–27.50) | **31.50 MiB** (31.20–33.56) | **27.28 MiB** (27.02–27.45) | **33.06 MiB** (32.88–33.46) | **180.69 MiB** (180.59–181.04) | **580.21 MiB** (579.20–581.11) | — |
+| text, 288 MiB | **31.38 MiB** (30.72–32.64) | **32.53 MiB** (32.20–33.08) | **30.85 MiB** (30.74–31.07) | **32.77 MiB** (32.12–33.22) | **340.63 MiB** (340.46–340.91) | **1221.00 MiB** (1220.86–1221.18) | — |
+| text, 512 MiB | **32.45 MiB** (32.30–32.49) | **36.68 MiB** (36.27–36.87) | **32.56 MiB** (32.30–32.59) | **36.72 MiB** (36.65–38.46) | **566.56 MiB** (566.32–567.04) | **2117.90 MiB** (2115.68–2118.55) | — |
+| text, 512 MiB, beside the bound | **32.60 MiB** (32.44–34.96) | — | **32.40 MiB** (31.59–32.54) | — | **566.40 MiB** (566.26–566.55) | — | — |
+| text, the bound, 1,073,741,822 B | **42.19 MiB** (40.95–42.44) | — | **42.60 MiB** (42.39–44.40) | — | **1080.47 MiB** (1080.23–1080.59) | — | — |
+| escaped, 32 MiB | **25.36 MiB** (24.95–25.42) | **30.80 MiB** (30.71–31.40) | **25.25 MiB** (25.18–25.65) | **31.30 MiB** (31.25–31.39) | **110.62 MiB** (110.21–110.81) | **305.00 MiB** (304.79–306.93) | — |
+| escaped, 128 MiB | **26.66 MiB** (26.40–27.11) | **32.22 MiB** (31.77–32.83) | **26.57 MiB** (26.48–26.73) | **31.98 MiB** (31.44–34.33) | **292.17 MiB** (291.88–292.18) | **998.81 MiB** (996.61–1023.25) | — |
+| escaped, 288 MiB | **30.30 MiB** (30.28–30.41) | **33.00 MiB** (32.93–34.60) | **30.55 MiB** (30.16–30.66) | **33.52 MiB** (32.41–34.21) | **592.82 MiB** (592.66–593.16) | **2158.85 MiB** (2152.64–2222.45) | — |
+| escaped, 512 MiB | **32.37 MiB** (32.14–32.61) | **37.41 MiB** (36.22–37.76) | **32.30 MiB** (32.27–32.57) | **38.07 MiB** (35.96–40.58) | **1014.57 MiB** (1013.95–1014.59) | **3764.15 MiB** (3760.30–3849.71) | — |
+| escaped, 512 MiB, beside the bound | **32.31 MiB** (32.26–32.66) | — | **32.16 MiB** (31.98–32.31) | — | **1014.32 MiB** (1013.83–1014.44) | — | — |
+| escaped, the bound, 1,073,741,822 B | **41.03 MiB** (40.99–41.11) | — | **41.01 MiB** (40.38–41.08) | — | **1978.68 MiB** (1978.30–1978.96) | — | — |
+| bytea, 32 MiB | **25.39 MiB** (25.23–25.46) | **29.39 MiB** (29.37–31.12) | **24.95 MiB** (24.86–25.02) | **28.80 MiB** (28.80–31.13) | **98.43 MiB** (98.32–100.67) | **252.85 MiB** (250.45–255.05) | — |
+| bytea, 128 MiB | **26.88 MiB** (26.12–26.92) | **30.41 MiB** (30.34–32.96) | **26.87 MiB** (26.63–27.00) | **32.86 MiB** (32.12–33.54) | **246.52 MiB** (246.26–246.77) | **803.67 MiB** (784.91–814.32) | — |
+| bytea, 288 MiB | **30.07 MiB** (29.68–30.31) | **32.71 MiB** (31.64–34.27) | **30.57 MiB** (30.29–30.77) | **32.70 MiB** (31.64–35.04) | **486.55 MiB** (484.86–486.63) | **1721.23 MiB** (1711.57–1768.02) | — |
+| bytea, 512 MiB | **32.51 MiB** (32.49–32.56) | **37.11 MiB** (36.47–38.52) | **32.42 MiB** (32.00–32.59) | **37.84 MiB** (35.70–38.96) | **824.69 MiB** (822.84–824.82) | **3053.21 MiB** (3045.94–3087.15) | — |
+| bytea, 512 MiB, beside the bound | **32.49 MiB** (32.02–32.50) | — | **32.34 MiB** (31.99–32.75) | — | **822.71 MiB** (822.10–825.00) | — | — |
+| bytea, the bound, 1,073,741,822 B | **41.26 MiB** (40.59–41.31) | — | **40.83 MiB** (40.54–41.08) | — | **1592.70 MiB** (1592.26–1594.24) | — | — |
+| int8array, 32 MiB | — | — | — | — | **478.49 MiB** (476.79–478.76) | — | — |
+| int8array, 128 MiB | — | — | — | — | **1729.47 MiB** (1723.66–1729.74) | — | — |
+| int8array, 288 MiB | — | — | — | — | **2531.40 MiB** (2528.84–3037.31) | — | — |
+| int8array, 512 MiB | — | — | — | — | **4672.73 MiB** (4671.52–4672.92) | — | — |
+| int8array, 512 MiB, beside the bound | — | — | — | — | **4677.13 MiB** (4677.11–5694.45) | — | — |
+| int8array, the bound, 1,073,741,822 B | — | — | — | — | **9285.00 MiB** (9282.79–9285.01) | — | — |
+| textarray, 32 MiB | — | — | — | — | **864.90 MiB** (864.47–864.93) | — | — |
+| textarray, 128 MiB | — | — | — | — | **2754.55 MiB** (2242.59–2754.62) | — | — |
+| textarray, 288 MiB | — | — | — | — | **5476.43 MiB** (5476.04–5478.26) | — | — |
+| textarray, 512 MiB | — | — | — | — | **8772.15 MiB** (8771.66–8772.30) | — | — |
+| jsonb, 32 MiB | — | — | — | — | — | — | **84.25 MiB** (84.00–84.44) |
+| jsonb, 128 MiB | — | — | — | — | — | — | **258.36 MiB** (258.22–258.43) |
+| jsonb, 288 MiB | — | — | — | — | — | — | **548.46 MiB** (548.21–550.73) |
+| jsonb, 512 MiB | — | — | — | — | — | — | **950.31 MiB** (950.23–950.45) |
+| jsonb, 512 MiB, beside the bound | — | — | — | — | — | — | **950.41 MiB** (949.69–950.45) |
+| jsonb, the bound, 1,073,741,822 B | — | — | — | — | — | — | **1873.20 MiB** (1873.00–1873.21) |
 
-Each cell is peak resident set; a length at the bound is read at one worker or partition alone. Every input is one table of 8 short rows, a cluster of 4 consecutive rows each a line of the length its row names, terminator included, and 8 short rows (`generate_long_lines.py`): `text` decodes to itself, `escaped` to seven bytes in eight, `bytea` to half. Every leg states `--memory 6845104128`, `parallel-peak-rss`'s allowance and four lines held at twice their 512 MiB, and I71's bound as its line limit, `1073741822`, in a 16g container — an apparatus departure from the register's 512 MB, which one held line outgrows. A parse states `--statistics-level data --row-group-size 1048576`, and the strict one `--postgres-invalid-values strict` beside it. The query is `pgdt sql`'s `SELECT count(v) FROM bench.public.long_lines WHERE id IS NOT NULL` at the column's count of partitions, over a cache an untimed `parse` wrote in the same container, its answer held to the input's rows. Each kind is two sweeps: the lengths read at both counts, and the bound beside the 512 MiB input again, its row marked so.
+Each cell is peak resident set; a length at the bound is read at one worker or partition alone, and a term's kind at one alone, `textarray` along the ladder alone. Every input is one table of 8 short rows, a cluster of 4 consecutive rows each a line of the length its row names, terminator included, and 8 short rows (`generate_long_lines.py`): `text` decodes to itself, `escaped` to seven bytes in eight, `bytea` to half; `int8array` is a `bigint[]` of single digits, `textarray` a `text[]` of one-letter elements and `jsonb` an object of empty keys, each the densest text its term is held for. Every timed leg states `--memory 8489271296`, `parallel-peak-rss`'s allowance and the widest leg's lines held at once at their charge — a parse's its line, a query's or filter's its line and its kind's planned factor — and I71's bound as its line limit, `1073741822`, in a 15g container — an apparatus departure from the register's 512 MB, which one held line outgrows. A parse states `--statistics-level data --row-group-size 1048576`, and the strict one `--postgres-invalid-values strict` beside it. The query is `pgdt sql`'s `SELECT count(v) FROM bench.public.long_lines WHERE id IS NOT NULL` at the column's count of partitions, and the ordering filter `pgdt query`'s `--filter 'v>{}'` projecting `id`, each over a cache an untimed `parse` wrote in the same container, its answer held to the input's rows. Each kind is two sweeps but `textarray`, one: the lengths read at each count, and the bound beside the 512 MiB input again, its row marked so.
 
-Inputs: `long_text_32` 128.0 MB, `long_text_128` 512.0 MB, `long_text_288` 1.13 GiB, `long_text_512` 2.00 GiB, `long_text_bound` 4.00 GiB, `long_escaped_32` 128.0 MB, `long_escaped_128` 512.0 MB, `long_escaped_288` 1.13 GiB, `long_escaped_512` 2.00 GiB, `long_escaped_bound` 4.00 GiB, `long_bytea_32` 128.0 MB, `long_bytea_128` 512.0 MB, `long_bytea_288` 1.13 GiB, `long_bytea_512` 2.00 GiB, `long_bytea_bound` 4.00 GiB.
+**Each planned factor**, read off its plan by the introspection build over the 32 MiB input, in its kind's first sweep ahead of every timed leg: `text` 1, `escaped` 1, `bytea` 1, `int8array` 65/16, `textarray` 161/16, `jsonb` 4/5.
 
-**Each pass's secant**: the resident a line byte added between the 128 MiB and 512 MiB rows, then what it misses each other length's median by, measured less predicted — the bound's from the 512 MiB row of its own sweep. At four workers or partitions it sums every line held at once.
+Inputs: `long_text_32` 128.0 MB, `long_text_128` 512.0 MB, `long_text_288` 1.13 GiB, `long_text_512` 2.00 GiB, `long_text_bound` 4.00 GiB, `long_escaped_32` 128.0 MB, `long_escaped_128` 512.0 MB, `long_escaped_288` 1.13 GiB, `long_escaped_512` 2.00 GiB, `long_escaped_bound` 4.00 GiB, `long_bytea_32` 128.0 MB, `long_bytea_128` 512.0 MB, `long_bytea_288` 1.13 GiB, `long_bytea_512` 2.00 GiB, `long_bytea_bound` 4.00 GiB, `long_int8array_32` 128.0 MB, `long_int8array_128` 512.0 MB, `long_int8array_288` 1.13 GiB, `long_int8array_512` 2.00 GiB, `long_int8array_bound` 4.00 GiB, `long_textarray_32` 128.0 MB, `long_textarray_128` 512.0 MB, `long_textarray_288` 1.13 GiB, `long_textarray_512` 2.00 GiB, `long_jsonb_32` 128.0 MB, `long_jsonb_128` 512.0 MB, `long_jsonb_288` 1.13 GiB, `long_jsonb_512` 2.00 GiB, `long_jsonb_bound` 4.00 GiB.
 
-| Kind | default parse, 1j | default parse, 4j | strict parse, 1j | strict parse, 4j | query, 1p | query, 4p |
-|---|---|---|---|---|---|---|
-| text | **×3.01** · 32: +1.11 MiB · 288: -61.45 MiB · bound: -2.24 MiB | **×3.62** · 32: +103.89 MiB · 288: -70.47 MiB | **×3.01** · 32: +1.17 MiB · 288: -61.65 MiB · bound: +365 KiB | **×3.67** · 32: +114.20 MiB · 288: -57.68 MiB | **×3.02** · 32: +1.68 MiB · 288: -64.60 MiB · bound: -8.12 MiB | **×8.78** · 32: +137.28 MiB · 288: +574.74 MiB |
-| escaped | **×3.18** · 32: -19.05 MiB · 288: -58.53 MiB · bound: -195.50 MiB | **×3.14** · 32: -49.95 MiB · 288: -50.52 MiB | **×3.18** · 32: -18.48 MiB · 288: -57.37 MiB · bound: -196.25 MiB | **×2.80** · 32: -58.87 MiB · 288: -65.51 MiB | **×3.10** · 32: -33.00 MiB · 288: -45.47 MiB · bound: +224.73 MiB | **×9.80** · 32: -308.88 MiB · 288: +333.34 MiB |
-| bytea | **×3.18** · 32: -14.77 MiB · 288: -57.16 MiB · bound: -196.13 MiB | **×3.06** · 32: +32.98 MiB · 288: -7.12 MiB | **×3.59** · 32: -2.06 MiB · 288: -124.36 MiB · bound: -605.31 MiB | **×3.56** · 32: -9.38 MiB · 288: -181.01 MiB | **×4.05** · 32: +22.04 MiB · 288: -214.30 MiB · bound: -944.18 MiB | **×10.72** · 32: -97.29 MiB · 288: +191.64 MiB |
+**Each pass's secant**: the resident a line byte added between the 128 MiB and 512 MiB rows, beside a query's or filter's one plus its planned factor, then what it misses each other length's median by, measured less predicted — the bound's from the 512 MiB row of its own sweep. At four workers or partitions it sums every line held at once.
+
+| Kind | default parse, 1j | default parse, 4j | strict parse, 1j | strict parse, 4j | query, 1p | query, 4p | ordering filter, 1j |
+|---|---|---|---|---|---|---|---|
+| text | **×0.01** · 32: -993 KiB · 288: +1.92 MiB · bound: +2.74 MiB | **×0.01** · 32: -1.14 MiB · 288: -1.13 MiB | **×0.01** · 32: -861 KiB · 288: +1.37 MiB · bound: +3.17 MiB | **×0.01** · 32: -932 KiB · 288: -1.82 MiB | **×1.00** (planned ×2.00, one and 1) · 32: +711 KiB · 288: -858 KiB · bound: -439 KiB | **×4.00** (planned ×2.00, one and 1) · 32: -256 KiB · 288: +88 KiB | — |
+| escaped | **×0.01** · 32: +125 KiB · 288: +1.26 MiB · bound: +1.11 MiB | **×0.01** · 32: -131 KiB · 288: -1.39 MiB | **×0.01** · 32: +115 KiB · 288: +1.58 MiB · bound: +1.21 MiB | **×0.02** · 32: +871 KiB · 288: -1014 KiB | **×1.88** (planned ×2.00, one and 1) · 32: -969 KiB · 288: -357 KiB · bound: +1.16 MiB | **×7.20** (planned ×2.00, one and 1) · 32: -2.47 MiB · 288: +7.81 MiB | — |
+| bytea | **×0.01** · 32: -81 KiB · 288: +867 KiB · bound: +1.25 MiB | **×0.02** · 32: +663 KiB · 288: -502 KiB | **×0.01** · 32: -548 KiB · 288: +1.38 MiB · bound: +1.10 MiB | **×0.01** · 32: -2.81 MiB · 288: -2.23 MiB | **×1.51** (planned ×2.00, one and 1) · 32: -3.55 MiB · 288: -892 KiB · bound: -939 KiB | **×5.86** (planned ×2.00, one and 1) · 32: +11.57 MiB · 288: -19.75 MiB | — |
+| int8array | — | — | — | — | **×7.66** (planned ×5.06, one and 65/16) · 32: -515.17 MiB · 288: -424.43 MiB · bound: +683.53 MiB | — | — |
+| textarray | — | — | — | — | **×15.67** (planned ×11.06, one and 161/16) · 32: -385.25 MiB · 288: +214.54 MiB | — | — |
+| jsonb | — | — | — | — | — | — | **×1.80** (planned ×1.80, one and 4/5) · 32: -1.12 MiB · 288: +1.79 MiB · bound: +185 KiB |
 
 Per-rep readings (peak RSS):
-- text, 32 MiB lines, default parse, 1j: 119.44 MiB, 119.14 MiB, 119.45 MiB
-- text, 32 MiB lines, default parse, 4j: 175.68 MiB, 186.88 MiB, 185.14 MiB
-- text, 32 MiB lines, strict parse, 1j: 119.07 MiB, 119.61 MiB, 119.50 MiB
-- text, 32 MiB lines, strict parse, 4j: 137.16 MiB, 189.10 MiB, 219.10 MiB
-- text, 32 MiB lines, query, 1p: 147.68 MiB, 149.64 MiB, 147.12 MiB
-- text, 32 MiB lines, query, 4p: 318.02 MiB, 316.06 MiB, 310.36 MiB
-- text, 128 MiB lines, default parse, 1j: 407.27 MiB, 407.11 MiB, 407.37 MiB
-- text, 128 MiB lines, default parse, 4j: 429.14 MiB, 605.08 MiB, 427.17 MiB
-- text, 128 MiB lines, strict parse, 1j: 407.32 MiB, 406.93 MiB, 407.20 MiB
-- text, 128 MiB lines, strict parse, 4j: 427.29 MiB, 425.29 MiB, 601.36 MiB
-- text, 128 MiB lines, query, 1p: 435.59 MiB, 435.59 MiB, 435.25 MiB
-- text, 128 MiB lines, query, 4p: 1013.59 MiB, 1080.14 MiB, 1021.84 MiB
-- text, 288 MiB lines, default parse, 1j: 827.47 MiB, 827.38 MiB, 827.22 MiB
-- text, 288 MiB lines, default parse, 4j: 876.59 MiB, 941.36 MiB, 938.46 MiB
-- text, 288 MiB lines, strict parse, 1j: 827.25 MiB, 827.00 MiB, 826.80 MiB
-- text, 288 MiB lines, strict parse, 4j: 1004.74 MiB, 939.00 MiB, 956.91 MiB
-- text, 288 MiB lines, query, 1p: 853.63 MiB, 852.90 MiB, 854.85 MiB
-- text, 288 MiB lines, query, 4p: 3001.68 MiB, 3002.14 MiB, 2929.87 MiB
-- text, 512 MiB lines, default parse, 1j: 1562.73 MiB, 1563.04 MiB, 1563.02 MiB
-- text, 512 MiB lines, default parse, 4j: 1852.80 MiB, 1788.54 MiB, 1820.66 MiB
-- text, 512 MiB lines, strict parse, 1j: 1562.68 MiB, 1563.99 MiB, 1562.34 MiB
-- text, 512 MiB lines, strict parse, 4j: 1836.82 MiB, 1868.69 MiB, 1676.68 MiB
-- text, 512 MiB lines, query, 1p: 1592.95 MiB, 1602.66 MiB, 1593.94 MiB
-- text, 512 MiB lines, query, 4p: 4394.08 MiB, 4397.80 MiB, 4323.76 MiB
-- text, 512 MiB lines beside the bound, default parse, 1j: 1560.59 MiB, 1563.07 MiB, 1563.07 MiB
-- text, 512 MiB lines beside the bound, strict parse, 1j: 1559.99 MiB, 1564.09 MiB, 1564.52 MiB
-- text, 512 MiB lines beside the bound, query, 1p: 1593.07 MiB, 1592.49 MiB, 1592.36 MiB
-- text, lines at the bound, default parse, 1j: 3099.67 MiB, 3105.33 MiB, 3101.84 MiB
-- text, lines at the bound, strict parse, 1j: 3106.99 MiB, 3104.45 MiB, 3105.09 MiB
-- text, lines at the bound, query, 1p: 3128.63 MiB, 3128.84 MiB, 3130.22 MiB
-- escaped, 32 MiB lines, default parse, 1j: 131.11 MiB, 131.78 MiB, 131.07 MiB
-- escaped, 32 MiB lines, default parse, 4j: 171.17 MiB, 201.41 MiB, 171.49 MiB
-- escaped, 32 MiB lines, strict parse, 1j: 130.91 MiB, 131.50 MiB, 131.46 MiB
-- escaped, 32 MiB lines, strict parse, 4j: 197.38 MiB, 225.24 MiB, 225.56 MiB
-- escaped, 32 MiB lines, query, 1p: 185.24 MiB, 185.20 MiB, 187.54 MiB
-- escaped, 32 MiB lines, query, 4p: 433.94 MiB, 409.68 MiB, 406.00 MiB
-- escaped, 128 MiB lines, default parse, 1j: 455.02 MiB, 455.04 MiB, 455.34 MiB
-- escaped, 128 MiB lines, default parse, 4j: 489.28 MiB, 570.95 MiB, 522.77 MiB
-- escaped, 128 MiB lines, strict parse, 1j: 455.22 MiB, 454.70 MiB, 454.98 MiB
-- escaped, 128 MiB lines, strict parse, 4j: 552.65 MiB, 552.51 MiB, 556.89 MiB
-- escaped, 128 MiB lines, query, 1p: 515.41 MiB, 515.41 MiB, 515.41 MiB
-- escaped, 128 MiB lines, query, 4p: 1659.39 MiB, 1690.35 MiB, 1478.13 MiB
-- escaped, 288 MiB lines, default parse, 1j: 904.40 MiB, 904.82 MiB, 904.65 MiB
-- escaped, 288 MiB lines, default parse, 4j: 972.64 MiB, 974.44 MiB, 977.23 MiB
-- escaped, 288 MiB lines, strict parse, 1j: 905.99 MiB, 906.12 MiB, 905.70 MiB
-- escaped, 288 MiB lines, strict parse, 4j: 1002.61 MiB, 906.76 MiB, 934.72 MiB
-- escaped, 288 MiB lines, query, 1p: 965.23 MiB, 965.34 MiB, 965.00 MiB
-- escaped, 288 MiB lines, query, 4p: 3276.85 MiB, 3560.78 MiB, 3676.42 MiB
-- escaped, 512 MiB lines, default parse, 1j: 1674.24 MiB, 1674.58 MiB, 1674.94 MiB
-- escaped, 512 MiB lines, default parse, 4j: 1821.70 MiB, 1676.44 MiB, 1728.05 MiB
-- escaped, 512 MiB lines, strict parse, 1j: 1674.74 MiB, 1675.11 MiB, 1675.13 MiB
-- escaped, 512 MiB lines, strict parse, 4j: 1710.73 MiB, 1626.83 MiB, 1625.63 MiB
-- escaped, 512 MiB lines, query, 1p: 1704.12 MiB, 1704.45 MiB, 1703.62 MiB
-- escaped, 512 MiB lines, query, 4p: 5776.04 MiB, 5422.70 MiB, 4669.30 MiB
-- escaped, 512 MiB lines beside the bound, default parse, 1j: 1668.58 MiB, 1675.30 MiB, 1674.72 MiB
-- escaped, 512 MiB lines beside the bound, strict parse, 1j: 1674.71 MiB, 1674.62 MiB, 1675.23 MiB
-- escaped, 512 MiB lines beside the bound, query, 1p: 1704.16 MiB, 1703.24 MiB, 1704.33 MiB
-- escaped, lines at the bound, default parse, 1j: 3104.36 MiB, 3105.27 MiB, 3107.54 MiB
-- escaped, lines at the bound, strict parse, 1j: 3101.86 MiB, 3105.31 MiB, 3107.24 MiB
-- escaped, lines at the bound, query, 1p: 3395.17 MiB, 3513.88 MiB, 3513.83 MiB
-- bytea, 32 MiB lines, default parse, 1j: 135.27 MiB, 135.40 MiB, 135.21 MiB
-- bytea, 32 MiB lines, default parse, 4j: 248.83 MiB, 231.37 MiB, 169.10 MiB
-- bytea, 32 MiB lines, strict parse, 1j: 139.50 MiB, 137.42 MiB, 139.43 MiB
-- bytea, 32 MiB lines, strict parse, 4j: 201.36 MiB, 172.90 MiB, 233.04 MiB
-- bytea, 32 MiB lines, query, 1p: 181.09 MiB, 181.79 MiB, 182.99 MiB
-- bytea, 32 MiB lines, query, 4p: 485.99 MiB, 466.05 MiB, 451.79 MiB
-- bytea, 128 MiB lines, default parse, 1j: 456.72 MiB, 454.97 MiB, 454.62 MiB
-- bytea, 128 MiB lines, default parse, 4j: 490.93 MiB, 588.57 MiB, 491.71 MiB
-- bytea, 128 MiB lines, strict parse, 1j: 486.50 MiB, 487.05 MiB, 486.55 MiB
-- bytea, 128 MiB lines, strict parse, 4j: 489.18 MiB, 553.07 MiB, 552.54 MiB
-- bytea, 128 MiB lines, query, 1p: 547.62 MiB, 548.57 MiB, 548.57 MiB
-- bytea, 128 MiB lines, query, 4p: 1677.63 MiB, 1585.93 MiB, 1592.29 MiB
-- bytea, 288 MiB lines, default parse, 1j: 906.03 MiB, 908.32 MiB, 905.71 MiB
-- bytea, 288 MiB lines, default parse, 4j: 973.47 MiB, 938.92 MiB, 986.71 MiB
-- bytea, 288 MiB lines, strict parse, 1j: 937.31 MiB, 937.46 MiB, 936.90 MiB
-- bytea, 288 MiB lines, strict parse, 4j: 938.66 MiB, 941.20 MiB, 972.38 MiB
-- bytea, 288 MiB lines, query, 1p: 982.29 MiB, 982.21 MiB, 982.71 MiB
-- bytea, 288 MiB lines, query, 4p: 3332.66 MiB, 3646.77 MiB, 3498.84 MiB
-- bytea, 512 MiB lines, default parse, 1j: 1674.49 MiB, 1674.79 MiB, 1674.69 MiB
-- bytea, 512 MiB lines, default parse, 4j: 1665.02 MiB, 1912.70 MiB, 1660.47 MiB
-- bytea, 512 MiB lines, strict parse, 1j: 1867.50 MiB, 1866.82 MiB, 1866.25 MiB
-- bytea, 512 MiB lines, strict parse, 4j: 1892.14 MiB, 1919.74 MiB, 2040.01 MiB
-- bytea, 512 MiB lines, query, 1p: 2103.84 MiB, 2103.95 MiB, 2103.39 MiB
-- bytea, 512 MiB lines, query, 4p: 5708.08 MiB, 5804.89 MiB, 5144.84 MiB
-- bytea, 512 MiB lines beside the bound, default parse, 1j: 1669.61 MiB, 1675.22 MiB, 1675.20 MiB
-- bytea, 512 MiB lines beside the bound, strict parse, 1j: 1851.06 MiB, 1866.49 MiB, 1866.89 MiB
-- bytea, 512 MiB lines beside the bound, query, 1p: 2104.98 MiB, 2105.62 MiB, 2104.09 MiB
-- bytea, lines at the bound, default parse, 1j: 3104.14 MiB, 3105.36 MiB, 3107.88 MiB
-- bytea, lines at the bound, strict parse, 1j: 3101.13 MiB, 3102.23 MiB, 3101.53 MiB
-- bytea, lines at the bound, query, 1p: 3233.85 MiB, 3234.81 MiB, 3234.50 MiB
+- text, 32 MiB lines, default parse, 1j: 25.06 MiB, 25.29 MiB, 24.99 MiB
+- text, 32 MiB lines, default parse, 4j: 29.46 MiB, 28.75 MiB, 29.07 MiB
+- text, 32 MiB lines, strict parse, 1j: 25.12 MiB, 24.88 MiB, 25.47 MiB
+- text, 32 MiB lines, strict parse, 4j: 29.26 MiB, 31.24 MiB, 31.30 MiB
+- text, 32 MiB lines, query, 1p: 84.93 MiB, 84.72 MiB, 84.91 MiB
+- text, 32 MiB lines, query, 4p: 197.31 MiB, 195.54 MiB, 194.68 MiB
+- text, 128 MiB lines, default parse, 1j: 27.32 MiB, 27.50 MiB, 27.21 MiB
+- text, 128 MiB lines, default parse, 4j: 31.50 MiB, 31.20 MiB, 33.56 MiB
+- text, 128 MiB lines, strict parse, 1j: 27.02 MiB, 27.45 MiB, 27.28 MiB
+- text, 128 MiB lines, strict parse, 4j: 33.46 MiB, 33.06 MiB, 32.88 MiB
+- text, 128 MiB lines, query, 1p: 180.69 MiB, 181.04 MiB, 180.59 MiB
+- text, 128 MiB lines, query, 4p: 581.11 MiB, 580.21 MiB, 579.20 MiB
+- text, 288 MiB lines, default parse, 1j: 30.72 MiB, 31.38 MiB, 32.64 MiB
+- text, 288 MiB lines, default parse, 4j: 32.20 MiB, 33.08 MiB, 32.53 MiB
+- text, 288 MiB lines, strict parse, 1j: 30.85 MiB, 30.74 MiB, 31.07 MiB
+- text, 288 MiB lines, strict parse, 4j: 33.22 MiB, 32.12 MiB, 32.77 MiB
+- text, 288 MiB lines, query, 1p: 340.91 MiB, 340.46 MiB, 340.63 MiB
+- text, 288 MiB lines, query, 4p: 1221.00 MiB, 1220.86 MiB, 1221.18 MiB
+- text, 512 MiB lines, default parse, 1j: 32.49 MiB, 32.45 MiB, 32.30 MiB
+- text, 512 MiB lines, default parse, 4j: 36.27 MiB, 36.68 MiB, 36.87 MiB
+- text, 512 MiB lines, strict parse, 1j: 32.59 MiB, 32.56 MiB, 32.30 MiB
+- text, 512 MiB lines, strict parse, 4j: 36.65 MiB, 36.72 MiB, 38.46 MiB
+- text, 512 MiB lines, query, 1p: 566.56 MiB, 566.32 MiB, 567.04 MiB
+- text, 512 MiB lines, query, 4p: 2118.55 MiB, 2115.68 MiB, 2117.90 MiB
+- text, 512 MiB lines beside the bound, default parse, 1j: 34.96 MiB, 32.60 MiB, 32.44 MiB
+- text, 512 MiB lines beside the bound, strict parse, 1j: 32.40 MiB, 32.54 MiB, 31.59 MiB
+- text, 512 MiB lines beside the bound, query, 1p: 566.40 MiB, 566.55 MiB, 566.26 MiB
+- text, lines at the bound, default parse, 1j: 40.95 MiB, 42.19 MiB, 42.44 MiB
+- text, lines at the bound, strict parse, 1j: 42.60 MiB, 42.39 MiB, 44.40 MiB
+- text, lines at the bound, query, 1p: 1080.47 MiB, 1080.23 MiB, 1080.59 MiB
+- escaped, 32 MiB lines, default parse, 1j: 24.95 MiB, 25.36 MiB, 25.42 MiB
+- escaped, 32 MiB lines, default parse, 4j: 30.71 MiB, 31.40 MiB, 30.80 MiB
+- escaped, 32 MiB lines, strict parse, 1j: 25.18 MiB, 25.25 MiB, 25.65 MiB
+- escaped, 32 MiB lines, strict parse, 4j: 31.25 MiB, 31.39 MiB, 31.30 MiB
+- escaped, 32 MiB lines, query, 1p: 110.81 MiB, 110.21 MiB, 110.62 MiB
+- escaped, 32 MiB lines, query, 4p: 305.00 MiB, 304.79 MiB, 306.93 MiB
+- escaped, 128 MiB lines, default parse, 1j: 26.66 MiB, 27.11 MiB, 26.40 MiB
+- escaped, 128 MiB lines, default parse, 4j: 32.83 MiB, 31.77 MiB, 32.22 MiB
+- escaped, 128 MiB lines, strict parse, 1j: 26.48 MiB, 26.57 MiB, 26.73 MiB
+- escaped, 128 MiB lines, strict parse, 4j: 31.44 MiB, 31.98 MiB, 34.33 MiB
+- escaped, 128 MiB lines, query, 1p: 291.88 MiB, 292.18 MiB, 292.17 MiB
+- escaped, 128 MiB lines, query, 4p: 998.81 MiB, 996.61 MiB, 1023.25 MiB
+- escaped, 288 MiB lines, default parse, 1j: 30.41 MiB, 30.28 MiB, 30.30 MiB
+- escaped, 288 MiB lines, default parse, 4j: 34.60 MiB, 32.93 MiB, 33.00 MiB
+- escaped, 288 MiB lines, strict parse, 1j: 30.66 MiB, 30.16 MiB, 30.55 MiB
+- escaped, 288 MiB lines, strict parse, 4j: 33.52 MiB, 32.41 MiB, 34.21 MiB
+- escaped, 288 MiB lines, query, 1p: 592.82 MiB, 593.16 MiB, 592.66 MiB
+- escaped, 288 MiB lines, query, 4p: 2152.64 MiB, 2222.45 MiB, 2158.85 MiB
+- escaped, 512 MiB lines, default parse, 1j: 32.61 MiB, 32.37 MiB, 32.14 MiB
+- escaped, 512 MiB lines, default parse, 4j: 36.22 MiB, 37.41 MiB, 37.76 MiB
+- escaped, 512 MiB lines, strict parse, 1j: 32.30 MiB, 32.57 MiB, 32.27 MiB
+- escaped, 512 MiB lines, strict parse, 4j: 40.58 MiB, 38.07 MiB, 35.96 MiB
+- escaped, 512 MiB lines, query, 1p: 1014.57 MiB, 1014.59 MiB, 1013.95 MiB
+- escaped, 512 MiB lines, query, 4p: 3760.30 MiB, 3764.15 MiB, 3849.71 MiB
+- escaped, 512 MiB lines beside the bound, default parse, 1j: 32.66 MiB, 32.26 MiB, 32.31 MiB
+- escaped, 512 MiB lines beside the bound, strict parse, 1j: 31.98 MiB, 32.16 MiB, 32.31 MiB
+- escaped, 512 MiB lines beside the bound, query, 1p: 1014.44 MiB, 1014.32 MiB, 1013.83 MiB
+- escaped, lines at the bound, default parse, 1j: 40.99 MiB, 41.03 MiB, 41.11 MiB
+- escaped, lines at the bound, strict parse, 1j: 40.38 MiB, 41.08 MiB, 41.01 MiB
+- escaped, lines at the bound, query, 1p: 1978.30 MiB, 1978.68 MiB, 1978.96 MiB
+- bytea, 32 MiB lines, default parse, 1j: 25.23 MiB, 25.39 MiB, 25.46 MiB
+- bytea, 32 MiB lines, default parse, 4j: 31.12 MiB, 29.39 MiB, 29.37 MiB
+- bytea, 32 MiB lines, strict parse, 1j: 25.02 MiB, 24.86 MiB, 24.95 MiB
+- bytea, 32 MiB lines, strict parse, 4j: 28.80 MiB, 31.13 MiB, 28.80 MiB
+- bytea, 32 MiB lines, query, 1p: 98.32 MiB, 98.43 MiB, 100.67 MiB
+- bytea, 32 MiB lines, query, 4p: 250.45 MiB, 252.85 MiB, 255.05 MiB
+- bytea, 128 MiB lines, default parse, 1j: 26.88 MiB, 26.12 MiB, 26.92 MiB
+- bytea, 128 MiB lines, default parse, 4j: 30.34 MiB, 30.41 MiB, 32.96 MiB
+- bytea, 128 MiB lines, strict parse, 1j: 27.00 MiB, 26.63 MiB, 26.87 MiB
+- bytea, 128 MiB lines, strict parse, 4j: 32.12 MiB, 33.54 MiB, 32.86 MiB
+- bytea, 128 MiB lines, query, 1p: 246.77 MiB, 246.52 MiB, 246.26 MiB
+- bytea, 128 MiB lines, query, 4p: 803.67 MiB, 814.32 MiB, 784.91 MiB
+- bytea, 288 MiB lines, default parse, 1j: 30.07 MiB, 30.31 MiB, 29.68 MiB
+- bytea, 288 MiB lines, default parse, 4j: 31.64 MiB, 34.27 MiB, 32.71 MiB
+- bytea, 288 MiB lines, strict parse, 1j: 30.57 MiB, 30.29 MiB, 30.77 MiB
+- bytea, 288 MiB lines, strict parse, 4j: 31.64 MiB, 32.70 MiB, 35.04 MiB
+- bytea, 288 MiB lines, query, 1p: 484.86 MiB, 486.63 MiB, 486.55 MiB
+- bytea, 288 MiB lines, query, 4p: 1721.23 MiB, 1711.57 MiB, 1768.02 MiB
+- bytea, 512 MiB lines, default parse, 1j: 32.56 MiB, 32.51 MiB, 32.49 MiB
+- bytea, 512 MiB lines, default parse, 4j: 38.52 MiB, 36.47 MiB, 37.11 MiB
+- bytea, 512 MiB lines, strict parse, 1j: 32.42 MiB, 32.00 MiB, 32.59 MiB
+- bytea, 512 MiB lines, strict parse, 4j: 37.84 MiB, 35.70 MiB, 38.96 MiB
+- bytea, 512 MiB lines, query, 1p: 822.84 MiB, 824.69 MiB, 824.82 MiB
+- bytea, 512 MiB lines, query, 4p: 3053.21 MiB, 3087.15 MiB, 3045.94 MiB
+- bytea, 512 MiB lines beside the bound, default parse, 1j: 32.50 MiB, 32.49 MiB, 32.02 MiB
+- bytea, 512 MiB lines beside the bound, strict parse, 1j: 32.75 MiB, 31.99 MiB, 32.34 MiB
+- bytea, 512 MiB lines beside the bound, query, 1p: 822.10 MiB, 822.71 MiB, 825.00 MiB
+- bytea, lines at the bound, default parse, 1j: 41.31 MiB, 40.59 MiB, 41.26 MiB
+- bytea, lines at the bound, strict parse, 1j: 40.54 MiB, 40.83 MiB, 41.08 MiB
+- bytea, lines at the bound, query, 1p: 1594.24 MiB, 1592.26 MiB, 1592.70 MiB
+- int8array, 32 MiB lines, query, 1p: 476.79 MiB, 478.49 MiB, 478.76 MiB
+- int8array, 128 MiB lines, query, 1p: 1723.66 MiB, 1729.47 MiB, 1729.74 MiB
+- int8array, 288 MiB lines, query, 1p: 3037.31 MiB, 2528.84 MiB, 2531.40 MiB
+- int8array, 512 MiB lines, query, 1p: 4671.52 MiB, 4672.92 MiB, 4672.73 MiB
+- int8array, 512 MiB lines beside the bound, query, 1p: 5694.45 MiB, 4677.13 MiB, 4677.11 MiB
+- int8array, lines at the bound, query, 1p: 9282.79 MiB, 9285.00 MiB, 9285.01 MiB
+- textarray, 32 MiB lines, query, 1p: 864.90 MiB, 864.47 MiB, 864.93 MiB
+- textarray, 128 MiB lines, query, 1p: 2754.62 MiB, 2242.59 MiB, 2754.55 MiB
+- textarray, 288 MiB lines, query, 1p: 5478.26 MiB, 5476.04 MiB, 5476.43 MiB
+- textarray, 512 MiB lines, query, 1p: 8771.66 MiB, 8772.15 MiB, 8772.30 MiB
+- jsonb, 32 MiB lines, ordering filter, 1j: 84.44 MiB, 84.00 MiB, 84.25 MiB
+- jsonb, 128 MiB lines, ordering filter, 1j: 258.22 MiB, 258.36 MiB, 258.43 MiB
+- jsonb, 288 MiB lines, ordering filter, 1j: 550.73 MiB, 548.46 MiB, 548.21 MiB
+- jsonb, 512 MiB lines, ordering filter, 1j: 950.23 MiB, 950.31 MiB, 950.45 MiB
+- jsonb, 512 MiB lines beside the bound, ordering filter, 1j: 949.69 MiB, 950.45 MiB, 950.41 MiB
+- jsonb, lines at the bound, ordering filter, 1j: 1873.20 MiB, 1873.00 MiB, 1873.21 MiB
 
-Apparatus over every run in this table: CPU stall ≤0.27%, I/O stall ≤4.64%, machine ≤11% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤72°C.
+Apparatus over every run in this table: CPU stall ≤0.33%, I/O stall ≤29.26%, machine ≤8% busy, steal ≤0.00%, busiest core ≥3.41 GHz, ≤75°C.
 
 **It is read twice**: against the falsifiers `measure.run_long_line_resident`
-stated at `6dd4523c`, and against the account the 33.3 notes wrote of this commit's code
-before it ([`roadmap-P33.3-hold-notes.md`](roadmap-P33.3-hold-notes.md), "What
-the re-take is read against"). The previous sitting, at `36888923` before 33.2
-and 33.3, is `runs/measure-20261101T001136/tables.md`; both changes lie between
-the two, so a difference between them is priced to both, never to one.
+states at `93428ef7`, and against the account the spec's "What a held line
+costs" gives — a parse streaming its line, a query holding its line and the
+copy its plan's factor bounds. The previous sitting, at `6dd4523c`, is
+`runs/measure-20261101T031755/tables.md`; 58 commits lie between the two, 33.9,
+33.10 and 33.19 among them, so a difference between them is priced to all of
+them, never to one. The launch's log is
+`runs/long-line-resident-20261111-1243/log`.
 
-**What the falsifiers say.** Three of the six fire, in fewer columns than at
-`36888923`:
+**What the falsifiers say.** Four of the seven fire, each over `int8[]` or
+`text[]` alone:
 
-- **A one-reader cell is a factor times the line from 32 MiB.** Every
-  one-worker and one-partition residual at 32 MiB is within −33.0 to
-  +22.0 MiB of its secant, under the line. The term `36888923`'s queries held
-  from 128 MiB and not at 32 MiB, 110.9–149.5 MiB under their secant there, is
-  gone. That falsifier does not fire.
-- **The 288 MiB row is still the growth's other phase.** At one reader it sits
-  45.5–214.3 MiB under the ladder's secant, at four partitions 191.6–574.7 MiB
-  over it; it departs from the 32 MiB residual by more than that line in all
-  but three columns, escaped text's one-partition query and two four-worker
-  parses.
-- **Over text, the ladder's secant reaches the bound**: −8.1 to +0.4 MiB at one
-  reader. Over escaped text and bytea it does not, −944.2 to +224.7 MiB, so the
-  bound row stays the floor's reading (33.5): one reader holds 3101.5–3513.8 MiB
-  there by median, about three to three and a half lines of 1,073,741,822 B,
-  where `36888923` held 3611.1–4446.2 MiB.
-- **A one-partition query's secant leaves three to four only over bytea**,
-  ×4.05 (text ×3.02, escaped ×3.10). That range was `36888923`'s account; this
-  commit's is the notes', below.
-- **No one-worker parse's secant is under one**, and **no four-worker or
-  four-partition secant passes four times its one-reader one**: a four-worker
-  parse holds 0.88–1.22 times a one-worker one's, a four-partition query 2.65–3.16
-  times a one-partition one's, where `36888923`'s passed four over text and bytea.
+- **No one-worker parse's secant is past one**: ×0.0134 to ×0.0149, where
+  `6dd4523c`'s was ×3.01 to ×3.59.
+- **No one-partition query's or filter's secant is under one, or past one plus
+  twice its planned factor.** Over text, escaped text and bytea it is ×1.00,
+  ×1.88 and ×1.51 against a planned ×2.00, and over `jsonb` ×1.80 against
+  ×1.80. Over `int8[]` and `text[]` it lies between one plus the factor and
+  one plus twice it — ×7.66 between ×5.06 and ×9.13, ×15.67 between ×11.06 and
+  ×21.13 — where the doubling is the candidate, named below.
+- **A one-partition residual at 32 MiB is past that line over `int8[]` and
+  `text[]`**, −515.17 and −385.25 MiB; **their 288 MiB residuals depart from
+  it by more than one**, by 90.74 and 599.79 MiB; and **`int8[]`'s at the
+  bound is past one**, +683.53 MiB. So no charge factor is read off either
+  kind's ladder, and what one reader holds over `int8[]` at the bound, the
+  floor's question, is that row's reading, 9285.00 MiB. Every other kind's
+  residuals are within 3.2 MiB at one reader and 31.3 MiB at four, and the
+  ladder's secant reaches the bound over each.
+- **No four-reader secant passes four times its one-reader one**: a
+  four-partition query holds 3.83 to 3.99 times a one-partition one's, about a
+  line a partition, a four-worker parse 0.69 to 1.18 times a one-worker one's.
 
-**What the account says.**
+**What the account says.** A query's base is text's one-partition cell less
+its line, 52.6 to 56.5 MiB from 32 MiB to the bound.
 
-- **A one-worker parse holds about three bytes a line byte, not two**: ×3.01
-  over text, ×3.18 over escaped text and bytea, the strict parse over bytea
-  ×3.59. From `36888923`'s ×4.01, ×3.73 and ×4.18 it fell by a line over text and
-  bytea and by about half one over escaped text — the carry's second buffer. The
-  account's growing line and its last doubling's copy are two; **the third is
-  mimalloc's retention** of the line's outgrown buffers, which it purges no
-  sooner than a second after their free, by when the line has outgrown more
-  ([`roadmap-P33.8-attribution-notes.md`](roadmap-P33.8-attribution-notes.md)).
-  The account that sums is the line `L` plus its buffer's final capacity `C`,
-  the line's `Vec` doubling from a chunk and its remainder, so `C` is about
-  `2L` at every ladder length and the bound and about 1.78 lines at 288 MiB:
-  over text, `L + C` falls short of the one-worker cells by 23.44, 23.27,
-  27.38, 27.02 and 29.84 MiB from 32 MiB to the bound, the process's base.
-- **A one-partition query over text holds what a parse does**, ×3.02 against
-  the account's two: the third byte is on the path the two share, not a copy
-  the query makes. Escaped text's decoded copy adds ×0.08 to text's secant and
-  0.38 of a line at the bound; bytea's half-line copy adds ×1.03 on the ladder
-  and 0.10 of a line at the bound. **A copy adds only past what retention
-  holds**, the decode's buffers landing in the outgrown ones: escaped text is
-  copied twice and hex bytea three times beside the held line, which only a
-  purge on free shows whole (the 33.8 notes).
-- **A four-worker parse now holds about what a one-worker one does**: ×2.80 to
-  ×3.67, where `36888923`'s held ×1.37 to ×2.34 — at 512 MiB over text, 1820.66
-  against 716.75 MiB. Its worker carries a line in the serial loop's carry since
-  33.2, where it re-read one in a doubled read; the carry holds more at this
-  input. A four-partition query fell from ×12.96–×15.80 to ×8.78–×10.72.
+- **A one-partition query over text, escaped text and bytea holds its line and
+  one decoded copy**, to within 2.5 MiB at every length: the line alone over
+  text, and seven eighths of it again over escaped text, half over bytea. The
+  ×3.02 to ×4.05 `6dd4523c` read, mimalloc's retention of the line's outgrown
+  buffers among it, is gone: the line grows in a mapping of its own (D139) and
+  is decoded once (D141).
+- **A `jsonb` ordering filter holds its line and its key's four fifths**
+  (D152): its secant is the planned factor, its residuals under 1.8 MiB.
+- **A one-worker parse holds no line**: 24.95 to 25.39 MiB at 32 MiB, 40.83 to
+  42.60 MiB at the bound. What grows, about a seventieth of a byte a line
+  byte, has no name; the `introspect` build's live peak over a parse at 512 MiB
+  and at the bound would say whether it is Rust's heap.
+- **`int8[]` and `text[]` hold their line, their values and the buffers the
+  values outgrew.** Let `N` be the values one line decodes to, four bytes a
+  text byte over `int8[]` (an eight-byte value for two text bytes) and eight
+  over `text[]` (a sixteen-byte view), and `C` the power of two a builder
+  doubling to `N` ends at. At 512 MiB and the bound each cell is the base, the
+  line, `N` and `C` again to within 0.5% — every buffer the doubling outgrew,
+  which sum to about `C`, resident to mimalloc's purge, or the second buffer
+  below in their place — so `int8[]` holds 9.0 bytes a line byte and `text[]`
+  17.0, where their plans charge 5.06 and 11.06: a factor charges no doubling
+  (D154), and 33.24's reserved builders remove it.
+  At 288 MiB, just past a doubling, `int8[]` holds `N` and the 1024 MiB buffer
+  it outgrew last, `text[]` `N` and 2832 MiB, its last outgrown 2048 MiB and
+  part of the earlier ones; no second buffer fits beside them. A rep departs
+  from its siblings by one outgrown buffer — `int8[]`'s 288 MiB by 508 MiB, its
+  512 MiB beside the bound by 1017 MiB, `text[]`'s 128 MiB by −512 MiB — so
+  how much is retained is the purge's timing, as at 33.8.
+- **At 32 and 128 MiB both hold about a `C` past `N` and every buffer its
+  doubling outgrew**: `int8[]` 1.08 and 1.03 `C`, `text[]` 1.05 and 0.51.
+  **This has no name.** The instrument legs read the 32 MiB inputs and show it
+  live in Rust's heap: `int8[]`'s live peak is 259.45 MiB, two of its 128 MiB
+  value buffers, where a doubling, whose `realloc` the counter takes as its
+  growth, holds one; `text[]`'s 515.45 MiB is two of its 256 MiB.
+  A batch of two 32 MiB rows, which the span's 64 MiB ceiling (D84) allows,
+  would hold that, but not at 128 MiB, where one row passes the span, and
+  text's, escaped text's and bytea's cells at 32 MiB hold one line and one
+  copy. What would name it is the `introspect` build's live peak over the
+  128, 288 and 512 MiB inputs, which says at which lengths the second buffer
+  is live, and a run at `MIMALLOC_PURGE_DELAY=0`, which leaves only what is.
+- **Two cells pass the allowance every leg states**, 8,489,271,296 B: `int8[]`
+  at the bound and `text[]` at 512 MiB. Today's code charges no held line, so
+  nothing binds; the allowance is sized from the plans' factors, which those
+  cells outgrow by their builders' doubling.
+- **The bound legs fit the 15g container**, none killed: `int8[]` at
+  9285.00 MiB and `jsonb` at 1873.20 MiB, where they were estimated at about
+  9 and 2 GiB before the take.
 
-**One build over one input now reads alike between sweeps**: every 512 MiB leg
-beside the bound is within 1.5 MiB of its ladder sweep's median, and no rep at
-the bound departs from its siblings by more than 120 MiB, where `36888923`'s
-read up to a line apart. A four-worker cell still spreads within one sweep, up
-to 252.2 MiB at 512 MiB over bytea, and a four-partition one by up to
-1106.7 MiB at 512 MiB over escaped text.
+**One build over one input reads alike between sweeps**: every 512 MiB leg
+beside the bound is within 4.4 MiB of its ladder sweep's median. The
+apparatus line's I/O stall of up to 29.26% is the untimed instrument legs';
+no timed leg passed 4.34%.
 
-**Not this figure's readings**: the log's wall clocks
-(`runs/long-line-resident-20261101-0308/log`) put a four-worker parse behind a
-one-worker one at every length from 128 MiB in every kind but the strict text
-parse at 128 MiB — over text at 288 MiB, 1.01 s against 0.84 s, where
-`36888923` read 1.49 s against 0.88 s — and a four-partition query ahead of a
-one-partition one at 288 MiB and 512 MiB over escaped text and bytea, and over
-text at 512 MiB alone. One rep each, under the resident wrapper.
+**Not this figure's readings**: the log's wall clocks, under the resident
+wrapper. A one-worker parse of four 512 MiB lines took 11.03–11.64 s over
+escaped text and 8.80–8.86 s over bytea across its three reps, where
+`6dd4523c`'s took 3.29–3.36 s and 5.45–5.50 s; a strict one 14.25–14.79 s and
+16.45–16.84 s, against 5.60–5.61 s and 8.93 s; over text 2.00–2.10 s against
+1.50–2.00 s. A one-partition query over text and bytea at 512 MiB fell, 0.97 s
+against 1.50 s and 2.16 s against 4.69 s, one rep each. Over the term kinds,
+read on no earlier commit, the 512 MiB query took 33.3–38.1 s over `int8[]`
+and 39.4–40.1 s over `text[]`, the `jsonb` filter 80.8–81.6 s, and 161.9–164.2 s
+at the bound.
 
 ## koji full scan — the regression check
 

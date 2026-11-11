@@ -4,7 +4,7 @@
 the falsifiers written before them; `KD164` is filed. The launch's log is
 `runs/long-line-resident-20261101-0015/`, the sitting's tables and readings
 `runs/measure-20261101T001136/`; [`measurements.md`](measurements.md), "What a
-held line holds resident" carries 33.3's re-take, read against this sitting.
+held line holds resident" carries the figure's latest take.
 
 - **Fifteen inputs, one value kind and one line length each**
   (`generate_long_lines.py`, `measure.LONG_LINE_LENGTHS`): a cluster of four

@@ -1,14 +1,12 @@
 # P33.16.2 notes — the term legs and their factors
 
-**The instrument and every leg landed; the readings did not.** A figure is
-taken from a commit, never from a tree carrying its own apparatus
-([`measurements.md`](measurements.md), "A figure may be published outside the
-sweep"), so the box stays unticked until a later round, on the commit carrying
-this change, runs `cd scripts && uv run measure.py --figure long-line-resident`
-detached per `CLAUDE.md`, "Long-running processes", and rewrites the prose
-under the figure's table against the falsifiers `run_long_line_resident` now
-states. That prose still reads `6dd4523c`'s take against that take's
-falsifiers.
+**`long-line-resident` was taken at `93428ef7`, the commit carrying the
+instrument, and folded in** ([`measurements.md`](measurements.md), "What a held
+line holds resident"), which reads it against the falsifiers
+`run_long_line_resident` states and the spec's account. The launch's log is
+`runs/long-line-resident-20261111-1243/`, the sitting's tables, readings and
+instrument reports `runs/measure-20261111T125321/`. Every kind's factor was
+read, no leg was refused or killed, and every answer was the input's rows.
 
 - **The `introspect` build reports the factor its query planned**:
   `planned_factor=<held>/<per>`, or `none`, the largest any replay of the
@@ -34,15 +32,34 @@ falsifiers.
   part of its key), sized from each kind's line plus its read factor, a
   parse's from its line alone. `LONG_LINE_WHOLE_VALUE_CHARGE` is gone.
 
-## What the readings inherit
+## What the readings found
 
-- **The falsifiers are today's account**: a parse's secant past one, a
-  query's or filter's under one or past one plus twice its planned factor,
-  the residual and count rules as before (`run_long_line_resident`).
-- **A dry run of the figure renders every column** (`--dry-run --reps 1`),
-  its factors stand-ins; a contained hand run of the instrument build over
-  2 MiB inputs read each planned kind's factor as `factor/tests.rs` states it
-  and answered every row, through both front ends.
+- **A factor holds wherever no builder doubles**: text, escaped text and
+  `bytea` queries hold their line and one decoded copy, the `jsonb` filter
+  its line and its key's planned factor, at every length to the bound.
+- **`int8[]` and `text[]` fire four falsifiers**, so no factor is read off
+  their ladder: at 512 MiB and the bound each holds its line, its values and
+  every buffer their doubling outgrew, between one plus the planned factor and one plus
+  twice it, the term 33.24 removes.
+- **A one-worker parse is flat to about a seventieth of a byte a line byte**,
+  unattributed.
+
+## What 33.24 inherits
+
+- **A second values-sized buffer, unnamed.** At 32 MiB the instrument legs'
+  reports hold two of a line's value buffers live in Rust's heap over
+  `int8[]` and `text[]`, and at 128 MiB both cells hold about one more than
+  their doubling can; at 288 MiB the account sums without it, and at 512 MiB
+  and the bound it cannot be told from the doubling's retention. Builders
+  reserved to the bound remove the doubling, not necessarily this, so it is
+  attributed before the reservation is designed against the figure: the
+  `introspect` build's live and committed peaks over the 128, 288 and 512 MiB
+  inputs, and a run at `MIMALLOC_PURGE_DELAY=0` (the figure's prose names
+  both).
+- **The allowance every leg states is outgrown** by `int8[]` at the bound and
+  `text[]` at 512 MiB. It is inert today; once 33.24 holds a nested value to
+  what it reserves, whether those cells fit the allowance sized from the
+  plans' factors is 33.7's re-take's to read.
 - **The introspection build is `alloc-builds/image/introspect`**, which the
   figure rebuilds from the commit it runs at (`ensure_instrument_binary`).
 

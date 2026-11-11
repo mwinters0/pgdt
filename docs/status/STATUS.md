@@ -116,7 +116,7 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.16** A nested value decodes into its builders: no staging of a nested value's elements, as the spec's "What a held line costs" states (D153); an allocation test failing on its parent; its count pair, `02cdaa3d` against the tree, resolving a rise on the three query rows, placed by callgrind in `push_field`'s test for a nested column and in register allocation of unchanged code, and accepted (D108) — [notes](../design/roadmap-P33.16-builders-notes.md)
 - [x] **33.16.3** 33.16's count pair over a nested column: `--count-pair` given a shape reading the `arrays` input, `query --schema-mode typed` over `arrays`, and `--count-pair <parent>..<change>` pricing a committed change from checkouts; taken as `dbdaead4..067b8f69`, `067b8f69`'s first parent `dbdaead4` holding `02cdaa3d`'s crates, as the spec's "How it is shown" states (D108). It resolves a fall on the `arrays` row, so nothing there is placed, and on the control rows 33.16's rises, placed and accepted there — [notes](../design/roadmap-P33.16.3-nested-notes.md)
 - [x] **33.16.1** A query has one factor: a decode factor beside each builder, pgdt-query folding a query's decode factors and its ordering terms' key factors into one number, as the spec's "What a held line costs" and "Where it lives" state (D154) — [notes](../design/roadmap-P33.16.1-factor-notes.md)
-- [ ] **33.16.2** `long-line-resident`'s `int8[]` and `text[]` query legs and `jsonb` filter leg, each at one reader, `int8[]`'s and `jsonb`'s at the bound too, each leg's factor read off its planned query by the `introspect` build and the stated allowance sized from the largest, `LONG_LINE_WHOLE_VALUE_CHARGE` gone, as the spec's "How it is shown" states, and the figure's readings at the commit adding them. The instrument, the allowance and every leg landed; the readings remain, at a commit carrying them — [notes](../design/roadmap-P33.16.2-legs-notes.md)
+- [x] **33.16.2** `long-line-resident`'s `int8[]` and `text[]` query legs and `jsonb` filter leg, each at one reader, `int8[]`'s and `jsonb`'s at the bound too, each leg's factor read off its planned query by the `introspect` build and the stated allowance sized from the largest, `LONG_LINE_WHOLE_VALUE_CHARGE` gone, as the spec's "How it is shown" states, and the figure's readings at the commit adding them. Taken at `93428ef7` ([`measurements.md`](../design/measurements.md), "What a held line holds resident"): a factor holds where no builder doubles, and `int8[]`'s and `text[]`'s doubling fires four falsifiers — [notes](../design/roadmap-P33.16.2-legs-notes.md)
 - [ ] **33.24** A nested value's copy never doubles: a nested field past its chunk term decoded into builders reserved to its bound, its batch cut before it so they start empty, D154's doubling rejection rewritten, as the spec's "What a held line costs" states
 - [ ] **33.25** A tier test stages nothing: `tier_of` reading a container by the output grammar's walk, each leaf tested as it is read, for a query's batch, the census and the gatherer alike; D153's staging and D154's staged term gone, P40's inbox entry on a container's tier amended, as the spec's "What a held line costs" states
 - [ ] **33.4** The ledger: carved by `Arrangement::resolve`, drawn by a held line past its chunk term, admitted in file order, a later holder giving its line up and re-reading it, the charge factors, a parse drawing for the scalar text it collects past its chunk term, an unstated allowance's ledger unlimited; a read over mapped blocks carving its longest line's charge before a reader starts; a query's polling contract stated on `TablePartitions` and tested; under today's line limit
@@ -154,3 +154,16 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+- **A one-worker parse's wall clock over a long escaped field or `bytea` is
+  recorded, not priced.** `long-line-resident`'s log at `93428ef7` times a
+  default and a strict parse of four 512 MiB lines much slower over escaped
+  text, and slower over `bytea`, than `6dd4523c`'s did, steady across reps,
+  where text's barely moved ([`measurements.md`](../design/measurements.md),
+  "What a held line holds resident", its "Not this figure's readings"). The
+  call: record it and act on nothing, since a resident figure's walls are one
+  wrapper's, the gap spans 58 commits (33.10, 33.13–33.19 among them), and the
+  spec's "How it is shown" prices only what `field_key` and a query's batch
+  read with (D108), over inputs holding no long field. Reconsidering means
+  a count pair over a long escaped field's parse before 33.4, placing the rise
+  in the streamed fold, the push machines or the mapping, and a slice
+  reworking or accepting it, as P33's re-target did for the scalar readers.

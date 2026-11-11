@@ -2,11 +2,12 @@
 
 **The line a carry pass scans is frozen for its row and dropped after it, and
 a replay keeps it as one of its batch's blocks and holds no read chunk under
-it.** `long-line-resident` is re-taken at `6dd4523c`, the commit carrying the
-code, and folded in ([`measurements.md`](measurements.md), "What a held line
-holds resident"), which reads it against the account below and the figure's
-falsifiers. The launch's log is `runs/long-line-resident-20261101-0308/`, the
-sitting's tables and readings `runs/measure-20261101T031755/`.
+it.** `long-line-resident` was re-taken at `6dd4523c`, the commit carrying the
+code, and read against the account below and the figure's falsifiers;
+[`measurements.md`](measurements.md), "What a held line holds resident"
+carries the figure's latest take. The launch's log is
+`runs/long-line-resident-20261101-0308/`, the sitting's tables and readings
+`runs/measure-20261101T031755/`.
 
 - **`ChunkCarry` freezes the completed line** (`pgdt-dump`'s
   `scan/chunked.rs`): a line no chunk has ended grows in a `Vec` where it
@@ -60,9 +61,9 @@ An account from the code, written before the readings (`.claude/skills/evidence/
 ## What the later slices inherit
 
 - **What one reader held at the bound at `6dd4523c` was about three lines**
-  over every kind and pass (`measurements.md`, "What a held line holds
-  resident"), short of the spec's charge by the terms 33.8 names; a parse's are
-  gone since 33.10 ([`roadmap-P33.10-mapping-notes.md`](roadmap-P33.10-mapping-notes.md)),
+  over every kind and pass (`runs/measure-20261101T031755/tables.md`), short
+  of the spec's charge by the terms 33.8 names; a parse's are gone since
+  33.10 ([`roadmap-P33.10-mapping-notes.md`](roadmap-P33.10-mapping-notes.md)),
   and 33.7 confirms or re-sets the factors.
 - **A four-worker parse holds about what a one-worker one does** since its
   worker carries its line in `ChunkCarry`, where at 33.1 it held less: the

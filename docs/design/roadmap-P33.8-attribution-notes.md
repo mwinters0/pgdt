@@ -37,10 +37,10 @@ from the SSD rather than tmpfs, on the shipped build at `6dd4523c` and the
   `purge_delay`, 1000 ms, after the free; a line's doublings come faster, so
   the earlier buffers stay resident. They sum to about the final capacity
   `C`, so a one-worker parse holds `L + C`: over text that sums every cell of
-  `long-line-resident`'s one-worker column, 32 MiB to the bound, to within a
-  constant, the process's base ([`measurements.md`](measurements.md), "What a
-  held line holds resident") — three lines where `C` is about `2L`, fewer at
-  288 MiB, where it is not. At a purge delay of 0 it is gone, so it is no live
+  `long-line-resident`'s one-worker column at `6dd4523c`, 32 MiB to the bound,
+  to within a constant, the process's base
+  (`runs/measure-20261101T031755/tables.md`) — three lines where `C` is about
+  `2L`, fewer at 288 MiB, where it is not. At a purge delay of 0 it is gone, so it is no live
   term. How much is retained depends on how fast the line grows: the text
   query at the bound held about half a line less here than in the figure's
   sitting, whose inputs were on tmpfs, and the figure's escaped-text bound
