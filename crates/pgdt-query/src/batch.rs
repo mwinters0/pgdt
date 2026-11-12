@@ -122,8 +122,7 @@ impl RowBatcher {
             .iter()
             .map(|column| new_column_builder(column.data_type(), column.plan()))
             .collect();
-        let walks =
-            columns.iter().zip(&projected).any(|(b, tested)| is_walked(b) && tested.is_none());
+        let walks = columns.iter().any(is_walked);
         let plans =
             resolved.columns().iter().map(|c| (c.data_type().clone(), c.plan().clone())).collect();
         Self {
@@ -204,9 +203,10 @@ impl RowBatcher {
     }
 
     /// Whether column `col`'s value is walked into its builders
-    /// ([`append_walked`]): a nested column no tier test reads.
+    /// ([`append_walked`]): a nested column, which its tier test, where it
+    /// has one, walks first.
     fn walks_column(&self, col: usize) -> bool {
-        is_walked(&self.columns[col]) && self.unrepresentable[col].is_none()
+        is_walked(&self.columns[col])
     }
 
     fn source_span_reached(&self) -> bool {
@@ -350,31 +350,42 @@ impl RowBatcher {
         let walked = self.walks_column(col);
         let invalid = self.options.postgres_invalid_values;
         let read = walked.then(|| row.read(field.clone())).transpose()?;
-        // A long one, in a batch holding no row, is decoded into builders
-        // reserved to it, its batch flushed after its row, so no buffer of
-        // its copy grows by doubling (`docs/design/decisions.md`, "D154").
-        if walked
-            && field_len > self.long_field
-            && self.rows_in_batch == 0
-            && !matches!(read, None | Some(RawField::Null))
-        {
-            let (data_type, plan) = &self.plans[col];
-            self.columns[col] = reserved_column_builder(data_type, plan, field_len);
-            self.holds_long = true;
-        }
-        match read {
+        let text = match read {
             Some(RawField::Escaped(bytes)) => {
                 if let Some(valid_up_to) = escaped_utf8_error(bytes) {
                     return Err(Error::InvalidUtf8 { valid_up_to });
                 }
-                return append_walked(&mut self.columns[col], FieldText::escaped(bytes), invalid)
-                    .map_err(|()| self.field_decode(col, row_offset, printout_head(bytes)));
+                Some(FieldText::escaped(bytes))
             }
-            Some(RawField::Plain(text)) => {
-                return append_walked(&mut self.columns[col], FieldText::plain(text), invalid)
-                    .map_err(|()| self.field_decode(col, row_offset, Some(printout(text))));
+            Some(RawField::Plain(text)) => Some(FieldText::plain(text)),
+            Some(RawField::Null) | None => None,
+        };
+        if let Some(text) = text {
+            // One whose tier test finds a leaf the query cannot hold is NULL
+            // whole, the test a walk of its own, staging nothing
+            // (`docs/design/decisions.md`, "D153").
+            if let Some(tier) = &self.unrepresentable[col]
+                && tier.cannot_hold_walked(text.clone())
+            {
+                append_null(&mut self.columns[col]);
+                return Ok(());
             }
-            Some(RawField::Null) | None => {}
+            // A long one, in a batch holding no row, is decoded into builders
+            // reserved to it, its batch flushed after its row, so no buffer of
+            // its copy grows by doubling (`docs/design/decisions.md`, "D154").
+            if field_len > self.long_field && self.rows_in_batch == 0 {
+                let (data_type, plan) = &self.plans[col];
+                self.columns[col] = reserved_column_builder(data_type, plan, field_len);
+                self.holds_long = true;
+            }
+            return append_walked(&mut self.columns[col], text, invalid).map_err(|()| {
+                let value = match read {
+                    Some(RawField::Escaped(bytes)) => printout_head(bytes),
+                    Some(RawField::Plain(text)) => Some(printout(text)),
+                    Some(RawField::Null) | None => None,
+                };
+                self.field_decode(col, row_offset, value)
+            });
         }
         let decoded = row.decode(field)?;
         // Disjoint-field borrow: `columns[col]` is mutated below while

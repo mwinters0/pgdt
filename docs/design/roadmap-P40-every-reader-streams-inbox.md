@@ -53,24 +53,25 @@ D149, struck when P33 was re-targeted on 2026-11-10.
 
 ---
 
-## A summed column and a container's tier still copy a long escaped field
+## A summed column and a container's tier still read a long field whole
 
 **Fact.** `ColumnGatherer::observe` unescapes a long escaped field whole where
 its column keeps a sum or counts unrepresentable values (D142): a sum needs the
-integer's digits, and a container's tier walks `decode_*`, the output grammar.
+integer's digits, and a container's tier is read by `decode_*`'s grammar, the
+output grammar's walk testing each leaf as it reads it and staging none (D153).
 No `pg_dump` writes an escape in such a column. Under P33 the copy is a parse's
 collected scalar text, drawn from the ledger. A mapping pass's census holds a
 counted container's field whole for the same reason (`FieldCount::keeps`,
-`Kept::Whole`), so a cold query is charged for a long `timestamptz[]` field in a
-table it reads beside it; the `*_in` walks a parse streams cannot stand in, reading
-spellings `decode_*` refuses (`{ infinity }` in a `date[]`). A query's batch
-does the same for a nested column under a tier test (D153), unescaping it and
-decoding it through its elements.
+`Kept::Whole`), walked off its bytes with no copy, so a cold query is charged
+for a long `timestamptz[]` field in a table it reads beside it; the `*_in`
+walks a parse streams cannot stand in, reading spellings `decode_*` refuses
+(`{ infinity }` in a `date[]`).
 
 **Why P40 cares.** It was 33.13.2: the output grammars' walk resumable, the
 gatherer's sum and tier and the census's count read over it holding a bounded
-state, a range's bounds fed as parts. The walk exists, pulling a field held
-whole a byte at a time (`nested/output/walk.rs`, D151).
+state, a range's bounds fed as parts. The walk exists, and the tier reads
+through it, over a field held whole (`nested/output/walk.rs`,
+`unrepresentable.rs`'s `tier_walked`).
 
 **Origin.** 33.13 and 33.13.1's notes; 33.13.2's row at `49f3cf05`; 33.20,
-struck 2026-11-10.
+struck 2026-11-10; 33.25's notes.

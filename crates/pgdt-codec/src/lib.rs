@@ -44,7 +44,7 @@ pub mod internal {
         unrepresentable_tests,
     };
     #[cfg(any(test, feature = "test-support"))]
-    pub use crate::unrepresentable::{scalar_read, scalar_tier};
+    pub use crate::unrepresentable::{column_read, scalar_read, scalar_tier};
     pub use crate::value::bytea::{ByteaRuns, bytea_escape_head, bytea_unread, decode_bytea_into};
     pub use crate::value::digits::push_integer;
     pub use crate::value::float::{Float, float_field};

@@ -12,9 +12,9 @@
 //!   and a text's or a `bytea`'s own bytes one for one — every buffer at its
 //!   own density, since each is reserved so, and so never grown by doubling;
 //! - **what a part's append holds besides**, one part at a time: an escaped
-//!   field's token and its unquoted copy, and a `bytea` part's decoded bytes;
-//! - **for a column its tier test reads whole**, the field unescaped and the
-//!   test's staged literal (`decisions.md`, "D153").
+//!   field's token and its unquoted copy, and a `bytea` part's decoded bytes —
+//!   the most a tier test's walk holds too, reading the same parts before the
+//!   decode does (`decisions.md`, "D153").
 //!
 //! Not counted: what a value holds whatever its text's length — a scalar's
 //! entry, a record's and a range's own, and a list's at the top — which the
@@ -22,13 +22,9 @@
 //! and a buffer's slack and copy as a batch grows within its span, the
 //! span's (`decisions.md`, "D141").
 
-use std::borrow::Cow;
-use std::mem::size_of;
-
 use arrow::datatypes::DataType;
 
 use pgdt_codec::internal::KeyFactor;
-use pgdt_codec::nested::RangeLiteral;
 use pgdt_codec::pgtype::NestedPlan;
 
 use super::{ColumnBuilder, is_walked, new_column_builder, shortest};
@@ -96,32 +92,14 @@ impl From<KeyFactor> for Factor {
 
 /// **The decode factor of a column of `data_type` filled as `plan` says**:
 /// `None` where its decode holds nothing that grows with a value's text.
-/// `tested` says its batch reads it through its tier test
-/// ([`pgdt_codec::internal::UnrepresentableRead`]), which a nested value is
-/// unescaped whole for, then staged and decoded through its elements, where
-/// an untested one is walked into its builders as it is read.
-pub(crate) fn column_factor(
-    data_type: &DataType,
-    plan: &NestedPlan,
-    tested: bool,
-) -> Option<Factor> {
+pub(crate) fn column_factor(data_type: &DataType, plan: &NestedPlan) -> Option<Factor> {
     let builder = new_column_builder(data_type, plan);
     let factor = match &builder {
         // A text read in place is a view into its held line, an escaped one
         // its own block, and a `bytea` decoded into its column: one copy at
         // most, every decode shortening a value (D141).
         ColumnBuilder::Utf8View(..) | ColumnBuilder::Binary(_) => Factor::ONE,
-        b if is_walked(b) => {
-            let walked = reserved(b).plus(stage(b));
-            let staged = if tested { staged(b) } else { Factor::ZERO };
-            if walked.is_zero() && staged.is_zero() {
-                Factor::ZERO
-            } else if tested {
-                Factor::ONE.plus(staged.max(walked))
-            } else {
-                walked
-            }
-        }
+        b if is_walked(b) => reserved(b).plus(stage(b)),
         _ => Factor::ZERO,
     };
     (!factor.is_zero()).then_some(factor)
@@ -186,7 +164,9 @@ fn reserved(builder: &ColumnBuilder) -> Factor {
 /// **The Arrow form a value's text can grow**, per byte of it: the largest of
 /// each repeated part's entry over the fewest bytes it is written in with its
 /// delimiter — a `bytea` part's one byte held beside its offset — and one
-/// where a text's or a `bytea`'s own bytes are held.
+/// where a text's or a `bytea`'s own bytes are held. What the tests hold a
+/// column's finished buffers to.
+#[cfg(test)]
 fn form(builder: &ColumnBuilder) -> Factor {
     match builder {
         ColumnBuilder::Utf8View(..) | ColumnBuilder::Binary(_) => Factor::ONE,
@@ -216,29 +196,6 @@ fn stage(builder: &ColumnBuilder) -> Factor {
         | ColumnBuilder::Int2Vector(parts) => stage(&parts.child),
         ColumnBuilder::Record(parts) | ColumnBuilder::Range(parts) => {
             parts.children.iter().map(stage).fold(Factor::ZERO, Factor::max)
-        }
-        _ => Factor::ZERO,
-    }
-}
-
-/// **What a tier test stages of a value**, per byte of its text, as
-/// `decode_*` reads it: an array's element slot over its fewest two bytes, a
-/// multirange's member over its fewest four, and their texts; a record's and
-/// a range's texts where one can grow; and what each part's own test stages,
-/// one part at a time.
-fn staged(builder: &ColumnBuilder) -> Factor {
-    match builder {
-        ColumnBuilder::Array(parts) => {
-            let element = size_of::<Option<Cow<'static, str>>>() as u64;
-            Factor::new(element, 2).plus(Factor::ONE).plus(staged(&parts.child))
-        }
-        ColumnBuilder::Multirange(parts) => {
-            let member = size_of::<RangeLiteral>() as u64;
-            Factor::new(member, 4).plus(Factor::ONE).plus(staged(&parts.child))
-        }
-        ColumnBuilder::Record(parts) | ColumnBuilder::Range(parts) => {
-            let texts = if form(builder).is_zero() { Factor::ZERO } else { Factor::ONE };
-            texts.plus(parts.children.iter().map(staged).fold(Factor::ZERO, Factor::max))
         }
         _ => Factor::ZERO,
     }

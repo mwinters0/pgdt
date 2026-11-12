@@ -183,8 +183,9 @@ async fn a_block_prunes_in_the_view_its_query_reads() {
 
 /// **A query has one factor**: the largest of each column its batch reads
 /// and each term its filter keys by positions, none where neither grows
-/// with a line — a `date[]` holding a value its type cannot hold read through
-/// its tier test, and a nested term ordering by its parts holding none.
+/// with a line — a `date[]` holding a value its type cannot hold, its tier
+/// test a walk of its own staging nothing, holding what its decode's walk
+/// does, and a nested term ordering by its parts holding none.
 #[tokio::test]
 async fn a_query_s_factor_is_its_columns_and_terms_largest() {
     use crate::Predicate;
@@ -244,9 +245,7 @@ async fn a_query_s_factor_is_its_columns_and_terms_largest() {
     assert_eq!(factor(&["id"], vec![jsonb()]), Some(Factor::new(4, 5)));
     assert_eq!(factor(&["t"], vec![jsonb()]), Some(Factor::new(1, 1)));
     assert_eq!(factor(&["id"], vec![term("a", PredicateOp::Gt("{1}".into()))]), None);
-    if size_of::<usize>() == 8 {
-        assert_eq!(factor(&["d"], vec![]), Some(Factor::new(14, 1)));
-    }
+    assert_eq!(factor(&["d"], vec![]), Some(Factor::new(33, 16)));
 }
 
 /// **An instrumented binary reports the factor its replay planned**:

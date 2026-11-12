@@ -118,7 +118,7 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.16.1** A query has one factor: a decode factor beside each builder, pgdt-query folding a query's decode factors and its ordering terms' key factors into one number, as the spec's "What a held line costs" and "Where it lives" state (D154) — [notes](../design/roadmap-P33.16.1-factor-notes.md)
 - [x] **33.16.2** `long-line-resident`'s `int8[]` and `text[]` query legs and `jsonb` filter leg, each at one reader, `int8[]`'s and `jsonb`'s at the bound too, each leg's factor read off its planned query by the `introspect` build and the stated allowance sized from the largest, `LONG_LINE_WHOLE_VALUE_CHARGE` gone, as the spec's "How it is shown" states, and the figure's readings at the commit adding them. Taken at `93428ef7` ([`measurements.md`](../design/measurements.md), "What a held line holds resident"): a factor holds where no builder doubles, and `int8[]`'s and `text[]`'s doubling fires four falsifiers — [notes](../design/roadmap-P33.16.2-legs-notes.md)
 - [x] **33.24** A nested value's copy never doubles: a nested field past its chunk term decoded into builders reserved to its bound, its batch cut before it so they start empty, D154's doubling rejection rewritten, as the spec's "What a held line costs" states (D154); its count pair's rise, `RowBatcher::cuts_before` asked of every row, placed by callgrind and accepted, once `push_field`'s walked test was reworked to the parent's (D108) — [notes](../design/roadmap-P33.24-reserve-notes.md)
-- [ ] **33.25** A tier test stages nothing: `tier_of` reading a container by the output grammar's walk, each leaf tested as it is read, for a query's batch, the census and the gatherer alike; D153's staging and D154's staged term gone, P40's inbox entry on a container's tier amended, as the spec's "What a held line costs" states
+- [x] **33.25** A tier test stages nothing: `tier_of` reading a container by the output grammar's walk, each leaf tested as it is read, for a query's batch, the census and the gatherer alike; D153's staging and D154's staged term gone, P40's inbox entry on a container's tier amended, as the spec's "What a held line costs" states; its count pair, `80abeb99` against the tree, resolving a rise on the data-level parse, the strings query and the `arrays` row, placed by callgrind in `FieldCount::tier`'s dispatch, `push_row`'s register allocation and the walked arm's `FieldText`, and accepted (D108) — [notes](../design/roadmap-P33.25-tier-notes.md)
 - [ ] **33.26** Evidence: a long field's parse priced — `--count-pair` given a data-level and a strict parse over `long_escaped_32` and `long_bytea_32` as standing rows, pairs taken on 33.13 (`e3a5ce6d`), 33.18 (`62e8875c`) and 33.19 (`e80138b2`) each against its first parent, 33.19's on the existing rows too, and `6dd4523c..93428ef7` as the account the three sum to, each rise placed by callgrind, as the spec's "How it is shown" states (D108); no production code; a slice reworking or accepting what it places allocated on its result, landing before 33.7
 - [ ] **33.4** The ledger: carved by `Arrangement::resolve`, drawn by a held line past its chunk term, admitted in file order, a later holder giving its line up and re-reading it, the charge factors, a parse drawing for the scalar text it collects past its chunk term, an unstated allowance's ledger unlimited; a read over mapped blocks carving its longest line's charge before a reader starts; a query's polling contract stated on `TablePartitions` and tested; under today's line limit
 - [ ] **33.5** The floor: the pools shrinking and regrowing, readers parked latest first, a line one reader cannot hold refused for memory, and a read over mapped blocks whose longest line one reader cannot hold refused before it reads a byte, its remedy spelled by `pgdt` and the shell
@@ -154,4 +154,15 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **33.25's rise on the data-level parse is accepted, not reworked.** Its
+  count pair places it in `FieldCount::tier`, which the census asks of every
+  field, a held column's included: the `match` that sends a container to the
+  walk decodes `Leaf`'s niche discriminant whole and tests the container arms
+  before `Held`, where the parent's `*leaf == Leaf::Held` was one compare
+  (`runs/count-pair-33.25-20261111/callgrind/reading.txt`). Restoring that
+  test ahead of the `match` changes no work, only how it lowers, which is the
+  rework D108 refuses, so the rise stands. Reconsidering: rule the parent's
+  spelling of a test the change moved a shape as clean rather than codegen,
+  and take a pair on that tree; it is untried.
 

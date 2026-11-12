@@ -1,6 +1,7 @@
 //! What decoding one long value holds beside its line: one decoded copy, in
 //! a query over escaped text and over `bytea` (`docs/design/decisions.md`,
-//! "D141") and over a nested value, decoded into its builders ("D153"),
+//! "D141") and over a nested value, decoded into its builders and tested
+//! for its tier by a walk staging nothing ("D153"),
 //! none in a filter's term reading an escaped field off its bytes
 //! ("D150") or ordering a nested one as the output grammars' walk reads it
 //! ("D151"), a normalized one's positions alone ("D152"), and none in a
@@ -248,6 +249,41 @@ async fn a_long_nested_value_is_decoded_into_reserved_builders() {
     let reserved = text.len().div_ceil(2) * 65 / 8;
     let bound = reserved + (1 << 20);
     assert!(peak < bound, "{peak} bytes allocated at the peak, past {bound}");
+}
+
+/// **A tier test stages nothing** (`docs/design/decisions.md`, "D153"): a
+/// `date[]` of eight MiB in a block a short row's `infinity` counts is
+/// tested and decoded by a cold query, the test and the census's count each a
+/// walk of its own holding no element of it, so the query holds its
+/// builders' reservation and no more — a `date`'s slot for every two bytes of
+/// text — and a parse, counting and gathering it, nothing that grows with it.
+#[tokio::test]
+async fn a_tier_test_stages_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let long = 8usize << 20;
+    let element = "2024-01-01";
+    let count = long / (element.len() + 1);
+    let text = format!("{{{}}}", vec![element; count].join(","));
+    let path = dump(dir.path(), "date[]", "{infinity}", text.as_bytes());
+
+    let (batches, peak) = query(&path).await;
+    let lengths: Vec<Option<i32>> = batches
+        .iter()
+        .flat_map(|batch| {
+            let list = batch.column(1).as_list::<i32>();
+            (0..list.len())
+                .map(|row| list.is_valid(row).then(|| list.value_length(row)))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert_eq!(lengths, [None, Some(count as i32), None], "the infinities are NULL whole");
+    let bound = text.len().div_ceil(2) * 33 / 8 + (1 << 20);
+    assert!(peak < bound, "{peak} bytes allocated at the peak, past {bound}");
+
+    for invalid in [PostgresInvalidValues::Default, PostgresInvalidValues::Strict] {
+        let peak = parse(&path, invalid).await.unwrap();
+        assert!(peak < long / 4, "{invalid:?}: {peak} bytes allocated at the peak");
+    }
 }
 
 /// **A filter term holds no copy of an escaped field it reads**

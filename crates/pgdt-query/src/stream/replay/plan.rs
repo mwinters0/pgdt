@@ -446,10 +446,9 @@ impl PlannedBlock {
     /// ([`ResolvedExpr::key_factors`]).
     fn factors(&self) -> impl Iterator<Item = Factor> + '_ {
         let columns = self.resolved.columns();
-        let decoded = self.field_targets.iter().enumerate().filter_map(|(field, target)| {
+        let decoded = self.field_targets.iter().filter_map(|target| {
             let column = &columns[(*target)?];
-            let tested = self.unrepresentable.get(field).is_some_and(Option::is_some);
-            column_factor(column.data_type(), column.plan(), tested)
+            column_factor(column.data_type(), column.plan())
         });
         decoded.chain(self.filter.key_factors().into_iter().map(Factor::from))
     }

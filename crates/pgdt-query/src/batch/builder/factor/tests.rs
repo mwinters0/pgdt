@@ -38,9 +38,9 @@ fn mapped(declared: &str) -> (DataType, NestedPlan) {
     }
 }
 
-fn factor(declared: &str, tested: bool) -> Option<Factor> {
+fn factor(declared: &str) -> Option<Factor> {
     let (data_type, plan) = mapped(declared);
-    column_factor(&data_type, &plan, tested)
+    column_factor(&data_type, &plan)
 }
 
 #[test]
@@ -78,6 +78,14 @@ fn a_column_s_factor_is_its_densest_part_s() {
         ("int4multirange", f(80, 32)),
         // An element and the space before it.
         ("int2vector", f(17, 16)),
+        // A container its tier test reads holds what its walk does, the test
+        // a walk of its own before it, staging nothing: a `date`'s slot over
+        // a digit and its comma, a range's over `(,)` and its delimiter; a
+        // range and a record of dates hold what their type bounds.
+        ("date[]", f(33, 16)),
+        ("datemultirange", f(80, 32)),
+        ("daterange", None),
+        ("public.days", None),
         // A record of a `bigint` and a `text`: the text's bytes, the token and
         // its unquoted copy; as a part, its entry over `(,)` and its delimiter
         // beside them.
@@ -85,7 +93,7 @@ fn a_column_s_factor_is_its_densest_part_s() {
         ("public.pair[]", f(8 + 65 + 129 + 32 + 64, 32)),
     ];
     for (declared, expected) in cases {
-        assert_eq!(factor(declared, false), expected, "{declared}");
+        assert_eq!(factor(declared), expected, "{declared}");
     }
 
     // A dimension's list is a part of the one around it, `{` and its
@@ -99,29 +107,7 @@ fn a_column_s_factor_is_its_densest_part_s() {
     // Reserved, each dimension's lists and the elements are each at their
     // own density.
     assert_eq!(reserved(&builder), Factor::new(40 + 65, 16));
-    assert_eq!(column_factor(&list(list(DataType::Int64)), &plan, false), Some(reserved(&builder)));
-}
-
-/// **A column its tier test reads whole holds its field unescaped and the
-/// larger of the test's staged literal and its walk**: a `date[]`'s element
-/// slot over two bytes and its text, a `datemultirange`'s member over four;
-/// a record and a range of dates hold what their type bounds.
-#[test]
-fn a_tested_column_s_factor_is_its_staged_literal_s() {
-    let element = size_of::<Option<Cow<'static, str>>>() as u64;
-    let member = size_of::<RangeLiteral>() as u64;
-    let one = Factor::ONE;
-    let staged_array = Factor::new(element, 2).plus(one);
-    assert_eq!(factor("date[]", true), Some(one.plus(staged_array)));
-    let staged_multirange = Factor::new(member, 4).plus(one);
-    assert_eq!(factor("datemultirange", true), Some(one.plus(staged_multirange)));
-    assert_eq!(factor("daterange", true), None);
-    assert_eq!(factor("public.days", true), None);
-    // On a 64-bit target: a `Cow<str>` an element, three words a member.
-    if size_of::<usize>() == 8 {
-        assert_eq!(factor("date[]", true), Some(Factor::new(14, 1)));
-        assert_eq!(factor("datemultirange", true), Some(Factor::new(16, 1)));
-    }
+    assert_eq!(column_factor(&list(list(DataType::Int64)), &plan), Some(reserved(&builder)));
 }
 
 /// **Each type's densest literal, repeated, is held within its factor's

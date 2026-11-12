@@ -269,6 +269,16 @@ fn a_none_source_span_leaves_a_batch_unbounded() {
 /// A [`RowBatcher`] over one nullable nested column of `data_type`, read by
 /// `plan`, fed by the row's only field.
 fn nested_batcher(data_type: DataType, plan: NestedPlan) -> RowBatcher {
+    nested_batcher_reading(data_type, plan, Vec::new())
+}
+
+/// [`nested_batcher`], its column's values its type cannot hold read as
+/// `unrepresentable` says.
+fn nested_batcher_reading(
+    data_type: DataType,
+    plan: NestedPlan,
+    unrepresentable: Vec<Option<UnrepresentableRead>>,
+) -> RowBatcher {
     use pgdt_codec::ColumnResolution;
     use pgdt_codec::compare::comparison_for;
     use pgdt_codec::internal::{column_of, schema_of};
@@ -288,7 +298,7 @@ fn nested_batcher(data_type: DataType, plan: NestedPlan) -> RowBatcher {
         usize::MAX,
         usize::MAX,
         vec![Some(0)],
-        Vec::new(),
+        unrepresentable,
     )
 }
 
@@ -392,5 +402,41 @@ fn an_escaped_nested_field_fails_as_its_text_would() {
             assert_eq!(value, format!("{{1,\t{}...", &"2,".repeat(100)[..96]));
         }
         other => panic!("expected FieldDecode, got {other:?}"),
+    }
+}
+
+/// **A nested value its tier test reads is tested as it is walked**
+/// (`docs/design/decisions.md`, "D153"): one holding a leaf past what the
+/// query holds is NULL whole, whether `COPY` wrote it in place or with an
+/// escape, and one holding none is decoded, read as its text is.
+#[test]
+fn a_tested_nested_field_is_null_whole_as_walked() {
+    use arrow::array::{Array, AsArray};
+    use pgdt_codec::internal::column_read;
+    use pgdt_model::UnrepresentableTier;
+
+    let plan = NestedPlan::array(NestedPlan::Scalar);
+    let list = DataType::List(std::sync::Arc::new(Field::new("item", DataType::Date32, true)));
+    let read = column_read(&list, &plan, UnrepresentableTier::Format);
+    assert!(read.is_some(), "a `date[]` is tested");
+    let mut batcher = nested_batcher_reading(list, plan, vec![read]);
+    let mut chunks = RetainedChunks::new();
+    let fields: [(&[u8], Option<i32>); 5] = [
+        (b"{2024-01-01,infinity}", None),
+        (b"{\\x32024-01-01,\\x69nfinity}", None),
+        (b"{\\x32024-01-01,2024-01-02}", Some(2)),
+        (b"{2024-01-01}", Some(1)),
+        (b"\\N", None),
+    ];
+    for (field, _) in fields {
+        batcher
+            .push_row(0, 0, RawRow::unchecked(field), &mut RowSplit::default(), &mut chunks)
+            .unwrap();
+    }
+    let batch = batcher.flush().unwrap();
+    let column = batch.column(0).as_list::<i32>();
+    for (row, (field, length)) in fields.iter().enumerate() {
+        let read = column.is_valid(row).then(|| column.value_length(row));
+        assert_eq!(read, *length, "{}", String::from_utf8_lossy(field));
     }
 }

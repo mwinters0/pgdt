@@ -21,18 +21,27 @@
 //! deficiency's. It is not decoded in a column the untyped mode reads as its
 //! text, nor in a container the null mode takes as NULL whole for another
 //! leaf past its tiers.
+//!
+//! **A container is read by the output grammars' walk**, each leaf tested as
+//! the walk hands it over, so a test stages none of its elements and holds
+//! no copy of a field read as `COPY` wrote it (`docs/design/decisions.md`,
+//! "D153").
 
 use std::sync::Arc;
 
 use arrow_schema::DataType;
 
-use crate::nested::{RangeLiteral, decode_array, decode_multirange, decode_range, decode_record};
 use crate::pgtype::{NestedPlan, RANGE_STRUCT_FIELDS};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::value::datetime::grammar::{DateTimeInput, INTERVAL_WORKBUF};
 use crate::value::datetime::{
     civil_from_days, decode_date32, interval_parts, longest_read, timestamp_micros_wide,
 };
+use crate::value::nested::{
+    FieldText, walk_array, walk_bracketed, walk_multirange, walk_range, walk_record,
+};
+use crate::value::text::escaped_utf8_error;
+use pgdt_core::internal::unescaped;
 use pgdt_core::{CopyHeader, unescape_field};
 use pgdt_model::{
     DumpMetadata, Unrepresentable, UnrepresentableTier, calendar_end,
@@ -277,7 +286,19 @@ impl UnrepresentableRead {
     /// `IS UNREPRESENTABLE` matches.
     #[inline]
     pub fn cannot_hold(&self, text: &str) -> bool {
-        match self.tier.of(text) {
+        self.reaches(self.tier.of(text))
+    }
+
+    /// [`Self::cannot_hold`] of a nested value read off `text` by the output
+    /// grammars' walk, as a query's batch reads it: a field in place or as
+    /// `COPY` wrote it, staged nowhere.
+    pub fn cannot_hold_walked(&self, mut text: FieldText<'_>) -> bool {
+        let counter = &self.tier.counter;
+        self.reaches(counter.tier_walked(&counter.columns[self.tier.column], &mut text))
+    }
+
+    fn reaches(&self, tier: Option<UnrepresentableTier>) -> bool {
+        match tier {
             Some(Format) => true,
             Some(Engine) => self.reach == Engine,
             None => false,
@@ -398,7 +419,22 @@ pub fn scalar_read(
     data_type: &DataType,
     reach: UnrepresentableTier,
 ) -> Option<UnrepresentableRead> {
-    scalar_tier(data_type).map(|tier| UnrepresentableRead { tier, reach })
+    column_read(data_type, &NestedPlan::Scalar, reach)
+}
+
+/// How a query reaching `reach` reads a column the typed read emits as
+/// `data_type` filled as `plan` says, for a test holding no resolved schema.
+#[cfg(any(test, feature = "test-support"))]
+pub fn column_read(
+    data_type: &DataType,
+    plan: &NestedPlan,
+    reach: UnrepresentableTier,
+) -> Option<UnrepresentableRead> {
+    let leaf = Leaf::of(data_type, plan);
+    (leaf != Leaf::Held).then(|| UnrepresentableRead {
+        tier: ColumnTier { counter: Arc::new(Counter::new(vec![leaf], calendar_end())), column: 0 },
+        reach,
+    })
 }
 
 impl Counter {
@@ -416,16 +452,6 @@ impl Counter {
         if leaf.longest_counted().is_some_and(|longest| text.len() > longest) {
             return None;
         }
-        let worst = |tiers: &mut dyn Iterator<Item = Option<UnrepresentableTier>>| {
-            let mut worst = None;
-            for tier in tiers.flatten() {
-                if tier == Format {
-                    return Some(Format);
-                }
-                worst = Some(tier);
-            }
-            worst
-        };
         match leaf {
             Leaf::Held => None,
             Leaf::Date => self.date(text),
@@ -433,40 +459,50 @@ impl Counter {
             Leaf::Time => (text == "24:00:00").then_some(Format),
             Leaf::Interval => interval(text),
             Leaf::Decimal => (text == "NaN").then_some(Format),
-            Leaf::Array(child) => {
-                let literal = decode_array(text)?;
-                worst(&mut literal.elements.iter().flatten().map(|e| self.tier_of(child, e)))
-            }
-            Leaf::Record(fields) => {
-                let literal = decode_record(text)?;
-                worst(
-                    &mut fields
-                        .iter()
-                        .zip(&literal.fields)
-                        .filter_map(|(leaf, field)| Some((leaf, field.as_deref()?)))
-                        .map(|(leaf, field)| self.tier_of(leaf, field)),
-                )
-            }
-            Leaf::Range(bound) => {
-                let range = decode_range(text)?;
-                worst(&mut self.bounds(bound, &range))
-            }
-            Leaf::Multirange(bound) => {
-                let members = decode_multirange(text)?;
-                worst(&mut members.iter().flat_map(|range| self.bounds(bound, range)))
+            Leaf::Array(_) | Leaf::Record(_) | Leaf::Range(_) | Leaf::Multirange(_) => {
+                self.tier_walked(leaf, &mut FieldText::plain(text))
             }
         }
     }
 
-    fn bounds<'a>(
-        &'a self,
-        bound: &'a Leaf,
-        range: &'a RangeLiteral,
-    ) -> impl Iterator<Item = Option<UnrepresentableTier>> + 'a {
-        [range.lower.as_deref(), range.upper.as_deref()]
-            .into_iter()
-            .flatten()
-            .map(move |value| self.tier_of(bound, value))
+    /// [`Self::tier_of`] of a value read off `text` by the output grammars'
+    /// walk, each leaf tested as it is handed over and none kept: `None`
+    /// where the walk finds no value of `leaf`'s form, however bad a leaf it
+    /// read first, so a value is tested whole or not at all, as a decode of
+    /// it would be.
+    fn tier_walked(&self, leaf: &Leaf, text: &mut FieldText<'_>) -> Option<UnrepresentableTier> {
+        let mut worst = None;
+        let mut test = |leaf: &Leaf, part: Option<&str>| {
+            // Past the format spec is the worst a leaf is, so once one is,
+            // the rest is only read through.
+            if worst != Some(Format)
+                && let Some(tier) = part.and_then(|part| self.tier_of(leaf, part))
+            {
+                worst = Some(tier);
+            }
+            Some(())
+        };
+        match leaf {
+            Leaf::Array(child) => walk_array(text, |element| test(child, element)).map(drop),
+            Leaf::Record(fields) => {
+                // An arity `decode_record` leaves unchecked, a field past the
+                // leaves untested.
+                let mut at = 0;
+                walk_record(text, |field| {
+                    let leaf = fields.get(at);
+                    at += 1;
+                    leaf.map_or(Some(()), |leaf| test(leaf, field))
+                })
+                .map(drop)
+            }
+            Leaf::Range(bound) => walk_range(text, |_, value| test(bound, value)).map(drop),
+            Leaf::Multirange(bound) => walk_multirange(text, |member| {
+                walk_bracketed(member, |_, value| test(bound, value)).map(drop)
+            })
+            .map(drop),
+            scalar => return text.rest().and_then(|text| self.tier_of(scalar, &text)),
+        }?;
+        worst
     }
 
     /// A `date`: an infinity is past the format spec, and a finite one never
@@ -570,13 +606,23 @@ impl FieldCount for Counter {
 
     fn tier(&self, column: usize, field: &[u8]) -> Option<UnrepresentableTier> {
         let leaf = self.columns.get(column)?;
-        if *leaf == Leaf::Held {
-            return None;
+        match leaf {
+            Leaf::Held => None,
+            // A container is walked off its field, an escaped one — its text
+            // position can hold one — unescaped as it is read, so a field
+            // held whole is never copied; `\N` is NULL, and a field whose
+            // text is not UTF-8 is no value.
+            Leaf::Array(_) | Leaf::Record(_) | Leaf::Range(_) | Leaf::Multirange(_) => {
+                unescaped(field)?;
+                let mut text = if field.contains(&b'\\') {
+                    escaped_utf8_error(field).is_none().then(|| FieldText::escaped(field))?
+                } else {
+                    FieldText::plain(std::str::from_utf8(field).ok()?)
+                };
+                self.tier_walked(leaf, &mut text)
+            }
+            _ => self.tier_of(leaf, &unescape_field(field).ok()??),
         }
-        // `\N` is NULL, and an escaped field — a container's text position
-        // can hold one — is undone before it is walked.
-        let text = unescape_field(field).ok()??;
-        self.tier_of(leaf, &text)
     }
 }
 
@@ -691,6 +737,150 @@ mod tests {
         assert_eq!(tier(dated(), "(infinity,)"), None);
         let intervals = Leaf::Array(Box::new(Leaf::Interval));
         assert_eq!(tier(intervals, "{\"1 day\",\"2562047:47:16.854776\"}"), Some(Format));
+    }
+
+    /// **A container is tested as the walk reads it**, its field as `COPY`
+    /// wrote it unescaped as it is read: a field holding an escape tests as
+    /// its text does, and as a reader holding the text, the batch's
+    /// [`UnrepresentableRead::cannot_hold_walked`], tests it; a value the
+    /// walk finds malformed past a leaf past the format spec is no value,
+    /// tested not at all.
+    #[test]
+    fn a_container_is_tested_as_the_walk_reads_it() {
+        use pgdt_core::escape_field;
+        let dates = || Leaf::Array(Box::new(Leaf::Date));
+        let dated = || Leaf::Record(vec![Leaf::Held, Leaf::Date]);
+        let cases = [
+            (dates(), "{\"2024-01-01\",infinity}", Some(Format)),
+            (dates(), "{{2024-01-01},{262143-01-01}}", Some(Engine)),
+            (dates(), "{2024-01-01,NULL}", None),
+            (dated(), "(\"a\tb\\\\c\",infinity)", Some(Format)),
+            (dated(), "(\"a\nb\",2024-01-01)", None),
+            (dated(), "(x,infinity,\"a\tb\")", Some(Format)),
+            (Leaf::Range(Box::new(Leaf::Date)), "[\"2024-01-01\",infinity)", Some(Format)),
+            (
+                Leaf::Multirange(Box::new(Leaf::Date)),
+                "{[2024-01-01,2024-02-01),[2025-01-01,infinity)}",
+                Some(Format),
+            ),
+            // Malformed after its worst leaf: no value.
+            (dates(), "{infinity,2024-01-01", None),
+            (dates(), "{infinity},", None),
+            (dated(), "(infinity,\"a\"b)", None),
+        ];
+        for (leaf, text, past) in cases {
+            let field = escape_field(Some(text));
+            assert_eq!(counter(leaf.clone()).tier(0, &field), past, "{text:?} as COPY wrote it");
+            assert_eq!(counter(leaf.clone()).tier(0, text.as_bytes()), past, "{text:?}");
+            let read = UnrepresentableRead {
+                tier: ColumnTier { counter: Arc::new(counter(leaf.clone())), column: 0 },
+                reach: Engine,
+            };
+            assert_eq!(read.cannot_hold(text), past.is_some(), "{text:?}");
+            let escaped = FieldText::escaped(&field);
+            assert_eq!(read.cannot_hold_walked(escaped), past.is_some(), "{text:?} walked");
+            assert_eq!(read.cannot_hold_walked(FieldText::plain(text)), past.is_some(), "{text:?}");
+        }
+        assert_eq!(counter(dates()).tier(0, b"\\N"), None, "NULL");
+        assert_eq!(counter(dates()).tier(0, b"{infinity,\\377}"), None, "not UTF-8");
+    }
+
+    /// The tier a container's leaves are past as `decode_*`'s elements read
+    /// them, staged: what the walk replaced, kept as the differential's
+    /// reference.
+    fn tier_decoded(counter: &Counter, leaf: &Leaf, text: &str) -> Option<UnrepresentableTier> {
+        use crate::nested::{
+            RangeLiteral, decode_array, decode_multirange, decode_range, decode_record,
+        };
+        let worst = |tiers: Vec<Option<UnrepresentableTier>>| {
+            let tiers: Vec<_> = tiers.into_iter().flatten().collect();
+            tiers.iter().find(|tier| **tier == Format).or(tiers.last()).copied()
+        };
+        let bounds = |bound: &Leaf, range: &RangeLiteral| {
+            [range.lower.as_deref(), range.upper.as_deref()]
+                .into_iter()
+                .flatten()
+                .map(|value| tier_decoded(counter, bound, value))
+                .collect::<Vec<_>>()
+        };
+        match leaf {
+            Leaf::Array(child) => worst(
+                decode_array(text)?
+                    .elements
+                    .iter()
+                    .flatten()
+                    .map(|e| tier_decoded(counter, child, e))
+                    .collect(),
+            ),
+            Leaf::Record(fields) => worst(
+                fields
+                    .iter()
+                    .zip(&decode_record(text)?.fields)
+                    .filter_map(|(leaf, field)| Some((leaf, field.as_deref()?)))
+                    .map(|(leaf, field)| tier_decoded(counter, leaf, field))
+                    .collect(),
+            ),
+            Leaf::Range(bound) => worst(bounds(bound, &decode_range(text)?)),
+            Leaf::Multirange(bound) => worst(
+                decode_multirange(text)?.iter().flat_map(|range| bounds(bound, range)).collect(),
+            ),
+            scalar => counter.tier_of(scalar, text),
+        }
+    }
+
+    /// **The walk tests a container as `decode_*`'s elements did**: over
+    /// seeds of every container form holding dates, and every one of them
+    /// damaged a byte at a time, the tier read in place, as `COPY` escapes
+    /// it and through the batch's walked test is the staged reference's.
+    #[test]
+    fn the_walk_tests_a_container_as_its_elements_did() {
+        const INSERTED: &[u8] = b"{}[](),\"\\ 9in";
+        let dates = || Leaf::Array(Box::new(Leaf::Date));
+        let dated = || Leaf::Record(vec![Leaf::Held, Leaf::Date]);
+        let cases = [
+            (dates(), vec!["{2024-01-01,infinity}", "{{262143-01-01,1-01-01},{NULL,infinity}}"]),
+            (dates(), vec!["[0:1]={-infinity,2024-01-01}", "{}", "{\"infinity\"}"]),
+            (dated(), vec!["(x,infinity)", "(\"a,b\",262143-01-01)", "(,)"]),
+            (Leaf::Array(Box::new(dated())), vec!["{\"(x,infinity)\",\"(y,2024-01-01)\",NULL}"]),
+            (Leaf::Range(Box::new(Leaf::Date)), vec!["[2024-01-01,infinity)", "empty", "(,)"]),
+            (
+                Leaf::Multirange(Box::new(Leaf::Date)),
+                vec!["{[2024-01-01,2024-02-01),[262143-01-01,infinity)}", "{}"],
+            ),
+        ];
+        let damaged = |seed: &str| {
+            let bytes = seed.as_bytes();
+            let mut out = vec![seed.to_string()];
+            for at in 0..=bytes.len() {
+                let (head, tail) = bytes.split_at(at);
+                if let Some((_, rest)) = tail.split_first() {
+                    out.extend(String::from_utf8([head, rest].concat()).ok());
+                }
+                for &byte in INSERTED {
+                    out.extend(String::from_utf8([head, &[byte], tail].concat()).ok());
+                }
+            }
+            out
+        };
+        let mut past = 0;
+        for (leaf, seeds) in cases {
+            let counter = counter(leaf.clone());
+            let read = UnrepresentableRead {
+                tier: ColumnTier { counter: Arc::new(counter.clone()), column: 0 },
+                reach: Engine,
+            };
+            for text in seeds.iter().flat_map(|seed| damaged(seed)) {
+                let expected = tier_decoded(&counter, &leaf, &text);
+                past += usize::from(expected.is_some());
+                assert_eq!(counter.tier_of(&leaf, &text), expected, "{text:?}");
+                let field = pgdt_core::escape_field(Some(&text));
+                assert_eq!(counter.tier(0, &field), expected, "{text:?} as COPY wrote it");
+                let walked = read.cannot_hold_walked(FieldText::escaped(&field));
+                assert_eq!(walked, expected.is_some(), "{text:?} walked");
+            }
+        }
+        // A corpus no value of which is past a tier would agree vacuously.
+        assert!(past > 100, "{past} values past a tier");
     }
 
     /// **A scalar is counted from a head of its field**: the longest text

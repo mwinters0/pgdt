@@ -22,24 +22,24 @@ length, fragmenting a batch's buffers. A batch's buffer growing past a value is 
 (D84). Code: `batch/bytea.rs`, `batch/chunks.rs` (`OWN_BLOCK_PAST`), `value/bytea.rs` (`decode_bytea_into`). Evidence:
 `tests/decoded_copies.rs`.
 
-### D153 A nested value is decoded into its builders as the output grammars' walk reads it, no element staged
+### D153 A nested value is decoded into its builders as the output grammars' walk reads it, its tier tested by a walk of its own
 A query's batch reads an array, record, range, multirange or `int2vector` field by `decode_*`'s grammar walked over its
-text, or off its bytes unescaped as read, each part appended to its builder as handed over, an array's lists closed at
-its shape; one under a tier test (D98) is decoded whole through its elements. A refused field's parts stay, the refusal
-ending the query. Why: a query holds its line and one decoded copy (D141); a tier-tested type never grows long.
+text, or off its bytes unescaped as read, each part appended to its builder as handed over. A tier test (D98) walks it
+first, testing each leaf as read, as the census's and the gatherer's do. A refused field's parts stay, the refusal
+ending the query. Why: a query holds its line and one decoded copy (D141); a tested container grows as long as any.
 Rejected: `decode_*`'s elements, a `Cow` and its text an element; unescaping the field first; builders of our own for
-every leaf type, truncating a refused or tier-tested field's parts; a walk testing the leaves before the decoding walk,
-reading the field twice. Code: `batch/builder.rs` (`append_walked`), `nested/output/walk.rs`. Evidence:
+every leaf type, truncating a refused or nulled field's parts, so one walk could test and decode. Code:
+`batch/builder.rs` (`append_walked`), `nested/output/walk.rs`, `unrepresentable.rs` (`tier_walked`). Evidence:
 `tests/decoded_copies.rs`, `batch/tests.rs`.
 
 ### D154 A decode factor is what a column's reserved builders and walk hold per text byte; a query's, its largest
 A nested value past its chunk term is a batch of its own, decoded into builders reserved at each buffer's own density;
 its column's factor sums the reservations beside what its walk holds, and a query's is the largest beside its terms' key
-factors (D152). Why: a buffer doubling past its chunk term holds its outgrown one too; a reservation is committed whole,
-as the held line is. Rejected: doubling, a batch's (D141); every factor doubled; the densest buffer alone (another
+factors (D152). Why: a buffer doubling past its chunk term holds its outgrown one; a reservation is committed whole, as
+the held line is. Rejected: doubling, a batch's (D141); every factor doubled; the densest buffer alone (another
 doubles); the largest charged, the unwritten rest free (aborting past admission under a strict overcommit or an
-address-space limit); counting the parts first to reserve exactly (D153); summing the two kinds; a factor per type in
-pgdt-codec. Code: `batch/builder/factor.rs`, `RowBatcher::cuts_before`, `ReplayPlan::factor`. Evidence:
+address-space limit); counting parts first to reserve exactly (a second read); summing the two kinds; a factor per type
+in pgdt-codec. Code: `batch/builder/factor.rs`, `RowBatcher::cuts_before`, `ReplayPlan::factor`. Evidence:
 `factor/tests.rs`, `tests/decoded_copies.rs`.
 
 ### D84 The batch span is derived from the budget and the count, and spent before the count is cut

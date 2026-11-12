@@ -57,9 +57,9 @@ instruction by instruction; the legs kept in
   grown by doubling as Arrow's builders grow, so at the last doubling a
   builder holds its old and new buffers both. Whether a decode factor carries
   that growth is the factor's to state.
-- **A nested column under a tier test is not walked** (D153): it is unescaped
-  and decoded through its elements, `UnrepresentableRead::cannot_hold` reading
-  its whole text, so its factor is the staged form's (D154).
+- **A nested column under a tier test is walked too**, the test's walk
+  first, staging nothing
+  ([`roadmap-P33.25-tier-notes.md`](roadmap-P33.25-tier-notes.md)).
 
 ## Negative results
 
