@@ -82,7 +82,8 @@ none of it; what either produces is a `runs/` artifact with no median, no
 apparatus gate and no marker ([`../design/measurements.md`](../design/measurements.md),
 "What an instrument can see"). `--count-pair <rev>` counts one change's
 `instructions:u` against its parent, the tree's or a named commit's, and prints
-the comparison alone.
+the comparison alone; `--count-span <base>..<tip>` counts a run of landed
+commits the same way, as the account their pairs must sum to.
 
 ## P33 progress
 
@@ -119,7 +120,7 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.16.2** `long-line-resident`'s `int8[]` and `text[]` query legs and `jsonb` filter leg, each at one reader, `int8[]`'s and `jsonb`'s at the bound too, each leg's factor read off its planned query by the `introspect` build and the stated allowance sized from the largest, `LONG_LINE_WHOLE_VALUE_CHARGE` gone, as the spec's "How it is shown" states, and the figure's readings at the commit adding them. Taken at `93428ef7` ([`measurements.md`](../design/measurements.md), "What a held line holds resident"): a factor holds where no builder doubles, and `int8[]`'s and `text[]`'s doubling fires four falsifiers — [notes](../design/roadmap-P33.16.2-legs-notes.md)
 - [x] **33.24** A nested value's copy never doubles: a nested field past its chunk term decoded into builders reserved to its bound, its batch cut before it so they start empty, D154's doubling rejection rewritten, as the spec's "What a held line costs" states (D154); its count pair's rise, `RowBatcher::cuts_before` asked of every row, placed by callgrind and accepted, once `push_field`'s walked test was reworked to the parent's (D108) — [notes](../design/roadmap-P33.24-reserve-notes.md)
 - [x] **33.25** A tier test stages nothing: `tier_of` reading a container by the output grammar's walk, each leaf tested as it is read, for a query's batch, the census and the gatherer alike; D153's staging and D154's staged term gone, P40's inbox entry on a container's tier amended, as the spec's "What a held line costs" states; its count pair, `80abeb99` against the tree, resolving a rise on the data-level parse, the strings query and the `arrays` row, placed by callgrind in `FieldCount::tier`'s dispatch, `push_row`'s register allocation and the walked arm's `FieldText`, and accepted (D108) — [notes](../design/roadmap-P33.25-tier-notes.md)
-- [ ] **33.26** Evidence: a long field's parse priced — `--count-pair` given a data-level and a strict parse over `long_escaped_32` and `long_bytea_32` as standing rows, pairs taken on 33.13 (`e3a5ce6d`), 33.18 (`62e8875c`) and 33.19 (`e80138b2`) each against its first parent, 33.19's on the existing rows too, and `6dd4523c..93428ef7` as the account the three sum to, each rise placed by callgrind, as the spec's "How it is shown" states (D108); no production code; a slice reworking or accepting what it places allocated on its result, landing before 33.7
+- [ ] **33.26** Evidence: a long field's parse priced — `--count-pair` given a data-level and a strict parse over `long_escaped_32` and `long_bytea_32` as standing rows, pairs taken on 33.13 (`e3a5ce6d`), 33.18 (`62e8875c`) and 33.19 (`e80138b2`) each against its first parent, 33.19's on the existing rows too, and `6dd4523c..93428ef7` as the account the three sum to, each rise placed by callgrind, as the spec's "How it is shown" states (D108); no production code; a slice reworking or accepting what it places allocated on its result, landing before 33.7. Landed: the four rows, a strict parse its own shape (`STRICT_PARSE`), and `--count-span <base>..<tip>` counting the span as an account, refused off `tip`'s first-parent chain. The readings remain: the three pairs and the span, each pair's rises placed before the next overwrites its legs — [notes](../design/roadmap-P33.26-long-parse-notes.md)
 - [ ] **33.4** The ledger: carved by `Arrangement::resolve`, drawn by a held line past its chunk term, admitted in file order, a later holder giving its line up and re-reading it, the charge factors, a parse drawing for the scalar text it collects past its chunk term, an unstated allowance's ledger unlimited; a read over mapped blocks carving its longest line's charge before a reader starts; a query's polling contract stated on `TablePartitions` and tested; under today's line limit
 - [ ] **33.5** The floor: the pools shrinking and regrowing, readers parked latest first, a line one reader cannot hold refused for memory, and a read over mapped blocks whose longest line one reader cannot hold refused before it reads a byte, its remedy spelled by `pgdt` and the shell
 - [ ] **33.6** The bound: I71's constant on every path, measured exactly; `LineTooLong` naming it; a batch cut before a value would overflow its column's offsets; `--max-line-bytes`, `pgdump.max_line_bytes`, `ReadOptions::max_line_bytes`, their manual section and tests removed; the real-bound test; `KD93` struck
@@ -154,4 +155,17 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **33.26's span is read by a flag of its own, not by relaxing `--count-pair`'s
+  guard.** `--count-pair <parent>..<change>` still refuses anything but the
+  first parent (evidence rule 7); `--count-span <base>..<tip>` builds both ends
+  from checkouts, is refused unless `base` is on `tip`'s first-parent chain,
+  and says it is an account over N commits, never a price
+  (`measure.py`'s `count_span_named`). Chosen so no pricing run can pass a span
+  by a typo, and so the one place a multi-commit difference is taken names
+  itself. Reconsidering: a flag on `--count-pair` instead changes the spelling
+  only; refusing spans outright leaves 33.26's account to arithmetic over the
+  pairs alone, with no check that they are the whole of it. The span lands
+  thirteen other slices beside the three (notes, "What the readings inherit"),
+  so a residual is likely and owes a name.
 

@@ -326,8 +326,9 @@ Eighteen standing rules for reading anything below:
   event in the timed run itself (`release-profile`). `--count-pair <rev>`
   counts it on the shipped build at the tree's parent and at the tree, or
   `<parent>..<change>` at a committed change and its parent, which prices one
-  change and publishes nothing; callgrind places a rise the pair
-  resolves (`--callgrind-recipe`; [`decisions.md`](decisions.md), "D108").
+  change and publishes nothing; `--count-span <base>..<tip>` counts a run of
+  landed commits, an account their pairs must sum to and never a price;
+  callgrind places a rise the pair resolves (`--callgrind-recipe`; [`decisions.md`](decisions.md), "D108").
 - **A landed lever invalidates the tables that time its path, so a campaign's
   sweep goes last.** This binds by construction rather than by taste: a phase
   that admits levers from its own profiles is profiling the shape its figures

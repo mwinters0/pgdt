@@ -65,10 +65,11 @@ builds measures everything that differs between the two trees, which grows
 every time the tree moves and the pinned side does not; what one mechanism
 costs inside a run is an attribution, read off a profile
 (`docs/design/roadmap.md`, "Attribution is introspective; only the gate is
-blind"), not a second build differenced against the first. The one build of
-another tree, `--count-pair`'s, is of one change's parent alone — the working
-tree's, or a named commit's — and publishes nothing: it prices one slice's
-change in `instructions:u`.
+blind"), not a second build differenced against the first. The builds of
+another tree publish nothing: `--count-pair`'s is of one change's parent alone
+— the working tree's, or a named commit's — and prices one slice's change in
+`instructions:u`, and `--count-span`'s is of a run of landed commits, read only
+as the account the pairs on them must sum to.
 
 Machine facts stay out of here: every path is an environment variable whose
 default suits the machine CLAUDE.local.md describes, and the procedure lives in
@@ -84,6 +85,7 @@ Usage:
     uv run measure.py --stale --since <rev>
     uv run measure.py --count-pair HEAD~1
     uv run measure.py --count-pair <parent>..<change>
+    uv run measure.py --count-span <base>..<tip>
     uv run measure.py --profile-recipe
     uv run measure.py --heaptrack-recipe
     uv run measure.py --callgrind-recipe
@@ -3211,6 +3213,14 @@ STATISTICS_LEGS: tuple[tuple[str, str], ...] = (
 #: rather than standing in for it.
 STATISTICS_MEMORY = "2g"
 
+#: The strict parse `--count-pair` counts: the data level's unwrapped `parse`
+#: (`STATISTICS_FAMILY`'s `data`) told to check every field, as
+#: `long-line-resident`'s strict pass is, so the strict check's path is a row
+#: of its own. No figure times it.
+STRICT_PARSE = "parse-strict"
+#: What it states beside the data level's request.
+STRICT_FLAG = "--postgres-invalid-values strict"
+
 #: `statistics-pruning`'s shapes, `<family><filter>-<leg>`: a `pgdt query`
 #: timed against a cache one untimed gathering `parse` wrote in the same
 #: container, as `info-cache-rss` builds its own — so the cache is by
@@ -4607,6 +4617,13 @@ def _script(command: str) -> str:
             f"time {PEAK_RSS} /pgdt parse --source /dump.sql "
             f"--cache /tmp/x.pgdt {j} {flags[leg]} >/dev/null"
         )
+    if command == STRICT_PARSE:
+        # `--count-pair`'s strict row: the unwrapped data-level `parse` above,
+        # checking every field.
+        return (
+            f"{q} parse --source /dump.sql --cache /tmp/x.pgdt {j} {GATHER_STATISTICS} "
+            f"{STRICT_FLAG} >/dev/null"
+        )
     if command.startswith(PRUNING_FAMILY):
         # `statistics-pruning`. The builder is outside the timer and states the
         # gathering request; the timed `query` states which use it makes of it.
@@ -4768,7 +4785,7 @@ def _script(command: str) -> str:
             )
         if name == "filter":
             return f"{LONG_LINE_BUILDER}time {PEAK_RSS} {long_line_filter(int(jobs))}"
-        strict = " --postgres-invalid-values strict" if name == "strict" else ""
+        strict = f" {STRICT_FLAG}" if name == "strict" else ""
         return (
             f"time {PEAK_RSS} /pgdt parse --source /dump.sql --cache /tmp/x.pgdt "
             f"--jobs {jobs} --memory {ALLOWANCE_SLOT} "
@@ -4918,6 +4935,7 @@ def command_shapes() -> tuple[str, ...]:
         *(f"query-where-{s}" for s in PREDICATE_SHAPES),
         *(f"parse-chunk-{n}" for n in CHUNK_SIZES),
         *(f"{STATISTICS_FAMILY}{leg}{rss}" for leg, _ in STATISTICS_LEGS for rss in ("-rss", "")),
+        STRICT_PARSE,
         *(f"{PRUNING_FAMILY}{name}-{leg}" for name in PRUNING_FILTERS for leg in PRUNING_LEGS),
         *dynfilter_shapes(),
         DYNFILTER_STARTUP,
@@ -5055,6 +5073,7 @@ _PARSE_RUN = re.compile(r"/pgdt parse (?:(?!&&)[^;])*")
 #: `GATHER_STATISTICS`.
 GATHERING_FAMILIES: tuple[str, ...] = (
     STATISTICS_FAMILY,
+    STRICT_PARSE,
     PRUNING_FAMILY,
     DYNFILTER_FAMILY,
     PARALLEL_SCAN,
@@ -17947,6 +17966,12 @@ def cmd_verify_additive(since: str | None) -> int:
 #: so the device it is read from moves nothing it reports, and nothing is
 #: staged.
 COUNT_PAIR_INPUT = "control"
+#: The long-field rows' inputs: `long-line-resident`'s escaped text and `bytea`
+#: at its shortest length, a 32 MiB line each, past a read chunk and under
+#: today's line limit, so every commit a pair is taken on reads them unflagged.
+COUNT_PAIR_LONG_INPUTS: tuple[str, ...] = tuple(
+    long_line_input(kind, "32") for kind in ("escaped", "bytea")
+)
 
 #: `--count-pair`'s shapes, in its comparison's row order, each with what the
 #: row is called, the container limit it runs under (`None`: the recorded
@@ -17959,6 +17984,13 @@ COUNT_PAIR_INPUT = "control"
 #: shapes the register times, so a count here and a figure there are one
 #: workload. `pgdt sql`'s runs fall on two counts, so a rise smaller than their
 #: step is unresolved there, and the typed `query` counts the same decode finer.
+#:
+#: **A long field's parse has four rows of its own** (`COUNT_PAIR_LONG_INPUTS`):
+#: the data-level parse and the strict one (`STRICT_PARSE`) over a cluster of
+#: escaped text and of `bytea` lines, each a `long-line-resident` input. Only
+#: a field past its chunk reaches the path a parse reads a long field on
+#: (`roadmap-P33-line-bound.md`, "How it is shown"), and the control holds
+#: none; each runs under the data level's limit, for the same reason.
 COUNT_PAIR_SHAPES: tuple[tuple[str, str, str | None, str], ...] = (
     ("parse", "`pgdt parse` at the metadata level", None, COUNT_PAIR_INPUT),
     (f"{STATISTICS_FAMILY}data", "`pgdt parse` at the data level", STATISTICS_MEMORY, COUNT_PAIR_INPUT),
@@ -17966,6 +17998,14 @@ COUNT_PAIR_SHAPES: tuple[tuple[str, str, str | None, str], ...] = (
     ("query-typed", "`query --schema-mode typed`", None, COUNT_PAIR_INPUT),
     (PARALLEL_SCAN, "`pgdt sql -c` — a typed DataFusion scan", None, COUNT_PAIR_INPUT),
     ("query-typed", "`query --schema-mode typed` over `arrays`", None, "arrays"),
+    *(
+        (command, f"{label} over `{name}`", STATISTICS_MEMORY, name)
+        for name in COUNT_PAIR_LONG_INPUTS
+        for command, label in (
+            (f"{STATISTICS_FAMILY}data", "`pgdt parse` at the data level"),
+            (STRICT_PARSE, "a strict `pgdt parse`"),
+        )
+    ),
 )
 
 
@@ -18047,6 +18087,30 @@ def count_pair_named(parent_rev: str, change_rev: str) -> tuple[str, str, str | 
         f"{first[:10] if first else 'none'}, not {parent_rev}'s {parent[:10]}: a pair across "
         "more than one change prices every commit between under the last one's name"
     )
+
+
+def count_span_named(base_rev: str, tip_rev: str) -> tuple[str, str, int, str | None]:
+    """`--count-span <base>..<tip>`'s two commits, how many commits the span
+    lands, and why they cannot be its legs, or `None`.
+
+    **An account, never a price**: a span differences every commit between,
+    so it answers only what the pairs taken on its commits must sum to
+    (`.claude/skills/evidence/SKILL.md`, rules 1 and 7), and says so. Refused
+    unless `base` is an older commit on `tip`'s first-parent chain, so the
+    commits it sums are the ones that chain landed and each could be priced
+    by a pair of its own."""
+    base, tip = resolve_commit(base_rev), resolve_commit(tip_rev)
+    for rev, resolved in ((base_rev, base), (tip_rev, tip)):
+        if resolved is None:
+            return "", "", 0, f"{rev!r} names no commit"
+    assert base is not None and tip is not None
+    chain = run(["git", "rev-list", "--first-parent", tip], cwd=REPO, capture=True).split()
+    if base == tip or base not in chain:
+        return base, tip, 0, (
+            f"{base_rev}'s {base[:10]} is no older commit on {tip_rev}'s first-parent chain, "
+            "so the span is no run of landed commits a pair could each price"
+        )
+    return base, tip, chain.index(base), None
 
 
 def image_inputs_at(rev: str) -> dict[str, bytes]:
@@ -18201,7 +18265,7 @@ def count_pair_table(counts: Mapping[str, Mapping[str, Sequence[int]]]) -> str:
     )
 
 
-def cmd_count_pair(rev: str, cfg: Config) -> int:
+def cmd_count_pair(rev: str, cfg: Config, span: bool = False) -> int:
     """`--count-pair <rev>`: the shipped build at `rev` and at the working
     tree, each shape of `COUNT_PAIR_SHAPES` counted `RELEASE_PROFILE_REPS`
     times on each, and the comparison printed. **No figure**: nothing is
@@ -18224,11 +18288,27 @@ def cmd_count_pair(rev: str, cfg: Config) -> int:
     being the tree's: both legs from checkouts, refused unless `parent` is
     `change`'s parent (`count_pair_named`) or either would build under
     another toolchain than the tree's. Ends by saying how many rows resolved
-    and whether the run fit under `DETACH_SECONDS`."""
+    and whether the run fit under `DETACH_SECONDS`.
+
+    **`span` takes `<base>..<tip>` as an account instead** (`--count-span`):
+    both legs from checkouts as a named change's are, refused unless `base`
+    is on `tip`'s first-parent chain (`count_span_named`), and each row's
+    change said to be every commit's between, summed — what the pairs on
+    those commits must add up to, never one change's price."""
     started = time.monotonic()
     dry_run = cfg.dry_run
     named, _, change_rev = rev.partition("..")
-    if change_rev:
+    commits = 1
+    if span:
+        if not change_rev:
+            print(f"--count-span refused: {rev!r} is no <base>..<tip>.", file=sys.stderr)
+            return 2
+        parent, change, commits, refusal = count_span_named(named, change_rev)
+        refusals = [refusal] if refusal else [
+            count_pair_image_refusal(parent), count_pair_image_refusal(change)
+        ]
+        described = f"{change[:10]}, an account over {commits} commits"
+    elif change_rev:
         parent, change, refusal = count_pair_named(named, change_rev)
         refusals = [refusal] if refusal else [
             count_pair_image_refusal(parent), count_pair_image_refusal(change)
@@ -18241,7 +18321,8 @@ def cmd_count_pair(rev: str, cfg: Config) -> int:
         described = "the uncommitted tree" if dirty else f"HEAD ({parent[:10]}..HEAD)"
     for refusal in refusals:
         if refusal:
-            print(f"--count-pair refused: {refusal}.", file=sys.stderr)
+            flag = "--count-span" if span else "--count-pair"
+            print(f"{flag} refused: {refusal}.", file=sys.stderr)
             return 2
 
     def log(msg: str) -> None:
@@ -18303,6 +18384,11 @@ def cmd_count_pair(rev: str, cfg: Config) -> int:
         f"\n{len(resolved)} of {len(COUNT_PAIR_SHAPES)} rows resolved"
         + (f": {', '.join(resolved)}." if resolved else ".")
     )
+    if span:
+        log(
+            f"An account over {commits} commits, not one change's price: each row's change is "
+            "every one of theirs, summed, and is read only against the pairs taken on them."
+        )
     fits = took < DETACH_SECONDS
     log(
         f"The pair took {took / 60:.1f} min, "
@@ -18406,6 +18492,16 @@ def callgrind_invocation(
             "--cache", str(cache),
             "--jobs", str(SWEEP_JOBS),
             *flags[leg].split(),
+        ]  # fmt: skip
+        return [], [*argv, *stated], None
+    if command == STRICT_PARSE:
+        argv = [
+            "parse",
+            "--source", str(source),
+            "--cache", str(cache),
+            "--jobs", str(SWEEP_JOBS),
+            *GATHER_STATISTICS.split(),
+            *STRICT_FLAG.split(),
         ]  # fmt: skip
         return [], [*argv, *stated], None
     if command not in {c for c, *_ in COUNT_PAIR_SHAPES}:
@@ -18844,6 +18940,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "each row resolved or not — a slice's price, never a figure; PARENT..CHANGE prices "
         "a committed CHANGE, whose parent PARENT must be, both built from checkouts",
     )
+    parser.add_argument(
+        "--count-span",
+        metavar="BASE..TIP",
+        help="--count-pair's rows over a run of landed commits, BASE on TIP's first-parent "
+        "chain, both built from checkouts — an account the pairs on those commits must sum "
+        "to, never one change's price",
+    )
     parser.add_argument("--reps", type=int, help="override every figure's rep count (smoke runs only)")
     parser.add_argument("--dry-run", action="store_true", help="print what would run, measure nothing")
     parser.add_argument("--keep-warm", action="store_true", help="leave staged inputs on tmpfs")
@@ -18896,6 +18999,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_verify_additive(args.since)
     if args.count_pair:
         return cmd_count_pair(args.count_pair, Config(dry_run=args.dry_run))
+    if args.count_span:
+        return cmd_count_pair(args.count_span, Config(dry_run=args.dry_run), span=True)
 
     ids: list[str] = []
     for item in args.figure:

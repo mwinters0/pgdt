@@ -801,6 +801,7 @@ class StatisticsFigures(unittest.TestCase):
             set(families),
             {
                 measure.STATISTICS_FAMILY,
+                measure.STRICT_PARSE,
                 measure.PRUNING_FAMILY,
                 measure.DYNFILTER_FAMILY,
                 measure.PARALLEL_SCAN,
@@ -1805,7 +1806,7 @@ class CountPair(unittest.TestCase):
         at = measure.image_inputs_at("HEAD")
         self.assertEqual(set(at), set(measure.release.image_inputs()))
 
-    def test_the_shapes_are_the_spec_s_five_and_a_nested_decode_each_counted_around_one_pgdt(self):
+    def test_the_shapes_are_the_spec_s_five_a_nested_decode_and_a_long_field_s_parses(self):
         rows = [(command, name) for command, _, _, name in measure.COUNT_PAIR_SHAPES]
         control = measure.COUNT_PAIR_INPUT
         self.assertEqual(
@@ -1817,8 +1818,20 @@ class CountPair(unittest.TestCase):
                 ("query-typed", control),
                 (measure.PARALLEL_SCAN, control),
                 ("query-typed", "arrays"),
+                ("parse-statistics-data", "long_escaped_32"),
+                (measure.STRICT_PARSE, "long_escaped_32"),
+                ("parse-statistics-data", "long_bytea_32"),
+                (measure.STRICT_PARSE, "long_bytea_32"),
             ],
         )
+        # Each long row reads a `long-line-resident` input of one 32 MiB line
+        # kind, past a chunk and under today's line limit.
+        for name, kind in (("long_escaped_32", "escaped"), ("long_bytea_32", "bytea")):
+            spec = measure.INPUTS[name]
+            self.assertEqual(spec.generator, "generate_long_lines.py")
+            self.assertIn(kind, spec.args)
+            self.assertIn(str(32 * measure.MIB), spec.args)
+        self.assertLess(32 * measure.MIB, 64 << 20)
         # The control holds no nested column; the one row decoding one reads
         # an input generated with them.
         self.assertIn("--arrays", measure.INPUTS["arrays"].args)
@@ -1838,11 +1851,21 @@ class CountPair(unittest.TestCase):
         gathering = measure._script("parse-statistics-data")
         self.assertIn(measure.GATHER_STATISTICS, gathering)
         self.assertNotIn(measure.PEAK_RSS, gathering)
+        # The strict row is that parse told to check every field, and nothing
+        # else.
+        strict = measure._script(measure.STRICT_PARSE)
+        self.assertEqual(
+            strict.replace(f" {measure.STRICT_FLAG}", ""), gathering
+        )
+        self.assertIn("--postgres-invalid-values strict", strict)
 
     def test_the_data_level_runs_under_the_statistics_figure_s_limit(self):
-        limits = {command: memory for command, _, memory, _ in measure.COUNT_PAIR_SHAPES}
-        self.assertEqual(limits.pop("parse-statistics-data"), measure.STATISTICS_MEMORY)
-        self.assertEqual(set(limits.values()), {None})
+        # Every row gathering statistics, the strict parse's included, under
+        # that figure's limit, since its allowance is discovered from it (D85).
+        for command, label, memory, _ in measure.COUNT_PAIR_SHAPES:
+            gathers = command in ("parse-statistics-data", measure.STRICT_PARSE)
+            with self.subTest(row=label):
+                self.assertEqual(memory, measure.STATISTICS_MEMORY if gathers else None)
 
     def test_a_run_is_the_counted_shape_in_the_register_s_image(self):
         cfg = measure.Config()
@@ -1920,10 +1943,11 @@ class CountPair(unittest.TestCase):
             table,
         )
 
-    def _pair(self, tmp, answer, rev="HEAD", named=None):
+    def _pair(self, tmp, answer, rev="HEAD", named=None, spanned=None):
         """`cmd_count_pair` with every outside effect stood in: each run's
         count, and the answer `answer(leg)` gives on its stdout. `named` is
-        what `count_pair_named` returns."""
+        what `count_pair_named` returns, and `spanned` what
+        `count_span_named` does, which takes `rev` as a span."""
         cfg = self._cfg(tmp)
         ran, out = [], io.StringIO()
         self.mounted = []
@@ -1949,6 +1973,7 @@ class CountPair(unittest.TestCase):
             unittest.mock.patch.object(measure, "count_pair_refusal", return_value=None),
             unittest.mock.patch.object(measure, "count_pair_image_refusal", return_value=None),
             unittest.mock.patch.object(measure, "count_pair_named", return_value=named),
+            unittest.mock.patch.object(measure, "count_span_named", return_value=spanned),
             unittest.mock.patch.object(measure, "counter_preflight", return_value=[]),
             unittest.mock.patch.object(
                 measure, "ensure_count_instructions_binary", return_value=Path("/c")
@@ -1961,7 +1986,7 @@ class CountPair(unittest.TestCase):
         with contextlib.ExitStack() as stack, contextlib.redirect_stdout(out):
             for patch in patches:
                 stack.enter_context(patch)
-            code = measure.cmd_count_pair(rev, cfg)
+            code = measure.cmd_count_pair(rev, cfg, span=spanned is not None)
         return code, ran, git, out.getvalue()
 
     def test_each_shape_is_counted_release_profile_s_reps_on_each_leg_and_the_worktree_goes(self):
@@ -2048,6 +2073,65 @@ class CountPair(unittest.TestCase):
         binary.assert_not_called()
         self.assertIn("moved", err.getvalue())
 
+    def test_a_span_is_refused_unless_its_base_is_on_its_tip_s_first_parent_chain(self):
+        base, mid, tip, side = "a" * 40, "b" * 40, "c" * 40, "d" * 40
+        names = {"base": base, "mid": mid, "tip": tip, "side": side}
+
+        def fake(argv, cwd=None, capture=False, quiet=False):
+            if argv[:2] == ["git", "rev-list"]:
+                self.assertIn("--first-parent", argv)
+                return {tip: f"{tip}\n{mid}\n{base}\n", mid: f"{mid}\n{base}\n"}[argv[-1]]
+            rev = argv[-1].removesuffix("^{commit}")
+            if rev not in names:
+                raise subprocess.CalledProcessError(1, argv)
+            return names[rev] + "\n"
+
+        with unittest.mock.patch.object(measure, "run", fake):
+            # Two commits landed after the base: the span sums both.
+            self.assertEqual(measure.count_span_named("base", "tip"), (base, tip, 2, None))
+            self.assertEqual(measure.count_span_named("mid", "tip"), (mid, tip, 1, None))
+            for older, newer in (("side", "tip"), ("tip", "mid"), ("tip", "tip")):
+                with self.subTest(span=f"{older}..{newer}"):
+                    refusal = measure.count_span_named(older, newer)[3]
+                    self.assertIn("first-parent chain", refusal)
+            self.assertIn("names no commit", measure.count_span_named("base", "nope")[3])
+
+    def test_a_span_builds_both_legs_from_checkouts_and_reads_as_an_account(self):
+        base, tip = "a" * 40, "c" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            with unittest.mock.patch.object(measure, "RELEASE_PROFILE_REPS", 1):
+                code, _, git, out = self._pair(
+                    tmp, lambda _leg: "", rev="base..tip", spanned=(base, tip, 58, None)
+                )
+            runs = Path(tmp) / "runs"
+        self.assertEqual(code, 0)
+        self.assertEqual([argv[-1] for argv in git if argv[2] == "add"], [base, tip])
+        self.assertEqual(
+            self.built,
+            [
+                ("parent", runs / f"count-pair-worktree-{base[:10]}", None),
+                ("tree", runs / f"count-pair-worktree-{tip[:10]}", measure.COUNT_PAIR_CHANGE_TARGET),
+            ],
+        )
+        self.assertIn(f"count pair: {base[:10]} against {tip[:10]}, an account over 58 commits", out)
+        self.assertIn("An account over 58 commits, not one change's price", out)
+
+    def test_a_refused_span_builds_nothing(self):
+        for rev, spanned, said in (
+            ("tip", ("", "", 0, None), "no <base>..<tip>"),
+            ("side..tip", ("d" * 40, "c" * 40, 0, "not on the chain"), "not on the chain"),
+        ):
+            with self.subTest(rev=rev), unittest.mock.patch.object(
+                measure, "count_span_named", return_value=spanned
+            ), unittest.mock.patch.object(
+                measure, "count_pair_image_refusal", return_value=None
+            ), unittest.mock.patch.object(measure, "count_pair_binary") as binary, \
+                 contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(measure.cmd_count_pair(rev, measure.Config(), span=True), 2)
+                binary.assert_not_called()
+                self.assertIn("--count-span refused", err.getvalue())
+                self.assertIn(said, err.getvalue())
+
     def test_a_resolved_row_is_named_after_the_table(self):
         with tempfile.TemporaryDirectory() as tmp:
             with unittest.mock.patch.object(measure, "RELEASE_PROFILE_REPS", 1):
@@ -2081,6 +2165,11 @@ class CountPair(unittest.TestCase):
         rev, cfg = cmd.call_args.args
         self.assertEqual(rev, "HEAD~1")
         self.assertTrue(cfg.dry_run)
+        self.assertEqual(cmd.call_args.kwargs, {})
+        with unittest.mock.patch.object(measure, "cmd_count_pair", return_value=0) as cmd:
+            self.assertEqual(measure.main(["--count-span", "a..b"]), 0)
+        self.assertEqual(cmd.call_args.args[0], "a..b")
+        self.assertEqual(cmd.call_args.kwargs, {"span": True})
 
 
 class InstructionCounter(unittest.TestCase):
