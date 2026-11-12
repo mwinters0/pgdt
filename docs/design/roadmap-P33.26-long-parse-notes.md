@@ -1,8 +1,12 @@
 # P33.26 notes — a long field's parse priced
 
-**The instrument has landed and its readings have not been taken**: a slice
-that builds an instrument stops before its readings, which are taken from a
-commit holding it (`.claude/skills/go/SKILL.md`, "Pick the work").
+**33.13, 33.18 and 33.19 each resolve a rise on a long field's parse, and the
+span they sit in is every row's account**: the three pairs, the span and
+every rise placed by callgrind are under `runs/count-pair-33.26-20261112/`,
+its `callgrind/reading.txt` the reading, the legs kept in
+`/mnt/ssd/fedora/scratch/pgdump_query/count-pair-33.26/`
+([`decisions.md`](decisions.md), "D108", "D155"). Each placement reproduces
+on both rep pairs; D108's falls are unplaced.
 
 - **`--count-pair` has four more standing rows** (`COUNT_PAIR_SHAPES`): the
   data-level parse and a strict one (`STRICT_PARSE`, the data level's
@@ -19,38 +23,75 @@ commit holding it (`.claude/skills/go/SKILL.md`, "Pick the work").
   `--count-pair <parent>..<change>` still refuses anything but the first
   parent. Held by `test_measure.py`'s `CountPair`.
 
-## What the readings inherit
+## Where each pair's rise is placed
 
-- **The commands**, from a clean checkout of a commit holding this
-  instrument, one at a time: each pair overwrites the two leg binaries
-  (`count_pair_leg_binary`) that `--callgrind-recipe` places a rise in, so a
-  pair's resolved rows are placed before the next pair runs.
+All three are changed code; none is layout.
 
-  ```sh
-  cd scripts && uv run measure.py --count-pair 6d4a1cf4..e3a5ce6d   # 33.13
-  cd scripts && uv run measure.py --count-pair a36e8580..62e8875c   # 33.18
-  cd scripts && uv run measure.py --count-pair c356be7a..e80138b2   # 33.19
-  cd scripts && uv run measure.py --count-span 6dd4523c..93428ef7   # the account, 58 commits
-  ```
+- **33.13 (`6d4a1cf4..e3a5ce6d`)**: an escaped field past `LONG_FIELD_HEAD`
+  folded a byte at a time off `Unescaped` — `TextFold::push`,
+  `Gatherer::observe_row`, `ColumnGatherer::observe_text` and a `bytea`'s
+  `bounds::Canonical::of` — costs more than the one `unescape_owned` copy it
+  removes. It rises on the control's data-level parse and on every long
+  row's but the strict escaped one, which falls.
+- **33.18 (`a36e8580..62e8875c`)**: `Unescaped::next` is `Unescape::step`'s
+  state machine, nine more instructions an escaped byte wherever it is
+  inlined — the gatherer, `unescape_owned`, a query's `bytea` in
+  `push_row` — so every row but the metadata-level parse rises. A strict
+  check's `bytea` is walked a byte at a time by `FieldWalk` and
+  `Check::byte` where `bytea_reads` read a slice, the largest single rise
+  (strict `long_bytea_32`, +169%), as 33.18's notes expected.
+- **33.19 (`c356be7a..e80138b2`)**: a streamed field is read run by run,
+  and `Unescape::run` hands each escape's byte on as a run of one, so
+  `LongRead::text` runs its whole fan-out — the head, `TextFold::push` and
+  its `from_utf8`, a `bytea`'s forms — twice an escape: 33.55M calls over
+  `long_escaped_32`'s 16.8M escapes. A strict parse feeds `FieldWalk` the
+  same runs through a second `Unescape`. The control's held rows take the
+  same fold (`Gatherer::field`), and the metadata-level parse's small rise is
+  `RowFold`'s adapter in `map_forward`. 2026-11-11's unplaced candidate is
+  this.
 
-  Each was refused by neither guard here: every commit named has the
-  tree's image inputs, and `6dd4523c` is on `93428ef7`'s first-parent chain.
-  A pair over six rows took 29–36 minutes (`runs/count-pair-33.25-20261111/log`,
-  `runs/count-pair-33.16.3-20261111-0143/log`), so the four together, with
-  their callgrind blocks, go detached per `.claude/skills/gosub/handoff.md`.
-- **The span holds more than the three**: its first-parent run also lands
-  33.3.1, 33.10, 33.12, 33.11, 33.9, 33.3.2, 33.3.3, 33.13.1, 33.21, 33.13.3,
-  33.13.4, 33.13.5 and 33.23, each changing a file a long field's parse
-  runs — `scan/chunked.rs`'s held line (33.10, 33.12; a data-level parse held
-  its line until 33.19), `copy.rs`, `gather/strict.rs` and `value/bytea.rs`
-  (33.9). Where the three pairs do not sum to the span within spread, these
-  are the residual's candidates, and it owes a name or the words "no name"
-  (`.claude/skills/evidence/SKILL.md`, rule 6). Within spread, the account
-  closes unplaced. Past it, **the span's own legs place it**: the span runs
-  last, so `--callgrind-recipe` reads its binaries, and a function moved past
-  what the three pairs' placements hold is named by the candidate whose diff
-  touches it. A `--count-pair` on a candidate is taken only where two touch
-  one function, and "no name" is written only where neither separates them.
-- **33.19's pair is read on every row**, the control's included: its
-  trigger is D108's, any hot-path change.
+## The account
 
+**On every row the three pairs miss the span by more than its spread**, and
+the residual is placed, not fitted: per row the span's median change is the
+three pairs' plus four gaps between adjacent legs — `6dd4523c..6d4a1cf4`,
+`e3a5ce6d..a36e8580`, `62e8875c..c356be7a`, `e80138b2..93428ef7` — each
+gap's own two legs callgrinded, so its candidates are its commits alone
+rather than the span's 58. Where two candidates change one function, a pair
+on a candidate separates them (33.3.1, 33.3.2, 33.3.3, 33.21; each in the
+run directory). Every residual has a name (`reading.txt`, "The account"):
+
+- **33.9** is the largest: `unescape_owned` read through `Unescaped`, and a
+  query's and a strict check's `bytea` decoded once off it, falls on every
+  row with an escaped or `bytea` column — up to 2.2e9 on a strict
+  `long_bytea_32`.
+- **33.3.1** (both parses, every query row), **33.11** (`CopyScanner`
+  keeping each block's longest line), **M276** (the datetime readers),
+  **33.3.2** (the query rows, falls) and **33.3.3**, by pair or by the one
+  diff touching the function.
+- **M278** (`append_typed`, the query rows' falls); **M277 with M278**, the
+  data-level parse's 13.9M in `Gatherer::observe_row` around their
+  refusal quote, unseparated.
+- **33.13.3**: `Check::byte`, two instructions a byte of a strict
+  `long_bytea_32`. 33.21's pair resolves no row.
+- **33.16**, its own pair within 1M of the gap on the strings, typed and
+  `arrays` rows, accepted there; and the `pgdt sql` row's other 54.6M,
+  `ResolvedTerm::eval` testing per row which reader an escaped field takes,
+  a test each of **33.14, 33.14.1 and 33.15** adds, unseparated.
+
+## What 33.27 inherits
+
+- **The three rises, each placed and neither reworked nor accepted here**;
+  the slice reworks or accepts each against its parent's pair (D108).
+- **33.19's is the largest on an escaped field and is not inherent to a
+  fold**: one `from_utf8` and one fan-out per one-byte run is per escape,
+  not per byte read. 33.13's and 33.18's are per byte.
+- **The four long rows are standing**, so the slice's own pair reads them.
+
+## Negative results
+
+- **The query rows' callgrind runs first ran cold**: a query row's recipe
+  block builds the cache with an untimed `parse` before each run, and a job
+  written from the run's three lines alone mapped the dump inside the
+  counted run. The gates still read near 100% on most segments, which hid
+  it; the arrays row's gap read 66%. Every query run was re-taken warm.
