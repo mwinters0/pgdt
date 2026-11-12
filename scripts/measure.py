@@ -18294,7 +18294,7 @@ def cmd_count_pair(rev: str, cfg: Config, span: bool = False) -> int:
     both legs from checkouts as a named change's are, refused unless `base`
     is on `tip`'s first-parent chain (`count_span_named`), and each row's
     change said to be every commit's between, summed — what the pairs on
-    those commits must add up to, never one change's price."""
+    those commits must add up to, never one change's price (D155)."""
     started = time.monotonic()
     dry_run = cfg.dry_run
     named, _, change_rev = rev.partition("..")

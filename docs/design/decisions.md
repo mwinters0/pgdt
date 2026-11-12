@@ -7,7 +7,7 @@ in its topic's file under `decisions/`, which opens with what the topic is and i
 index and the citation target: cite as `docs/design/decisions.md`, "D12". The rules, the caps and the meter included,
 are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D154 -->
+<!-- decision-watermark: D155 -->
 
 ## I/O, memory and parallelism
 [`decisions/io.md`](decisions/io.md)
@@ -167,6 +167,7 @@ are `docs/process.md`, "The decision register".
 - **D73** Round trips, asserted shapes, and a hand-verified signal path
 - **D102** The unrepresentable category is read off hand-written extremes through DataFusion's own path, never listed
 - **D108** A hot-path change is priced by `--count-pair`, and a rise it resolves is placed by callgrind, then reworked or accepted
+- **D155** A run of landed commits is counted as an account by a flag of its own, never priced
 - **D130** A table read with its descendants is checked against the server's answers over a restore of its dump
 
 ## Releases (`release/`, `scripts/release.py`, `scripts/release_ci.py`, `scripts/debian_window.py`)

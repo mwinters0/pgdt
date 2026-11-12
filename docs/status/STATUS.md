@@ -156,16 +156,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **33.26's span is read by a flag of its own, not by relaxing `--count-pair`'s
-  guard.** `--count-pair <parent>..<change>` still refuses anything but the
-  first parent (evidence rule 7); `--count-span <base>..<tip>` builds both ends
-  from checkouts, is refused unless `base` is on `tip`'s first-parent chain,
-  and says it is an account over N commits, never a price
-  (`measure.py`'s `count_span_named`). Chosen so no pricing run can pass a span
-  by a typo, and so the one place a multi-commit difference is taken names
-  itself. Reconsidering: a flag on `--count-pair` instead changes the spelling
-  only; refusing spans outright leaves 33.26's account to arithmetic over the
-  pairs alone, with no check that they are the whole of it. The span lands
-  thirteen other slices beside the three (notes, "What the readings inherit"),
-  so a residual is likely and owes a name.
-

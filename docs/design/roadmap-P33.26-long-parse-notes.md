@@ -45,7 +45,12 @@ commit holding it (`.claude/skills/go/SKILL.md`, "Pick the work").
   its line until 33.19), `copy.rs`, `gather/strict.rs` and `value/bytea.rs`
   (33.9). Where the three pairs do not sum to the span within spread, these
   are the residual's candidates, and it owes a name or the words "no name"
-  (`.claude/skills/evidence/SKILL.md`, rule 6).
+  (`.claude/skills/evidence/SKILL.md`, rule 6). Within spread, the account
+  closes unplaced. Past it, **the span's own legs place it**: the span runs
+  last, so `--callgrind-recipe` reads its binaries, and a function moved past
+  what the three pairs' placements hold is named by the candidate whose diff
+  touches it. A `--count-pair` on a candidate is taken only where two touch
+  one function, and "no name" is written only where neither separates them.
 - **33.19's pair is read on every row**, the control's included: its
   trigger is D108's, any hot-path change.
 
