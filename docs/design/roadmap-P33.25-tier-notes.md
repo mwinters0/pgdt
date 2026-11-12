@@ -53,8 +53,9 @@ unplaced.
   allocation of code it did not change.
 - **Accepted** (D108): spelling either change's code so it lowers shorter, a
   `Held` test apart from the `match` or a `FieldText` built at each use, is
-  the rework resting on codegen D108 refuses. The parse's is under STATUS's
-  "Decisions worth another look".
+  the rework resting on codegen D108 refuses. Most of the parse's is on held
+  columns' fields, which `observe_row` asks `tier` of though its counter
+  tests none, as the parent did and `CensusFold` does not: `M280`'s.
 
 ## What 33.4 inherits
 

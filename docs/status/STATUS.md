@@ -155,14 +155,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **33.25's rise on the data-level parse is accepted, not reworked.** Its
-  count pair places it in `FieldCount::tier`, which the census asks of every
-  field, a held column's included: the `match` that sends a container to the
-  walk decodes `Leaf`'s niche discriminant whole and tests the container arms
-  before `Held`, where the parent's `*leaf == Leaf::Held` was one compare
-  (`runs/count-pair-33.25-20261111/callgrind/reading.txt`). Restoring that
-  test ahead of the `match` changes no work, only how it lowers, which is the
-  rework D108 refuses, so the rise stands. Reconsidering: rule the parent's
-  spelling of a test the change moved a shape as clean rather than codegen,
-  and take a pair on that tree; it is untried.
-
