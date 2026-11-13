@@ -328,9 +328,12 @@ impl CopyScannerExt for CopyScanner {
     /// open block at its header — or the block it last closed, until another
     /// opens — which a piece of the interior folds into its block's.
     fn longest_line(&self) -> Option<LongestLine> {
-        self.longest
+        self.longest()
     }
 }
+
+/// [`CopyScanner::longest`] before a block's first row.
+const NO_ROW: LongestLine = LongestLine { offset: 0, len: 0 };
 
 /// How a scanner holds a block's rows to the ending its first row fixed.
 #[derive(Debug)]
@@ -424,8 +427,11 @@ pub struct CopyScanner {
     /// header until its reader says otherwise.
     streams_rows: bool,
     /// The open block's longest row so far, held or streamed, which its
-    /// [`CopyEnd`] states; reset at each header and by a resume.
-    longest: Option<LongestLine>,
+    /// [`CopyEnd`] states; reset at each header and by a resume. A row is
+    /// never empty, its line ending or the file's end closing it, so a `len`
+    /// of zero is no row yet, and each row is measured against the longest
+    /// by its length alone ([`measure`](Self::measure)).
+    longest: LongestLine,
 }
 
 impl Default for CopyScanner {
@@ -443,7 +449,7 @@ impl CopyScanner {
             lexer: Lexer::new(),
             endings: Endings::Unchecked,
             streams_rows: false,
-            longest: None,
+            longest: NO_ROW,
         }
     }
 
@@ -478,7 +484,7 @@ impl CopyScanner {
             lexer: Lexer::new(),
             endings: Endings::Unchecked,
             streams_rows: false,
-            longest: None,
+            longest: NO_ROW,
         }
     }
 
@@ -549,11 +555,25 @@ impl CopyScanner {
         };
         let line_offset = self.position();
         self.endings.hold(ending, rows, line_offset)?;
-        self.longest =
-            LongestLine::fold(self.longest, Some(LongestLine { offset: line_offset, len }));
+        self.measure(line_offset, len);
         self.base += len;
         self.state = State::InCopy { rows: rows + 1, header_offset };
         Ok(Event::StreamedRow(StreamedRow { offset: line_offset, index: rows, len, fields }))
+    }
+
+    /// Measure a row of the open block, `len` bytes at `offset`, against its
+    /// longest so far: kept only where strictly longer, so the earliest of
+    /// the longest stands, as [`LongestLine::fold`] answers.
+    fn measure(&mut self, offset: u64, len: u64) {
+        debug_assert!(len > 0, "a row is never empty");
+        if len > self.longest.len {
+            self.longest = LongestLine { offset, len };
+        }
+    }
+
+    /// The open block's longest row so far, `None` before its first.
+    fn longest(&self) -> Option<LongestLine> {
+        (self.longest.len > 0).then_some(self.longest)
     }
 
     /// Bytes of the buffer consumed so far. Resets the scanner's buffer
@@ -662,7 +682,7 @@ impl CopyScanner {
                     if let Some(header) = parse_copy_header(line) {
                         self.state = State::InCopy { rows: 0, header_offset: line_offset };
                         self.streams_rows = false;
-                        self.longest = None;
+                        self.longest = NO_ROW;
                         self.endings =
                             Endings::Refused { table: header.qualified_name(), first: None };
                         return Ok(Some(Event::CopyStart(Box::new(CopyStart {
@@ -701,7 +721,7 @@ impl CopyScanner {
                             terminator_offset: line_offset,
                             end_offset: self.position(),
                             row_count: rows,
-                            longest_line: self.longest,
+                            longest_line: self.longest(),
                         }))));
                     }
                     let ending = if holds_cr { RowEnding::of(unstripped) } else { RowEnding::Lf };
@@ -714,8 +734,7 @@ impl CopyScanner {
                     };
                     // Its length as I71 measures it, the line ending
                     // included (`docs/design/decisions.md`, "D140").
-                    let measured = LongestLine { offset: line_offset, len: advance as u64 };
-                    self.longest = LongestLine::fold(self.longest, Some(measured));
+                    self.measure(line_offset, advance as u64);
                     self.state = State::InCopy { rows: rows + 1, header_offset };
                     return Ok(Some(Event::Row(Row { offset: line_offset, index: rows, raw })));
                 }

@@ -76,10 +76,10 @@ source that may be fetched. Reopens: a catalog too large to hold resident. Evide
 
 ### D140 A block's longest line is recorded in the map, its start and length, by every pass mapping it
 Each `CopyBlock` keeps its longest data line (`LongestLine`): its start and its length as I71 measures one, ending
-included, the earliest of the longest. Every mapping pass records it at every level — the scanner folds each row, held
-or streamed (D138), the interior's pieces fold theirs in file order — finding each line's end whether or not it holds
-it. A fact of the dump's bytes, which a read over mapped blocks plans its charge from; a back-fill holds it to the
+included, the earliest of the longest. Every mapping pass records it at every level — the scanner measures each row,
+held or streamed (D138), the interior's pieces fold theirs in file order — finding each line's end whether or not it
+holds it. A fact of the dump's bytes, which a read over mapped blocks plans its charge from; a back-fill holds it to the
 record as it does the row count. Rejected: persisting the charge, which moves with the build; recording it at the data
-level only, which a metadata-level parse finds for free; showing it in `info`'s default listing, read to choose what
-to query: it is an offset, beside the four `--detail` adds, and a line refused names itself. Evidence: `pgdt-mapping`'s
+level only, which a metadata-level parse finds for free; showing it in `info`'s default listing, read to choose what to
+query: it is an offset, beside the four `--detail` adds, and a line refused names itself. Evidence: `pgdt-mapping`'s
 `tests/longest_line.rs`.

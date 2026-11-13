@@ -345,9 +345,9 @@ pub struct LongestLine {
 
 impl LongestLine {
     /// The longer of `earlier` and `later`, which follows it in the file, and
-    /// `earlier` where they are as long — so lines folded in file order, a
-    /// row or a piece of the block at a time, answer what one serial read of
-    /// the block answers.
+    /// `earlier` where they are as long — so a block's pieces folded in file
+    /// order answer what one serial read of the block answers, which measures
+    /// each row as this folds it.
     pub fn fold(earlier: Option<Self>, later: Option<Self>) -> Option<Self> {
         match (earlier, later) {
             (Some(earlier), Some(later)) if later.len <= earlier.len => Some(earlier),
