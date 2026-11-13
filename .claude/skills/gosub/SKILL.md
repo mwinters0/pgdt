@@ -171,8 +171,8 @@ to compare. *Running, progress moving* — one line, end the turn. *Stuck* by th
 frontmatter's own rule — disarm the cron and dispatch the capture below **before**
 stopping the job, then stop it with `stop` and stop the loop. *Failed* — disarm,
 capture, stop the loop. *Done* — disarm (`CronDelete`), then step 5. *Over eight
-hours since `started`* — disarm and stop the loop, leaving the job running, per
-the cutoff below.
+hours since the round's first `started`* — disarm and stop the loop, leaving the
+job running, per the cutoff below.
 
 **5. Dispatch a fresh subagent for the result** — `general-purpose`, no `model`,
 never a fork:
@@ -180,14 +180,14 @@ never a fork:
 > The long job described in `<handoff path>` has finished. Read that file in
 > full, including the body below the frontmatter. Confirm its `done` condition
 > holds, then carry out its `next` line and whatever else slice `<N.M>`'s spec
-> row requires. Invoke the `process` skill first and follow it — the notes doc,
-> STATUS and any figure's consumers are part of finishing it. Do not commit.
-> Report: whether you ticked the box and what remains if not; any new "Decisions
-> worth another look" entries, quoted in full; and `mise run check`'s summary,
-> verbatim.
+> row requires; a further job you expect to run over 30 minutes follows
+> `.claude/skills/gosub/handoff.md` instead. Invoke the `process` skill first and
+> follow it — the notes doc, STATUS and any figure's consumers are part of
+> finishing it. Do not commit. Report: whether you ticked the box and what
+> remains if not; any new "Decisions worth another look" entries, quoted in
+> full; `mise run check`'s summary, verbatim; and any new handoff doc's path.
 
-**6. Resume at step 3 of "One round"** — verify, commit, decide, every stop
-condition applying unchanged.
+**6. A new handoff returns to step 1**; otherwise resume at "One round"'s step 3.
 
 **When the job fails or wedges**, one fresh `Agent` (`general-purpose`, no
 `model`, never a fork) captures the volatile evidence and *only* captures it:

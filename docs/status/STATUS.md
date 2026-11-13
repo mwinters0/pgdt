@@ -121,10 +121,12 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.24** A nested value's copy never doubles: a nested field past its chunk term decoded into builders reserved to its bound, its batch cut before it so they start empty, D154's doubling rejection rewritten, as the spec's "What a held line costs" states (D154); its count pair's rise, `RowBatcher::cuts_before` asked of every row, placed by callgrind and accepted, once `push_field`'s walked test was reworked to the parent's (D108) — [notes](../design/roadmap-P33.24-reserve-notes.md)
 - [x] **33.25** A tier test stages nothing: `tier_of` reading a container by the output grammar's walk, each leaf tested as it is read, for a query's batch, the census and the gatherer alike; D153's staging and D154's staged term gone, P40's inbox entry on a container's tier amended, as the spec's "What a held line costs" states; its count pair, `80abeb99` against the tree, resolving a rise on the data-level parse, the strings query and the `arrays` row, placed by callgrind in `FieldCount::tier`'s dispatch, `push_row`'s register allocation and the walked arm's `FieldText`, and accepted (D108) — [notes](../design/roadmap-P33.25-tier-notes.md)
 - [x] **33.26** Evidence: a long field's parse priced — `--count-pair` given a data-level and a strict parse over `long_escaped_32` and `long_bytea_32` as standing rows, pairs taken on 33.13 (`e3a5ce6d`), 33.18 (`62e8875c`) and 33.19 (`e80138b2`) each against its first parent, 33.19's on the existing rows too, and `6dd4523c..93428ef7` as the account the three sum to, each rise placed by callgrind, as the spec's "How it is shown" states (D108); no production code; a slice reworking or accepting what it places allocated on its result, landing before 33.7. Each pair resolves a rise on a long field's parse, placed in changed code: 33.13's fold of an escaped field off `Unescaped`, 33.18's `Unescape::step` a byte at a time and a strict `bytea`'s walk, 33.19's fan-out per run with an escape a run of one. The pairs miss the span on every row, the residual placed on the legs bounding each gap between them and named, 33.9 the largest; 33.27 allocated — [notes](../design/roadmap-P33.26-long-parse-notes.md)
-- [ ] **33.27** A long field's parse reworked: the rises 33.26 placed — 33.13's fold of a long escaped field (`TextFold`, the gatherer, `bounds::Canonical`), 33.18's `Unescape::step` wherever `Unescaped` is read and a strict `bytea`'s `FieldWalk` and `Check::byte`, 33.19's `LongRead` fan-out and `from_utf8` per run, an escape's byte a run of its own — each reworked into a shape as clean or accepted, its pair against its parent read on the long rows (D108)
+- [ ] **33.27** A long field's parse reworked: the rises 33.26 placed — 33.13's fold of a long escaped field (`TextFold`, the gatherer, `bounds::Canonical`), 33.18's `Unescape::step` wherever `Unescaped` is read and a strict `bytea`'s `FieldWalk` and `Check::byte`, 33.19's `LongRead` fan-out and `from_utf8` per run, an escape's byte a run of its own — and its residual's in the same functions, 33.13.3's in `Check::byte` and M277's with M278's in `Gatherer::observe_row` — each reworked into a shape as clean or accepted, its pair against its parent read on the long rows (D108, D155)
+- [ ] **33.28** A row's scan reworked: the rises 33.26's residual placed in the scanner — 33.3.1's and 33.3.3's in `ChunkEvents::next_event`, 33.11's in `CopyScanner::next_event` — each reworked into a shape as clean or accepted, its pair against its parent (D108, D155)
 - [ ] **33.4** The ledger: carved by `Arrangement::resolve`, drawn by a held line past its chunk term, admitted in file order, a later holder giving its line up and re-reading it, the charge factors, a parse drawing for the scalar text it collects past its chunk term, an unstated allowance's ledger unlimited; a read over mapped blocks carving its longest line's charge before a reader starts; a query's polling contract stated on `TablePartitions` and tested; under today's line limit
 - [ ] **33.5** The floor: the pools shrinking and regrowing, readers parked latest first, a line one reader cannot hold refused for memory, and a read over mapped blocks whose longest line one reader cannot hold refused before it reads a byte, its remedy spelled by `pgdt` and the shell
 - [ ] **33.6** The bound: I71's constant on every path, measured exactly; `LineTooLong` naming it; a batch cut before a value would overflow its column's offsets; `--max-line-bytes`, `pgdump.max_line_bytes`, `ReadOptions::max_line_bytes`, their manual section and tests removed; the real-bound test; `KD93` struck
+- [ ] **33.29** The readers off a long field's parse reworked: the rises 33.26's residual placed in M276's datetime readers and in `ResolvedTerm::eval`, the per-row reader test 33.14, 33.14.1 and 33.15 each add — each reworked into a shape as clean or accepted, its pair against its parent (D108, D155)
 - [ ] **33.7** Acceptance: `long-line-resident` re-taken and the charge factors confirmed or re-set, a parse flat in its line length; the two hand runs on the reference dump, a strict parse under a `--memory` below its longest line and a query reading its long field under one below its clusters, as the spec's "How it is shown" states
 
 ## Not started
@@ -157,29 +159,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **33.26's account was finished by its placing subagent, past `/gosub`'s
-  watchdog, with four more `--count-pair`s it launched itself.** `/gosub`
-  stopped on the third fire, 20:06 local; the subagent ran on, placed every
-  rise and the residual, and ticked 33.26. The pairs are 33.21's and 33.3.1's,
-  33.3.2's and 33.3.3's (`runs/count-pair-33.26-20261112/`, `run-33.21.sh`,
-  `run-gap0.sh`), taken because the notes doc's plan for the span's residual
-  takes a pair on a candidate where two change one function; no spec row names
-  them, and a job over 30 minutes run inside a subagent is what the handoff
-  exists to prevent. Reconsidering means ruling whether such pairs belong to
-  the evidence slice whose residual they name or to a slice of their own, and
-  whether a subagent may launch one: the tick stands or 33.26 reopens with
-  the residual's naming moved out.
-- **33.26 names two residuals jointly rather than taking a pair on each
-  candidate.** The `pgdt sql` row's 54.6M in `ResolvedTerm::eval` (33.14,
-  33.14.1, 33.15) and the data-level parse's 13.9M in
-  `Gatherer::observe_row` (M277, M278) are each a function more than one
-  candidate changes, where the notes doc's plan takes a pair. Named from the
-  diffs instead — each adds a per-row test or reshapes the code around one —
-  since five pairs cost two and a half hours for 0.25% and 0.03% of a row.
-  Reconsidering takes those pairs and splits the two names in the notes doc.
-- **33.27 is placed before 33.4**, not merely before 33.7 as 33.26's row
-  requires, so the ledger is built on the long-field parse its rework leaves:
-  33.4's draws land on the carry's fold that 33.19's rise sits in. It is one
-  row for three placed rises in three mechanisms (`Unescape`, the gatherer's
-  fold, a strict `bytea`'s walk), which its specification may split by
-  review. Reconsidering moves it after 33.6, or splits it now.

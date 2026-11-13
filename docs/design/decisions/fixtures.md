@@ -48,12 +48,13 @@ and `CallgrindRecipe`.
 
 ### D155 A run of landed commits is counted as an account by a flag of its own, never priced
 `--count-span <base>..<tip>` counts the shipped build at both ends of a run of landed commits as D108's pair counts
-one change, refused unless `base` is on `tip`'s first-parent chain, and says it is an account over that many commits:
-what the pairs on them sum to, never a price. `--count-pair` refusing all but the first parent is what keeps a price
-one change's, so a span is a flag of its own, never a spelling of a pair. Rejected: `--count-pair` relaxed, or given a
-span modifier (a pricing run handed a span by a typo, the account named by a modifier); spans refused (pairs on
-unpriced slices summed with nothing checking they are the whole); a pair's refusal naming `--count-span` (a mistyped
-price re-run as an account). Code: `count_span_named`, `cmd_count_pair`. Evidence: `test_measure.py`'s `CountPair`.
+one change, refused unless `base` is on `tip`'s first-parent chain, and says it is an account: what the pairs on its
+commits sum to, never a price, though a rise its residual places is reworked or accepted as a pair's is.
+`--count-pair` refusing all but the first parent keeps a price one change's, so a span is a flag of its own.
+Rejected: `--count-pair` relaxed, or given a span modifier (a pricing run handed a span by a typo); spans refused
+(pairs summed with nothing checking they are the whole); a pair's refusal naming `--count-span` (a mistyped price
+re-run as an account); a residual named and left unjudged (a cost accepted by nobody). Code: `count_span_named`,
+`cmd_count_pair`. Evidence: `test_measure.py`'s `CountPair`.
 
 ### D130 A table read with its descendants is checked against the server's answers over a restore of its dump
 Each flag set's dump of `inheritance`, `partitions` and `timescaledb` is restored into a fresh database, TimescaleDB's

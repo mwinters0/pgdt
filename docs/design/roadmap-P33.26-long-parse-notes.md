@@ -79,10 +79,20 @@ run directory). Every residual has a name (`reading.txt`, "The account"):
   `ResolvedTerm::eval` testing per row which reader an escaped field takes,
   a test each of **33.14, 33.14.1 and 33.15** adds, unseparated.
 
+**The two joint names stand unsplit**: a pair on a candidate earns its run
+only where the split changes what is done, and each of `ResolvedTerm::eval`
+and `Gatherer::observe_row` is reworked or accepted whole by one slice.
+
 ## What 33.27 inherits
 
 - **The three rises, each placed and neither reworked nor accepted here**;
   the slice reworks or accepts each against its parent's pair (D108).
+- **The residual's rises too** (D155), each placed and named under "The
+  account" and none judged here: 33.13.3's and M277's with M278's, in
+  functions 33.27 already reworks; the scanner's, 33.3.1's, 33.3.3's and
+  33.11's, to 33.28, ahead of the ledger's carry built there; M276's and
+  `ResolvedTerm::eval`'s, off the ledger's path, to 33.29. 33.16's was
+  accepted by its own pair; falls owe nothing.
 - **33.19's is the largest on an escaped field and is not inherent to a
   fold**: one `from_utf8` and one fan-out per one-byte run is per escape,
   not per byte read. 33.13's and 33.18's are per byte.
