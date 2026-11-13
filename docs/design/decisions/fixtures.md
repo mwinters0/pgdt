@@ -37,14 +37,14 @@ the test (it took `24:00:00`). Code: `arrow_holds`, `extremes_problems`. Evidenc
 `every_extreme_is_held_by_arrow_or_recorded`.
 
 ### D108 A hot-path change is priced by `--count-pair`, and a rise it resolves is placed by callgrind, then reworked or accepted
-A hot-path change is priced in `instructions:u` on the shipped build at its parent and at the change, against its
-own pair's spread, never as a re-taken figure. A resolved rise is placed by callgrind's `Ir` on the two legs, layout
-only where callgrind does not reproduce it or no changed code sits above, then reworked into a shape as clean or
-accepted; none is too small to place. A phase adopts the refusal by its spec. Rejected: one count a leg; determinized
-shapes (a workload never shipped); a sampled profile placing it (line tables move the code); a materiality floor; rework
-resting on codegen (`ChunkedScanner::end_pass`), a moved test spelled back as the parent had it among them
-(`FieldCount::tier`'s `Held`). Code: `cmd_count_pair`, `callgrind_recipe`. Evidence: `test_measure.py`'s `CountPair`
-and `CallgrindRecipe`.
+A hot-path change is priced in `instructions:u` on the shipped build at parent and change, against its own pair's
+spread, never as a re-taken figure. A resolved rise is placed by callgrind's `Ir` on the two legs, layout only where
+callgrind does not reproduce it or no changed code sits above, then reworked into a shape as clean or accepted. A phase
+adopts the refusal by its spec. Rejected: one count a leg; determinized shapes (a workload never shipped); a sampled
+profile placing it (line tables move the code); a materiality floor; rework resting on codegen
+(`ChunkedScanner::end_pass`), a moved test spelled back as the parent had it among them (`FieldCount::tier`'s `Held`); a
+new row for a rise placed off its row's code (the row owns it). Code: `cmd_count_pair`, `callgrind_recipe`. Evidence:
+`test_measure.py`'s `CountPair` and `CallgrindRecipe`.
 
 ### D155 A run of landed commits is counted as an account by a flag of its own, never priced
 `--count-span <base>..<tip>` counts the shipped build at both ends of a run of landed commits as D108's pair counts

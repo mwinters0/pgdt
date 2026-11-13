@@ -64,8 +64,7 @@ function's count is the same in both). Placed on its own legs:
   `BlockCensusExt::observe_row`'s restructure, which falls by nearly as much.
   Changed code, and the bound is 33.3.3's contract: a held field is counted
   as the head a streamed one keeps (`Kept::Head`) is. Accepted here, outside
-  the scanner the row names; STATUS's "Decisions worth another look" carries
-  the call.
+  the scanner the row names, the row owning its rise (D108, D138).
 - **The typed query**: neither rep pair reproduces it; layout (D108).
 
 ## Its count pair

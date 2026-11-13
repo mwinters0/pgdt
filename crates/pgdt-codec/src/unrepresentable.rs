@@ -447,7 +447,7 @@ impl Counter {
     /// The tier `text`, one value of `leaf`, is past — a container's worst
     /// leaf's, the format spec's dominating. A scalar's text longer than its
     /// [`Leaf::longest_counted`] is past none, by construction rather than
-    /// by its reader alone.
+    /// by its reader alone (`docs/design/decisions.md`, "D138").
     fn tier_of(&self, leaf: &Leaf, text: &str) -> Option<UnrepresentableTier> {
         if leaf.longest_counted().is_some_and(|longest| text.len() > longest) {
             return None;
