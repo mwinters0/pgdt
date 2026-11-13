@@ -24,7 +24,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD168 -->
+rather than being deleted. <!-- deficiency-watermark: KD169 -->
 **`KD1`–`KD167` are allocated, and nothing at or below `KD167` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -589,3 +589,10 @@ than reading as a phase nobody has sliced.
   holds copies of a hundred thousand digits beside eight bytes of text.
   **(c) unowned**; promoted by the ledger drawing a query's factor, or such a
   number met in use. Detail: `crates/pgdt-codec/src/value/json/order.rs`.
+
+- **KD169** — a file opening on blank lines has them in no span of its
+  preamble scan, and a `parse --preamble-only` banks that gap, so the whole
+  map a later `parse` builds on that cache reports itself broken
+  (`TilingBroken`, an error). `pg_dump` never writes such a file. **(c)
+  unowned**; promoted by such a file met in use. Detail:
+  `crates/pgdt-dump/src/preamble.rs`.
