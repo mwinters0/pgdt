@@ -196,18 +196,20 @@ impl CanonicalHex {
         hex.finish()
     }
 
-    pub(super) fn push(&mut self, run: &[u8]) {
-        for &byte in run {
+    /// Read the text's next run: the prefix a byte at a time, and the
+    /// digits after it as a stretch.
+    pub(super) fn push(&mut self, mut run: &[u8]) {
+        while self.read < 2 {
+            let Some((&byte, rest)) = run.split_first() else { return };
             match self.read {
                 0 => self.holds = byte == b'\\',
-                1 => self.holds &= byte == b'x',
-                _ => {
-                    self.holds &= matches!(byte, b'0'..=b'9' | b'a'..=b'f');
-                    self.odd = !self.odd;
-                }
+                _ => self.holds &= byte == b'x',
             }
-            self.read = self.read.saturating_add(1).min(2);
+            self.read += 1;
+            run = rest;
         }
+        self.holds = self.holds && run.iter().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
+        self.odd ^= run.len() % 2 == 1;
     }
 
     pub(super) fn finish(self) -> bool {

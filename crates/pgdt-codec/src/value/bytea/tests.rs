@@ -171,6 +171,10 @@ fn a_bytea_read_in_runs_answers_as_read_whole() {
         "tab\there",
         "\\08",
         "\\1",
+        "\\xde ad",
+        "\\xd e",
+        "\\xDEad",
+        "\\xde\\ad",
     ]
     .map(str::to_string)
     .into();
@@ -194,6 +198,45 @@ fn a_bytea_read_in_runs_answers_as_read_whole() {
             for cut in 0..=bytes.len() {
                 let (head, tail) = bytes.split_at(cut);
                 assert_eq!(fed(&mut [head, tail].into_iter()), want, "{text:?} cut at {cut}");
+            }
+        }
+    }
+}
+
+/// **A `bytea` read a run at a time decodes what it decodes read a byte at
+/// a time** (`ByteaFold::run`): the hex form's digits read as a stretch,
+/// cut inside a pair and between pairs, blanks between pairs and a digit
+/// past the last pair among them.
+#[test]
+fn a_bytea_folded_in_runs_decodes_as_byte_by_byte() {
+    for text in [
+        "\\xdeadbeef",
+        "\\xDEADbeef0",
+        "\\xde ad",
+        "\\xd e",
+        "\\xdeg",
+        "\\x",
+        "abc\\\\\\101",
+        "\\xde\\ad",
+    ] {
+        let bytes = text.as_bytes();
+        let mut whole = Vec::new();
+        let decodes = read_bytea(bytes.iter().copied(), |byte| whole.push(byte));
+        let refused = bytea_unread(text.bytes()) == Unread::Refused;
+        for first in 0..=bytes.len() {
+            for second in first..=bytes.len() {
+                let mut fold = ByteaFold::default();
+                let mut read = Vec::new();
+                for run in [&bytes[..first], &bytes[first..second], &bytes[second..]] {
+                    fold.run(run, &mut |byte| read.push(byte));
+                }
+                let ended = fold.end();
+                let cut = format!("{text:?} cut at {first} and {second}");
+                assert_eq!(ended.is_ok(), decodes, "{cut}");
+                assert_eq!(ended == Err(Unread::Refused), refused, "{cut}");
+                if decodes {
+                    assert_eq!(read, whole, "{cut}");
+                }
             }
         }
     }

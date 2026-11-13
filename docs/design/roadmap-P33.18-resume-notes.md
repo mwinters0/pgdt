@@ -15,8 +15,8 @@ holding a field's runs only in turn would have to hold the field.
 
 - **`Unescape`** (`pgdt-core`'s `copy.rs`): `COPY`'s escapes over runs, an
   escape begun at a run's end carried; a plain stretch handed on as a slice
-  of its run. `Unescaped`, the iterator a held field is read by, is driven by
-  it, so the escapes are read in one place.
+  of its run. `Unescaped`, the iterator a held field is read by, reads each
+  escape by the same `escape_at`, so the escapes are read in one place.
 - **What a grammar is fed** (`pgdt-codec`'s `value/source.rs`): `Parts`, what
   a container's walk hands its caller of each part; `Word`, a keyword's
   letters.

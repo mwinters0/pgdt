@@ -313,6 +313,10 @@ impl Check {
                 collected.extend_from_slice(run);
                 Ok(())
             }
+            Check::Bytea(fold) => {
+                fold.run(run, &mut |_| {});
+                Ok(())
+            }
             check => run.iter().try_for_each(|&byte| check.byte(byte)),
         }
     }

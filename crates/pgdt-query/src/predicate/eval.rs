@@ -731,8 +731,8 @@ fn utf8_checked(bytes: &[u8]) -> Result<()> {
 }
 
 /// An escaped field's text, `bytes` unescaped, handed to `run` a stretch
-/// at a time: a stretch no escape spells as a slice of `bytes`, so none of
-/// it is copied.
+/// at a time as [`Unescape::run`] gathers them: a long stretch no escape
+/// spells as a slice of `bytes`, and no copy of the field made.
 fn unescape_runs(bytes: &[u8], mut run: impl FnMut(&[u8])) {
     let mut unescape = Unescape::default();
     unescape.run(bytes, &mut run);

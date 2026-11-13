@@ -81,3 +81,12 @@ number, and keeps a decimal's first 800 significant digits and whether one past 
 Why: a parse holds nothing growing with a field (D144). Rejected: the text held from the `(` until its end decides, a
 line's worth; a `strtod` backtracking over its read-ahead, which an open `nan(` tag makes a line's worth; every digit
 kept. Code: `geometric/walk.rs`, `libc.rs` (`Strtod`). Evidence: `geometric/differential.rs`, `tests/decoded_copies.rs`.
+
+### D156 `Unescape` hands a field's text on a stretch at a time, an escape read whole where its run holds it
+`Unescape::run` gathers an escape's byte and the short stretches beside it into a fixed stage and hands them on as one
+stretch, a stretch longer than the stage as a slice of its run. An escape is read by one lookahead, `escape_at`, over
+the bytes at hand, one begun at a run's end carried as its bytes, and `Unescaped` reads a held field by the same
+lookahead. Why: a reader's work per stretch handed on, a UTF-8 check and a statistic's fan-out, is otherwise paid per
+escape, and a machine stepped a byte at a time is paid per byte (D108). Rejected: an escape's byte handed on alone, no
+copy made; a stage in each reader, the one rule written per reader; `Unescaped` driven by a machine stepped per byte, a
+held field paying for runs it has none of. Code: `Unescape`, `escape_at`. Evidence: `copy.rs`'s tests, `--count-pair`.

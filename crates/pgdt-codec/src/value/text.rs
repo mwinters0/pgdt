@@ -124,19 +124,19 @@ impl TextFold {
         }
     }
 
-    /// Fold `valid`, whole characters of the text.
+    /// Fold `valid`, whole characters of the text, as a stretch: its
+    /// characters counted up to its last non-blank and past it, every byte
+    /// past it being a blank and a character of its own.
     fn fold(&mut self, valid: &[u8]) {
-        for &byte in valid {
-            self.read.len += 1;
-            // A UTF-8 continuation byte is no character of its own.
-            if byte & 0xC0 != 0x80 {
-                self.chars += 1;
-            }
-            if byte != b' ' {
-                self.read.trimmed = self.read.len;
-                self.read.trimmed_chars = self.chars;
-            }
+        if let Some(last) = valid.iter().rposition(|&byte| byte != b' ') {
+            self.chars += chars(&valid[..=last]);
+            self.read.trimmed = self.read.len + last + 1;
+            self.read.trimmed_chars = self.chars;
+            self.chars += valid.len() - last - 1;
+        } else {
+            self.chars += valid.len();
         }
+        self.read.len += valid.len();
     }
 
     /// The bytes of whole characters read ahead of the first that is not
@@ -150,6 +150,12 @@ impl TextFold {
     pub fn finish(self) -> Option<TextRead> {
         (!self.invalid && self.partial_len == 0).then_some(self.read)
     }
+}
+
+/// The characters of `valid`, whole characters of UTF-8: its bytes but its
+/// continuation bytes, which are no character of their own.
+fn chars(valid: &[u8]) -> usize {
+    valid.iter().filter(|&&byte| byte & 0xC0 != 0x80).count()
 }
 
 /// Where an escaped field's text stops being UTF-8 — the bytes of whole

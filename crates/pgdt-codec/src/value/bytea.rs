@@ -186,6 +186,52 @@ impl ByteaFold {
         };
     }
 
+    /// Read the text's next run, as [`Self::byte`] reads each of its bytes:
+    /// the hex form's digits a stretch at a time, a pair to a byte handed to
+    /// `emit`.
+    pub(crate) fn run(&mut self, run: &[u8], emit: &mut impl FnMut(u8)) {
+        let mut at = 0;
+        while at < run.len() && !self.refused {
+            if let Form::Hex { half, high } = self.form {
+                let rest = &run[at..];
+                let digits = rest.iter().position(|&byte| HEX_NIBBLE[byte as usize] >= 16);
+                let digits = digits.unwrap_or(rest.len());
+                self.form = self.hex_digits(&rest[..digits], half, high, emit);
+                at += digits;
+                if at == run.len() {
+                    return;
+                }
+            }
+            self.byte(run[at], emit);
+            at += 1;
+        }
+    }
+
+    /// The hex form's `digits`, every one a hex digit, read after a pair's
+    /// first digit `high` where `half`: each pair they complete handed to
+    /// `emit` while the text decodes, and where the form then stands.
+    fn hex_digits(&self, digits: &[u8], half: bool, high: u8, emit: &mut impl FnMut(u8)) -> Form {
+        let nibble = |byte: &u8| HEX_NIBBLE[*byte as usize];
+        let mut digits = digits;
+        if half {
+            let Some((low, rest)) = digits.split_first() else { return Form::Hex { half, high } };
+            if self.decodes {
+                emit(high << 4 | nibble(low));
+            }
+            digits = rest;
+        }
+        let (pairs, odd) = digits.as_chunks::<2>();
+        if self.decodes {
+            for [first, second] in pairs {
+                emit(nibble(first) << 4 | nibble(second));
+            }
+        }
+        match odd {
+            [first] => Form::Hex { half: true, high: nibble(first) },
+            _ => Form::Hex { half: false, high: 0 },
+        }
+    }
+
     /// `byteaout`'s `escape` form, and no wider (`docs/design/decisions.md`,
     /// "D55"): a byte from space to `~` stands for itself but `\\`, which is
     /// `\\\\`, and every other byte is `\ooo`. `byteain` reads any byte as
@@ -288,14 +334,12 @@ impl ByteaRuns {
     /// Read the text's next run.
     pub fn push(&mut self, run: &[u8]) {
         let Self { escape, either, head, limit } = self;
-        for &byte in run {
-            escape.byte(byte, &mut |byte| {
-                if head.len() < *limit {
-                    head.push(byte);
-                }
-            });
-            either.byte(byte, &mut |_| {});
-        }
+        escape.run(run, &mut |byte| {
+            if head.len() < *limit {
+                head.push(byte);
+            }
+        });
+        either.run(run, &mut |_| {});
     }
 
     /// The text has ended: [`bytea_escape_head`]'s answer, and whether
