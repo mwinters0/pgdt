@@ -19,6 +19,12 @@ use crate::value::nested::FieldText;
 
 /// What a `jsonb` document's order holds per byte of its text, at most: a
 /// position a pair, the shortest pair and its comma being `"":0,`.
+///
+/// deficiency: KD168 — but a number, which [`jsonb_field_order`] reads from a
+/// copy of its token into a digit string its exponent pads: `1e100000`, eight
+/// bytes of text, holds copies of a hundred thousand digits beside it while
+/// it is compared. **(c) unowned**; promoted by the ledger drawing a
+/// query's factor, or such a number met in use.
 pub(crate) const JSONB_KEY_FACTOR: KeyFactor =
     KeyFactor { held: size_of::<u32>() as u64, per: "\"\":0,".len() as u64 };
 

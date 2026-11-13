@@ -163,8 +163,8 @@ pub fn parse_range(s: &str) -> Option<RangeLiteral> {
 /// **A member spelled `empty` is accepted and dropped**, which
 /// [`decode_multirange`] refuses because `multirange_out` never writes one. A
 /// member that is *equivalent* to empty — `[1,1)` — is kept here and dropped
-/// by the server, which is the same missing successor function
-/// [`parse_range`] records.
+/// by the server, which compares its bounds in the subtype's order, an order
+/// this module does not have, as [`parse_range`] has no successor function.
 ///
 /// [`decode_multirange`]: super::output::decode_multirange
 pub fn parse_multirange(s: &str) -> Option<Vec<RangeLiteral>> {

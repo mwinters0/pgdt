@@ -16,7 +16,7 @@ units (`KD23`). Rejected: compacting views past a selectivity threshold. Evidenc
 A `bytea` is decoded from its field as `Unescaped` reads it, straight into its column's one buffer, and a strict parse
 checks one holding none of it; an escaped text past Arrow's largest view block is handed to its column as that block. So
 a long `bytea` or escaped text read from a held line has one decoded copy beside the line. Rejected: Arrow's
-`BinaryBuilder`, which reserves nothing and cannot abandon a value written in pieces, so a decode into it stages a copy
+`BinaryBuilder`, which cannot reserve once built nor abandon a value written in pieces, so a decode into it stages a copy
 or grows by doubling; `BinaryView` for `bytea`, a type the floor does not yield (D38); a block per escaped text of any
 length, fragmenting a batch's buffers. A batch's buffer growing past a value is its span's, which the replay is charged
 (D84). Code: `batch/bytea.rs`, `batch/chunks.rs` (`OWN_BLOCK_PAST`), `value/bytea.rs` (`decode_bytea_into`). Evidence:
@@ -96,11 +96,11 @@ Evidence: `tests/timescaledb.rs`.
 
 ### D135 A hypertable's findings are the file's diagnostics and each read's notes both
 A root's own rows, absent chunks and an unreadable catalog are properties of the file (D19), what `pgdt info` and a
-dump's drain hear, and each is also a `Warning` `PlanNote` on a read it bears on, so `pgdt query`, which prints no
-file-level finding, says it where the answer differs from the server's; `ReadAsNull` is the precedent. One function
-counts each for both. Rejected: per read only (`pgdt info` silent); `pgdt query` printing the file's findings, every
-hypertable's, and none on a cold partial map; an unreadable catalog's note on a hypertable read alone, its
-answer its root's rows either way. Code: `dump/hypertables.rs` (`Verdict::notes`), `timescaledb/findings.rs`.
+dump's drain hear, and each is also a `Warning` `PlanNote` on a read it bears on, so `pgdt query`, which prints of the
+file's findings only its cache's identity (D21), says it where the answer differs from the server's; `ReadAsNull` is the
+precedent. One function counts each for both. Rejected: per read only (`pgdt info` silent); `pgdt query` printing the
+file's findings, every hypertable's, and none on a cold partial map; an unreadable catalog's note on a hypertable read
+alone, its answer its root's rows either way. Code: `dump/hypertables.rs` (`Verdict::notes`), `timescaledb/findings.rs`.
 Evidence: `tests/timescaledb.rs`.
 
 ### D136 What refuses a read is one finding of the file per root or hypertable, and no read's note

@@ -107,9 +107,9 @@ impl ResolvedTerm {
 
     /// What this term reads of a field's unescaped text a run at a time,
     /// holding no more of it than its bound, or `None` where it reads the
-    /// text otherwise: a nested value, walked ([`Self::walks`]), and whole a
-    /// key of another kind and a value its type cannot hold tested or read
-    /// as NULL.
+    /// text otherwise: a nested value, walked ([`Self::walks`]), a `jsonb`
+    /// value by its pairs' positions ([`Self::jsonb`]), and whole a key of
+    /// another kind and a value its type cannot hold tested or read as NULL.
     fn runs(&self) -> Option<TermRuns<'_>> {
         if self.unrepresentable.is_some() {
             return None;

@@ -35,7 +35,8 @@ use crate::value::text::TextFold;
 /// ([`FieldWalk::text`]) — and answered once it ends ([`FieldWalk::finish`]):
 /// [`field_refused`](super::check::field_refused)'s answer, with no copy of
 /// the field and no tree of it held, but a scalar part's text and a range's
-/// bounds, each in its turn.
+/// bounds, each in its turn, and a `json` value's open containers, a bit
+/// each.
 #[derive(Debug)]
 pub struct FieldWalk {
     escape: Unescape,

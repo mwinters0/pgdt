@@ -84,7 +84,7 @@ are `docs/process.md`, "The decision register".
 - **D43** `NestedPlan` travels beside the `DataType`; the census speaks after the DDL and moves the pair
 - **D45** Strict decoders apart from permissive parsers; decode and render allocate only what they return
 - **D143** An input grammar is a walk, read a part at a time
-- **D144** A long field's reader is a push machine fed its runs, looking at no byte past the one it reads
+- **D144** A long field's reader is a push machine fed its runs, looking at no byte past its run
 - **D145** A whitespace run whose end decides it is fed on into the part and rewound, never held
 - **D146** A grammar asking of a byte it has not read reads on as each answer; a number never reads ahead
 - **D156** `Unescape` hands a field's text on a stretch at a time, an escape read whole where its run holds it

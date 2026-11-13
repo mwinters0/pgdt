@@ -3,8 +3,9 @@
 //!
 //! This is what a query's `RecordBatch`es actually carry, not a preview:
 //! `pgdt_query::batch::RowBatcher` builds one column builder per field of the
-//! [`ResolvedSchema`] it was constructed from, and `RecordBatch::try_new`
-//! rejects any array whose type disagrees with the schema's. Deciding *how*
+//! [`ResolvedSchema`] it was constructed from, and
+//! `RecordBatch::try_new_with_options` rejects any array whose type disagrees
+//! with the schema's. Deciding *how*
 //! a field's text becomes a value is `crate::decode`'s and `crate::nested`'s
 //! job; this module decides *what* each column is.
 

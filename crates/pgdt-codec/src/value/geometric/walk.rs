@@ -2,7 +2,8 @@
 //! `docs/design/decisions.md`, "D144"): the bytes are read into numbers and
 //! punctuation, the blanks between them skipped as every `*_in` here skips
 //! them, and the tokens handed to the type's grammar, which holds a point's
-//! two coordinates at most beside the first two points of a `line`'s.
+//! two coordinates or a `line`'s three coefficients at most, beside the first
+//! two points of a type read as points.
 //!
 //! **Two of the grammars ask whether a `(` is the last in the text**, which
 //! no byte read so far answers: `path_decode` reads a lone `(` as its own

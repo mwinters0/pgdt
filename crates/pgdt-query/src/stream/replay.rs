@@ -324,11 +324,12 @@ pub(super) fn replay<'a>(
                                         )
                                     });
                                 // A row a filter keeps makes every term
-                                // of its stop `True`, so each stop is
-                                // asked only of a row its filter
-                                // rejected — the dynamic one's in a
+                                // of its stop `True`, so the static stop
+                                // is asked only of a row its filter
+                                // rejected, and the dynamic one's, in a
                                 // group it is armed in
-                                // (`DynamicPruning::arm`), and of every
+                                // (`DynamicPruning::arm`), of a row
+                                // either filter rejected and of every
                                 // row there where its rows are not
                                 // evaluated.
                                 let dynamic_stop = dynamic.as_ref().and_then(DynamicRead::stop);

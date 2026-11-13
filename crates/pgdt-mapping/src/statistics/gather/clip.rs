@@ -65,8 +65,8 @@ impl Field<'_> {
 
 /// How much of a long field [`LongText`] keeps: at least [`CLIP_BYTES`] on
 /// a character boundary, a character being at most four bytes. An escaped
-/// field longer than this is read as one, never unescaped whole
-/// ([`LongText::read`]).
+/// field longer than this, of a column reading no field whole, is read as one,
+/// never unescaped whole ([`LongRead`]).
 pub(super) const LONG_FIELD_HEAD: usize = CLIP_BYTES + 3;
 
 /// **A long field's text as its runs went by, never held whole**

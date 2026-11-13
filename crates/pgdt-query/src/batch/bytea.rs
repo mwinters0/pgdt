@@ -1,6 +1,7 @@
 //! A `bytea` column's builder, which a value is decoded into in place: Arrow's
-//! `BinaryBuilder` takes a value only whole, so a decode would be a copy
-//! beside the one the column keeps (`docs/design/decisions.md`, "D141").
+//! `BinaryBuilder` cannot abandon a value written in pieces, so a decode that
+//! may refuse would be a copy beside the one the column keeps
+//! (`docs/design/decisions.md`, "D141").
 
 use arrow::array::BinaryArray;
 use arrow::array::builder::NullBufferBuilder;

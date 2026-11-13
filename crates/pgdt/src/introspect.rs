@@ -323,8 +323,10 @@ mod enabled {
     }
 
     /// The whole report, as text, so the formatting is testable without a
-    /// process to run. Every quantity carries its scope, and [`SCOPE_NOTE`]
-    /// follows the counter's lines; the note's lines carry no `=`, so
+    /// process to run. Every memory reading carries its scope —
+    /// `planned_factor`, a plan's ratio rather than a heap's bytes, carries
+    /// none — and [`SCOPE_NOTE`] follows the counter's lines; the note's
+    /// lines carry no `=`, so
     /// `measure.parse_reported` ignores them as it ignores the XML below.
     pub fn report_text() -> String {
         let mut out = String::from("instrument=counting-allocator\n");

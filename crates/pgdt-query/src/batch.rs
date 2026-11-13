@@ -3,7 +3,8 @@
 //! field (`docs/design/decisions.md`, "D46").
 //!
 //! A `Utf8View` field that needs no unescaping is appended as a zero-copy
-//! view into the Arrow `Buffer` backing the read chunk it came from, rather
+//! view into the Arrow `Buffer` backing the read chunk or carried line it
+//! came from, rather
 //! than copied into the builder's own storage, the chunks those views point
 //! into being held by [`chunks`]. Every other mapped type always copies: its
 //! decoded value has its own representation (an `i32`, a `[u8; 16]`, …), not
@@ -57,7 +58,9 @@ pub(crate) struct RowBatcher {
     bytes_in_batch: usize,
     /// The source byte span the in-flight batch covers: `Some((start, end))`
     /// once a row has been pushed, where `start` is the first pushed row's
-    /// offset and `end` is one past the latest pushed row's last byte. A row
+    /// offset and `end` is one past the latest pushed row's last byte, its
+    /// line ending excluded where the row was held and included where it was
+    /// counted ([`Self::push_counted_row`]). A row
     /// a predicate rejected never reaches `push_row`, so it neither opens a
     /// span nor extends one, which is what stops an empty batch from flushing
     /// across a long stretch that matches nothing.
@@ -172,9 +175,10 @@ impl RowBatcher {
         self.decodes_fields
     }
 
-    /// Whether any of the three flush triggers has fired. All three are
-    /// evaluated after a row has been appended, so each may be overshot by at
-    /// most one row. The span trigger cannot fire on an empty batch whatever
+    /// Whether any of the four flush triggers has fired: a long value held
+    /// (`docs/design/decisions.md`, "D154"), the row cap, the byte cap and the
+    /// source span. All four are evaluated after a row has been appended, so
+    /// each may be overshot by at most one row. The span trigger cannot fire on an empty batch whatever
     /// its cap, `span` staying `None` until a row lands.
     pub(crate) fn should_flush(&self) -> bool {
         self.holds_long

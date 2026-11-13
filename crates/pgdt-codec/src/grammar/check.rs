@@ -113,7 +113,7 @@ pub fn column_grammar(
 
 /// **Every position of a column declared `declared` and compared by `plan`
 /// that a strict parse checks nothing of**, as `(path, declared type there,
-/// why)`: first each a field is read at by no grammar — the column itself
+/// why)`, an unanswerable column naming the range it is unanswerable for: first each a field is read at by no grammar — the column itself
 /// where `plan` orders by nothing and `grammar` is `None`, or is
 /// unanswerable, a position
 /// of a nested `plan` holding a type it orders by nothing and has no grammar
@@ -312,10 +312,11 @@ pub fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
     }
 }
 
-/// **Whether [`field_refused`] reads a field of a column compared by `plan`
-/// a byte at a time** ([`FieldWalk`]), holding no copy of it and no tree but
-/// a range bound's (`docs/design/decisions.md`, "D142", "D143"): a nested
-/// value, `json` and `jsonb`, a `bytea`, and a text held to its typmod.
+/// **Whether a strict parse reads a field of a column compared by `plan` a
+/// byte at a time**, holding no copy of it and no tree but a range bound's
+/// (`docs/design/decisions.md`, "D142", "D143"): a nested value, `json` and
+/// `jsonb` and a `bytea` through [`FieldWalk`], and a character type counting
+/// its characters against [`text_typmod`]'s length.
 pub fn walks(plan: &ComparisonPlan) -> bool {
     matches!(
         plan,

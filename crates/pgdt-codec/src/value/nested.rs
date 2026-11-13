@@ -5,10 +5,12 @@
 //! checks.
 //!
 //! Pure, synchronous, no I/O and no Arrow (`docs/design/decisions.md`, "D74").
-//! Like `crate::decode`, every function here works on the *already
+//! Like `crate::decode`, a function here works on the *already
 //! COPY-unescaped* text `pgdt_core::unescape_field` returns — the input
 //! grammar's walks fed it a byte at a time, which may be a field's bytes as
-//! `pgdt_core::Unescape` reads its runs ("D143", "D144") — and every
+//! `pgdt_core::Unescape` reads its runs ("D143", "D144"), and the output
+//! grammar's walks reading a field as `COPY` wrote it, unescaping it as they
+//! go (`output::walk`'s `FieldText::escaped`) — and every
 //! `render_*` is the exact inverse of its `decode_*`: feeding it a value
 //! decoded from real `pg_dump` output reproduces that output byte for byte.
 //! Turning the result back into on-disk bytes is `pgdt_core::escape_field`'s

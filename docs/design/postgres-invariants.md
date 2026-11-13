@@ -1254,9 +1254,9 @@ elements with it.
 and "D45" — it is why the opaque-element refusal tests the
 element type *after* domain unwrapping rather than the declared string, and why
 the array separator can stay hardcoded to `,` once it does; and
-`ddl::types::base_type_delimiter`, `declared::typdelim` and
-`grammar::check::array_delimiter`, which split a strict parse's array of `box` at
-`;` and of a base type at its `DELIMITER`.
+`ddl::types::base_type_delimiter`, `declared::typdelim`, and `grammar::walk`'s
+`Check::grammar`, which splits a strict parse's `box[]` column at `;`, and
+`array_delimiter`, which splits a nested array of a base type at its `DELIMITER`.
 
 **Re-verify:**
 
@@ -2749,7 +2749,9 @@ which `jsonb_in` does not enter.
 `Jsonb`, `JsonCursor` — whose `number`, `string` and `unicode_escape` refuse
 what the input bullet says `jsonb_in` refuses, as `unicode_escape_read` does
 for `JsonWalk`, a strict parse's walk — `jsonb_unread`, which refuses
-what `json_in` refuses (I72), the grammar being one, and `storage_order` —
+what `json_in` refuses (I72), the grammar being one, and `storage_order`; and
+`value/json/order.rs`'s `jsonb_field_order`, which orders a filter's field by
+the rank, length and storage order above, a duplicate key's last pair kept —
 [`decisions.md`](decisions.md), "D55", where
 this is the row that agrees about structure and diverges at a string.
 
@@ -4847,7 +4849,7 @@ infinite or zero result — and read the points around them by `pair_decode` and
 `path_decode`: a point `x,y` optionally in `(…)`; two or more in `[…]` (where
 the type allows an open path), in a `(…)` that is the first of two or the last
 `(` in the text, or bare; a path's and a polygon's count fixed beforehand by
-`pair_count`, half their commas rounded up and refused where the count is
+`pair_count`, half their commas rounded up and refused where the commas are
 even, and refused where the value would pass `MaxAllocSize`. `box` and
 `polygon` refuse `[`. `circle_in` reads a center and a radius in `<…>`, `(…)`
 or bare, refusing a negative radius and reading a NaN. `line_in` reads

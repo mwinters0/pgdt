@@ -86,9 +86,10 @@ impl ArrayShape {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct ShapeFold {
     state: ShapeState,
-    /// Whether a `[lb:ub]=` prefix with a real array after it was read: a
-    /// prefix always has one (`array_out` writes a bare `{}` before it
-    /// formats dimensions), and anything else is not array output.
+    /// Whether a `[lb:ub]=` prefix with a `{` after it was read: one
+    /// `array_out` writes always has a non-empty array after it (it writes a
+    /// bare `{}` before it formats dimensions), and a prefix with no `{` after
+    /// it is not array output.
     prefix: bool,
 }
 

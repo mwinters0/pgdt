@@ -100,8 +100,9 @@ fn a_long_field_s_decode_error_quotes_its_head() {
 }
 
 /// A row is checked against the **block's** field count, not the
-/// projection's width — `push_row` is the system's only field-count
-/// check, and a projection must not weaken it.
+/// projection's width — `hold_to_width`, which `push_row` and a counted
+/// row's push reach, is the system's only field-count check, and a
+/// projection must not weaken it.
 #[test]
 fn the_field_count_check_is_against_the_block_not_the_projection() {
     let mut batcher = one_column_batcher_fed_by(

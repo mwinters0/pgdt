@@ -233,9 +233,9 @@ impl ByteaFold {
     }
 
     /// `byteaout`'s `escape` form, and no wider (`docs/design/decisions.md`,
-    /// "D55"): a byte from space to `~` stands for itself but `\\`, which is
-    /// `\\\\`, and every other byte is `\ooo`. `byteain` reads any byte as
-    /// itself but `\\`, and `\\\\` and `\ooo` as `byteaout` writes them.
+    /// "D55"): a byte from space to `~` stands for itself but `\`, which is
+    /// `\\`, and every other byte is `\ooo`. `byteain` reads any byte as
+    /// itself but `\`, and `\\` and `\ooo` as `byteaout` writes them.
     fn escaped(&mut self, escape: Escape, byte: u8, emit: &mut impl FnMut(u8)) {
         let next = match (escape, byte) {
             (Escape::Plain, b'\\') => Escape::Backslash,

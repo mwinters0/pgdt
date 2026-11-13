@@ -5,13 +5,15 @@
 //! it, and pgdt-query's batcher, filter and replay split and unescape a
 //! block's rows, the replay checking a chunk's with [`validated_prefix`].
 //!
-//! [`unescape_field`]/[`escape_field`] are the one place in the codebase that
-//! converts between a field's on-disk COPY-escaped bytes and its unescaped
-//! text — see `docs/design/decisions.md`, "D74", [`Unescaped`] reading the
-//! escapes and `escape_field` writing them. [`pgdt_codec::decode`] (the codec) never sees escaped
+//! This module is the one place in the codebase that converts between a
+//! field's on-disk COPY-escaped bytes and its unescaped text — see
+//! `docs/design/decisions.md`, "D74": `escape_at` reading an escape for
+//! [`unescape_field`], [`Unescaped`] and [`Unescape`] alike, and
+//! [`escape_field`] writing them. [`pgdt_codec::decode`] never sees escaped
 //! bytes at all: it takes `unescape_field`'s already-unescaped `&str` output,
 //! or a `bytea` field's bytes as [`unescaped`] reads them, and works purely in
-//! "unescaped text vs. Arrow value" terms.
+//! "unescaped text vs. Arrow value" terms; the codec's walks that read a field
+//! as `COPY` wrote it unescape it through [`Unescape`] and [`Unescaped`].
 
 use std::borrow::Cow;
 use std::ops::Range;
@@ -139,9 +141,8 @@ pub fn delimiters(bytes: &[u8]) -> usize {
 
 /// The same split as [`split_fields`], as **ranges** into the line.
 ///
-/// A caller holding the row as `&str` as well as `&[u8]` — which is what
-/// [`RawRow`] is — needs the position rather than the slice, so that it can
-/// take the same field out of either. `split_fields` is this, resolved.
+/// `split_fields` is this, resolved, and [`RowSplit::field`] answers what it
+/// answers, which the tests hold it to.
 fn field_ranges(line: &[u8]) -> FieldRanges<'_> {
     FieldRanges { line, start: 0, done: false }
 }
@@ -615,14 +616,16 @@ fn escape_cut(bytes: &[u8]) -> u8 {
 
 /// How many of a field's text bytes [`Unescape::run`] gathers before
 /// handing them on: an escape's byte and a short stretch between escapes
-/// are copied here, so a reader is handed a stretch of its text, never a
-/// byte at a time (`docs/design/decisions.md`, "D156").
+/// are copied here, so a reader is handed a stretch of its text, a byte
+/// alone only where an escape has no short stretch beside it in its run
+/// (`docs/design/decisions.md`, "D156").
 const STAGE: usize = 256;
 
 /// **COPY TEXT's escapes read a run of a field's bytes at a time**, the runs
 /// needing no common slice: what a field's text is, read with no more of it
-/// held than an escape begun at a run's end, so a reader fed the field as its
-/// line goes by holds none of it (`docs/design/decisions.md`, "D144").
+/// held between runs than an escape begun at a run's end, and within one than
+/// [`STAGE`]'s bytes, so a reader fed the field as its line goes by holds
+/// none of it (`docs/design/decisions.md`, "D144").
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Unescape {
     /// An escape begun at the last run's end, as `COPY` wrote it so far:
@@ -636,7 +639,7 @@ impl Unescape {
     /// `emit` its text they complete in order, a stretch at a time: one no
     /// escape spells and longer than [`STAGE`] as a slice of `run`, the rest
     /// gathered first, so `emit` is handed a slice of one only where an
-    /// escape stands between two long stretches.
+    /// escape has a long stretch or an end of `run` on either side.
     pub fn run(&mut self, run: &[u8], mut emit: impl FnMut(&[u8])) {
         let mut stage = Stage::default();
         let mut at = self.complete(run, &mut stage);

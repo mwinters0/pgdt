@@ -461,8 +461,8 @@ enum QueryStatistics {
 ///
 /// The two flags cannot both be given: clap's `conflicts_with` refuses that
 /// before this is reached. A repeated `--column` name is refused by the
-/// library as `Error::DuplicateProjectionColumn` before a byte is read, so
-/// the CLI and an embedder get the same answer.
+/// library as `Error::DuplicateProjectionColumn` before the mapping pass
+/// reads past the open, so the CLI and an embedder get the same answer.
 fn projection(columns: Vec<String>, no_columns: bool) -> Option<Vec<String>> {
     if no_columns {
         Some(Vec::new())

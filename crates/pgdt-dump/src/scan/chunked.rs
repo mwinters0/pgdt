@@ -776,6 +776,8 @@ impl<'a> ChunkEvents<'a> {
 
     /// The span the last event was scanned out of, and the file offset of its
     /// first byte — so a row's offset less it indexes the row in the span.
+    /// Not a streamed row's, which no span holds: after one, the span the next
+    /// event is scanned from.
     /// Two spans with an event in each start apart, each event consuming its
     /// line.
     pub fn span(&self) -> (u64, &'a [u8]) {

@@ -27,7 +27,9 @@ use pgdt_model::{Diagnostic, DumpIndex, DumpMetadata, Span, SpanBody};
 /// Returns the recovered metadata, the spans tiling `[0, preamble_end)` (no
 /// `COPY` block among them, the scan stopping before the first `COPY` block
 /// rather than walking into it — though a file with large objects and
-/// no `COPY` block maps that region as a `Data` span), that offset itself — a safe watermark
+/// no `COPY` block maps that region as a `Data` span; a file opening on blank
+/// lines, which `pg_dump` never writes, leaves them in no span, which the
+/// tiling check reports), that offset itself — a safe watermark
 /// for a later scan to continue from — and whatever roles/tablespaces the
 /// preamble region referenced (`DumpIndex::roles`/`tablespaces`'s own
 /// partial-scan caveat applies).

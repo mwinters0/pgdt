@@ -395,7 +395,7 @@ fn a_base_type_s_array_beneath_a_container_is_split_at_its_delimiter() {
 }
 
 /// **A walked check refuses exactly what a check over the keys refused**
-/// (`refused`, `checked_key`), over nested literals built from each
+/// (`checked_key`), over nested literals built from each
 /// container's grammar with leaves read and refused by their types, and a
 /// field walked as `COPY` wrote it — every byte escaped some way — refused
 /// exactly where its unescaped text is.
@@ -459,7 +459,7 @@ fn a_walked_check_refuses_what_the_keys_refused() {
             assert_eq!(walked_in_runs(&plan, &escaped), keyed, "{declared} {escaped:?}");
         }
     }
-    // Both answers are reached, at every depth.
+    // Both answers are reached, over every depth together.
     assert!(refusals > 10_000 && reads > 10_000, "{refusals} refusals, {reads} reads");
     // Every escape `COPY` reads, octal and hex among them, reads as its byte.
     let plan = comparison_for("smallint[]", None, &types, &[]);

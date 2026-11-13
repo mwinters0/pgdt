@@ -149,7 +149,7 @@ impl ReplayPlan {
     /// grows with it (`docs/design/decisions.md`, "D154").
     #[cfg_attr(
         not(any(test, feature = "introspect")),
-        expect(dead_code, reason = "the ledger's carve reads it")
+        expect(dead_code, reason = "the ledger's carve, not built yet, reads it")
     )]
     pub(in crate::stream) fn factor(&self) -> Option<Factor> {
         self.blocks.values().flat_map(PlannedBlock::factors).reduce(Factor::max)
@@ -614,7 +614,8 @@ fn plan_blocks(
 /// A table can own several blocks (I2), each listing its columns in its own
 /// leaf's order (I5), so a block's batches are reordered by name into the
 /// table's order — the table's DDL order where the dump declares the table,
-/// the first block's order where it does not — and a table whose blocks name
+/// its first own block's order where it does not, or the first block's where
+/// it has none — and a table whose blocks name
 /// different *sets* of its columns is refused, naming two of them
 /// ([`TableColumns::settle`]). Neither the
 /// order nor the refusal reads [`SchemaMode`], so a table's columns come out

@@ -225,7 +225,7 @@ fn part_bytes(builder: &ColumnBuilder) -> usize {
     shortest(builder) as usize + 1
 }
 
-/// The entries a builder has room for unreserved: Arrow's builders' default.
+/// The entries an Arrow leaf builder has room for unreserved: its default.
 const DEFAULT_ENTRIES: usize = 1024;
 
 /// What a builder is reserved for: `entries` of its own, and a text of `len`
@@ -255,7 +255,8 @@ pub(crate) fn reserved_column_builder(
 }
 
 /// A builder of `data_type` filled as `plan` says, with room as `room`
-/// states, or Arrow's default room with none.
+/// states, or with none an Arrow leaf's default room, a `bytea` and a list's
+/// and struct's own entries none.
 fn column_builder(data_type: &DataType, plan: &NestedPlan, room: Option<Room>) -> ColumnBuilder {
     match plan {
         NestedPlan::Scalar | NestedPlan::Decimal { .. } | NestedPlan::Text { .. } => {}

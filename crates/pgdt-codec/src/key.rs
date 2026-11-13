@@ -1,8 +1,9 @@
 //! A value's place in PostgreSQL's order, read from its text.
 //!
 //! A key is a function of a column's resolution, the semantics it is
-//! compared in and one unescaped text alone, so a field, a filter's literal, a
-//! stored bound and a gathered value are ordered by one comparison: the
+//! compared in, whether the text is a field or a filter's literal, and one
+//! unescaped text alone, so a field, a literal, a stored bound and a gathered
+//! value are ordered by one comparison: the
 //! filter's (`pgdt_query::predicate`), the statistics gatherer's
 //! (`pgdt_mapping`'s `statistics::gather`) and the summaries' alike.
 //!
@@ -127,7 +128,8 @@ impl ValueKey {
     /// semantics ([`ResolvedColumn::read_as_text_under`]), or where the text
     /// is not a value of its type, read as a field is: put through its
     /// typmod, and refused where the type's `*_in` refuses it
-    /// ([`PostgresInvalidValues::Default`]).
+    /// ([`PostgresInvalidValues::Default`]) — or is one this build does not
+    /// read.
     ///
     /// `column` is the record a query reads the column under, in
     /// `semantics`: its comparison plan orders the key, and in DataFusion's
@@ -141,7 +143,7 @@ impl ValueKey {
     /// (`docs/design/decisions.md`, "D55"): with no typmod, and in
     /// DataFusion's semantics as DataFusion reads the value. `None` where
     /// [`Self::of`] would be for the column, or where the text is not a
-    /// literal of its type.
+    /// literal of its type or is one this build does not read.
     pub fn literal(
         column: &ResolvedColumn,
         semantics: ComparisonSemantics,

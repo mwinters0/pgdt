@@ -24,7 +24,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD167 -->
+rather than being deleted. <!-- deficiency-watermark: KD168 -->
 **`KD1`–`KD167` are allocated, and nothing at or below `KD167` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -583,3 +583,9 @@ than reading as a phase nobody has sliced.
   refused as `FieldRender`; only a caller's own array holds one.
   **(c) unowned**; promoted by a caller rendering such an array. Detail:
   `crates/pgdt-query/src/render.rs`.
+
+- **KD168** — a `jsonb` ordering term holds a number's digits padded by its
+  exponent while comparing it, past what its key factor states: `1e100000`
+  holds copies of a hundred thousand digits beside eight bytes of text.
+  **(c) unowned**; promoted by the ledger drawing a query's factor, or such a
+  number met in use. Detail: `crates/pgdt-codec/src/value/json/order.rs`.

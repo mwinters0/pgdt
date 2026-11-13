@@ -472,9 +472,9 @@ async fn max_rows_splits_batches() {
     }
 }
 
-/// The third flush trigger splits a batch on the *source* span it covers,
-/// which is the only one of the three that bounds what an in-flight batch
-/// pins: `max_rows` counts selected rows and `max_bytes` selected field
+/// The source-span flush trigger splits a batch on the *source* span it
+/// covers, which of it and the row and byte caps is the only one bounding
+/// what an in-flight batch pins: `max_rows` counts selected rows and `max_bytes` selected field
 /// bytes, and a filter makes both arbitrarily sparse in the file. Both are
 /// disabled here so the split points are the span's alone, and the decoded
 /// data must be identical however they land — including under a `chunk_size`
@@ -525,7 +525,7 @@ async fn max_source_span_splits_batches() {
     assert_eq!(previous, 132, "a one-byte cap flushes after every row");
 }
 
-/// `None` disables the trigger: with the other two triggers off as well, a
+/// `None` disables the trigger: with the row and byte caps off as well, a
 /// block is one batch however far apart its rows are.
 #[tokio::test]
 async fn a_none_source_span_leaves_the_block_as_one_batch() {

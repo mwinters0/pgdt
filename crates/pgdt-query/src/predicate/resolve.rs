@@ -23,8 +23,9 @@ use super::{Expr, Operand, Predicate, PredicateOp};
 /// rather than per row.
 #[derive(Debug, Clone)]
 pub(super) enum Comparison {
-    /// The four ordering operators: the field is decoded per row with the
-    /// column's own decoder and its key compared against `bound`.
+    /// The four ordering operators: the field is ordered per row against
+    /// `bound` — a bytewise kind's with no key of it built, a `jsonb`'s by
+    /// its pairs' positions, any other's key read by the comparison's reader.
     Ordered { kind: CompareKind, bound: OrderKey },
     /// `=`/`!=` on a scalar column, against the literal's [`Equality`]: its
     /// `*_out` spellings, its text trimmed, or its key
@@ -833,7 +834,8 @@ impl ResolvedExpr {
 /// are raised for the first offending term in a left-to-right walk. A term
 /// naming a column this block does not carry is
 /// `Error::UnknownPredicateColumn`, which the plan raises ahead of every
-/// other refusal, [`check_columns`] walking the whole tree first; here it is
+/// refusal a term raises, [`check_columns`] walking the whole tree first,
+/// and behind the table's and its block's own; here it is
 /// reached only by a caller that has not. The plan
 /// runs it for every block before any is read, and raises the first refusing
 /// block's refusal in file order before any row of the table

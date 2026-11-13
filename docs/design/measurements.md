@@ -308,7 +308,7 @@ Eighteen standing rules for reading anything below:
   two sharpest instruments in this document price decode **plus** the Arrow
   build **plus** the render-back: "A typed query over nested columns…"'s
   per-row differences, and "What a column costs…"'s per-column deltas, whose
-  own closing paragraph says `render_field` is included. Read either as what a
+  own closing paragraph says `render_field_into` is included. Read either as what a
   *user of the CLI* pays, which is what they are for. What an **embedder** pays,
   and therefore what a library lever can remove, comes from a profile's shares
   or from a criterion bench (`benches/decoders.rs`, whose `decode` and `render`
@@ -2245,15 +2245,15 @@ element of an array literal is a borrowed slice of the field unless it actually 
 ([`decisions.md`](decisions.md), "D45"), and the
 per-byte predicate that decides whether it *would* have been quoted is one
 indexed bit rather than a search of a byte slice. What is left in the decode
-slope is the two walks themselves: `scan_token` walks each token once for its
-terminator and `needs_quote` walks it again. A composite sits where its field
+slope is the walks themselves: `scan_token` walks each unquoted token once for
+its terminator, `from_utf8` once to check it, and `needs_quote` again. A composite sits where its field
 count says it should: two fields, and it decodes in a little over half of what
 a four-element array does.
 
 **Which direction is more expensive depends on the shape.** For the composite,
-`render` is the larger at 112 ns against 104 — the decode side stopped
-allocating and its per-byte predicate got cheaper, while the record's render
-path holds a `String` per field. For the four-element array `decode` is ahead,
+`render` is the larger at 112 ns against 104 — the decode side's per-byte
+predicate got cheaper, though a record's decode still owns a `String` per
+field and its render writes one. For the four-element array `decode` is ahead,
 181 ns against 123. Every earlier stamp, all on glibc's `malloc`, read that row's
 two within a criterion sitting's scatter of each other, some the other way
 round; this is the first on mimalloc, where `render`, the side that allocates,
@@ -2635,7 +2635,7 @@ out — an array column is ten times a scalar's average and the ordering of the
 five rows is unchanged.
 
 The projections are spelled on the CLI, which is what makes this an end-to-end
-figure — `render_field` included — rather than a library-internal one:
+figure — `render_field_into` included — rather than a library-internal one:
 `--no-columns` for the zero-column row and a repeated `--column <name>` for the
 rest ([`decisions.md`](decisions.md), "D119"). **So a per-column
 delta here does not size a library change**; see "A mode difference and a
@@ -3730,9 +3730,9 @@ reaches.
 constant.** The two constants are already shipped — `MEMORY_RESERVE` is
 **384 MiB**, read off five builds and 400 runs on the platform allocator, and `pgdt_io::internal::MEMORY_UNPOOLED_BOUND`
 is **256 MiB**, derived by arithmetic over those same runs under the shipped
-charge — a reading taken once, transcribed in
-[`decisions.md`](decisions.md), "I/O, memory and parallelism", and
-not a table in this document — so what a sitting can do is fault, and the criterion says in advance which
+charge — a reading taken once, kept in
+`runs/19.16-reserve-constant-20260911-2210/readings.json` as
+`crates/pgdt-io/src/memory.rs` cites it, and not a table in this document — so what a sitting can do is fault, and the criterion says in advance which
 band a fault lands in. Only the **`bound`** band is a finding the sitting
 discharges, re-deriving the bound from its own remainders; an over-bill is a
 charge nothing holds and a cell above the reserve an arrangement the discovery
@@ -4004,8 +4004,8 @@ though it leaves 15.7% of the 896 MiB allowance where the margin holds a count
 to 20% — and no cell exceeded its stated `--memory` (`KD34`). The column
 subtracts the budget stated, not the one resolved, so it reads each cell
 71.7 MiB low. `MEMORY_RESERVE` was read off the *flagless*
-legs of a five-build reading — taken once and transcribed in
-[`decisions.md`](decisions.md), "I/O, memory and parallelism", not a
+legs of a five-build reading — taken once and kept in
+`runs/19.16-reserve-constant-20260911-2210/readings.json`, not a
 figure here — against the fraction of the limit left at the worst rep; on this
 sitting's flagless legs the worst remainder is 402.2 MiB on the shipped build
 and 189.3 MiB on its `system` twins. The two numbers are

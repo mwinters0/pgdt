@@ -519,7 +519,8 @@ pub(crate) fn order_keys(a: &OrderKey, b: &OrderKey) -> Option<Ordering> {
 
 /// **The order a stored bound and a block's row order are kept in**:
 /// [`compare_keys`], the order a filter compares by, with a float's `-0`
-/// below `0` where it ties them, as IEEE `totalOrder` — the order Arrow sorts
+/// below `0` and its `-NaN` below `NaN` where it ties them, as IEEE
+/// `totalOrder` — the order Arrow sorts
 /// a float by and DataFusion takes its `MIN`/`MAX` in — places them. A
 /// refinement, so an extreme in it is one in the filter's order and a block
 /// sorted in it is sorted in that order too (`docs/design/decisions.md`,

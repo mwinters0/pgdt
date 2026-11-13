@@ -17,7 +17,8 @@
 //! Each child is one concern whole: what an instrumented binary reads, which
 //! this module re-exports, and the hooks a crate above calls to record it,
 //! which `internal` re-exports — `decode`'s count, which a test reads rather
-//! than a binary, among them.
+//! than a binary, among them — but `allocated` and `freed`, which this module
+//! re-exports for the binary's allocator.
 
 pub(crate) mod decode;
 pub(crate) mod evaluation;

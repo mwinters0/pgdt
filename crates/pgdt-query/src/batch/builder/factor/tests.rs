@@ -1,7 +1,8 @@
-//! **A column's decode factor is its densest repeated part's**, beside a
-//! value's own bytes and what a part's append holds besides, and none where
-//! nothing grows with a value's text; **its Arrow form holds what the factor
-//! says** over a column of each type's densest literal.
+//! **A column's decode factor is its repeated parts' entries summed over
+//! every depth**, beside a value's own bytes and what a part's append holds
+//! besides, and none where nothing grows with a value's text; **its Arrow
+//! form holds what its densest part's says** over a column of each type's
+//! densest literal.
 
 use std::sync::Arc;
 
@@ -44,7 +45,7 @@ fn factor(declared: &str) -> Option<Factor> {
 }
 
 #[test]
-fn a_column_s_factor_is_its_densest_part_s() {
+fn a_column_s_factor_sums_its_parts() {
     let f = |held, per| Some(Factor::new(held, per));
     let cases = [
         // A value's own bytes, one for one.

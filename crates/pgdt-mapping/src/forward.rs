@@ -477,8 +477,9 @@ pub async fn map_forward(
                 // This pass needs only the block's extent; row bytes
                 // become batches in the replay phase. Rows are read here
                 // for a data-level block's census and count
-                // (`docs/design/decisions.md`, "D35", "D96") and a
-                // gathering block's statistics.
+                // (`docs/design/decisions.md`, "D35", "D96"), a
+                // gathering block's statistics, a strict parse's checks
+                // and TimescaleDB's catalog (D133).
                 Event::Row(row) => builder.on_row(row.offset, row.raw),
                 // A row of a block whose rows are not recorded, which the
                 // scanner counted and the census and observer folded.

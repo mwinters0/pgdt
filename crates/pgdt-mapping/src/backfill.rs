@@ -602,8 +602,9 @@ async fn observe_rows(
                     census.merge(&streamed.take());
                     return Ok(Some((*end, census)));
                 }
-                // A scanner inside a block's rows emits nothing else
-                // before its `CopyEnd`.
+                // A streamed row was folded into both as it went by; a
+                // scanner inside a block's rows emits nothing else before
+                // its `CopyEnd`.
                 _ => {}
             }
         }

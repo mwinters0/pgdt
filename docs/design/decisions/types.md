@@ -37,24 +37,25 @@ apart from `NotDeclared`: same output, opposite advice. Rejected: widening `buil
 
 ### D45 Strict decoders apart from permissive parsers; decode and render allocate only what they return
 `decode_*` reads what a dump holds and cannot loosen, each the inverse of its `render_*`; `parse_*` reads what `*_in`
-reads — a filter's literal, a strictly checked field — and cannot tighten: two scanners, not one with a flag, each
+reads — a filter's literal, a strictly checked field — and cannot tighten: two scanners, not one flagged, each
 transcribing the newest major and under-accepting (I35, I44). Wrong depth, `[lb:ub]=` or a field-count mismatch is
 refused, never reshaped; a value no text form spells is never rounded (I40), and `FieldRender` where its renderer tells
 (`KD166`). A renderer writes into its caller's buffer, an integer, boolean, text, date, time, timestamp or array with no
-`String` between (`tests/render_allocations.rs` pins the count), and a decoder allocates only what it returns, an
-array's element borrowing unless it carried an escape. Rejected: a `String` per rendered field. Evidence:
+`String` between (`tests/render_allocations.rs` pins the count), and a decoder allocates only what it returns and a
+decorated array's `[lb:ub]` list, an element borrowed unless escaped. Rejected: a `String` per rendered field. Evidence:
 `nested-decode-micro`.
 
 ### D143 An input grammar is a walk, read a part at a time
 `array_in`'s, `record_in`'s, `range_in`'s, `multirange_in`'s and `int2vectorin`'s grammars, and `json_in`'s with
-`jsonb_in`'s refusals beside it, are walks handing their caller each part as read (`Parts`); `parse_*` collect the
-nested ones and a strict check reads all, holding no copy and no tree of a field, only a scalar part's text and key and a
-range's bounds and theirs. `parse_jsonb` is `JsonCursor`'s, held to the walk by a differential test. Rejected: a value's
-key tree built and dropped, tens of bytes an element; a check walk beside each nested scanner. Code: `nested/input/`,
-`json/walk.rs` (`JsonWalk`), `grammar/walk.rs` (`FieldWalk`). Evidence: `input/differential.rs`,
+`jsonb_in`'s refusals beside it, are walks, the nested ones handing their caller each part as read (`Parts`) and
+`JsonWalk` saying only whether its bytes are read; `parse_*` collect the nested ones and a strict check reads all,
+holding no copy and no tree of a field, only a scalar part's text and key, a `json` value's open containers, a bit each,
+and a range's bounds and theirs. `parse_jsonb` is `JsonCursor`'s, held to the walk by a differential test. Rejected: a
+value's key tree built and dropped, tens of bytes an element; a check walk beside each nested scanner. Code:
+`nested/input/`, `json/walk.rs` (`JsonWalk`), `grammar/walk.rs` (`FieldWalk`). Evidence: `input/differential.rs`,
 `tests/decoded_copies.rs`.
 
-### D144 A long field's reader is a push machine fed its runs, looking at no byte past the one it reads
+### D144 A long field's reader is a push machine fed its runs, looking at no byte past its run
 `Unescape`, the input walks (D143), `TextFold`, `ByteaFold` and the strict check's grammars (D146) are hand-written
 state machines fed a field's bytes as its runs come, carrying past a run's end only their own state: an escape begun,
 `NULL`'s letters, a quote awaiting its double. A scalar a key or a query's batch reads is collected for its slice

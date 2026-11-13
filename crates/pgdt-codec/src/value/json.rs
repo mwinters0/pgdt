@@ -382,7 +382,8 @@ impl<'a> JsonCursor<'a> {
     /// kept: `1e2`, `100` and `100.00` are one value (I41). `numeric_in`'s
     /// bounds are checked before the point moves, which keeps the digit string
     /// this builds within them (I63).
-    // pg-refuses: I41 — `01`, `+1`, `.5`, `1.` and `NaN`.
+    // pg-refuses: I41 — `01`, `+1`, `.5`, `1.` and `NaN`, a byte starting no
+    // value, and a number past `numeric`'s bounds (`JsonCursor::value`).
     fn number(&mut self) -> Option<NumericKey> {
         let negative = self.eat(b'-');
         let int = self.digits()?;

@@ -63,7 +63,10 @@ impl Factor {
     }
 
     /// The most held beside a text of `len` bytes.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the ledger's carve reads it"))]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the ledger's carve, not built yet, reads it")
+    )]
     pub(crate) fn of(self, len: u64) -> u64 {
         let held = (u128::from(len) * u128::from(self.held)).div_ceil(u128::from(self.per));
         u64::try_from(held).unwrap_or(u64::MAX)
