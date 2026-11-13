@@ -55,13 +55,15 @@ the compressed file pulled or fetched, the remote object
 
 The memory allowance and its discovery, its resolution into what a pass
 runs under, a caller's parallelism, the physical cores a process may run on,
-what a worker holds resident, the partition advice a source gives and the cut
+what a worker holds resident, what a held line draws past its chunk term, the
+partition advice a source gives and the cut
 ([`decisions.md`](decisions.md), "I/O, memory and parallelism").
 
-- **pgdt-io** — `memory.rs`, `arrangement.rs`, `parallelism.rs`, `cores.rs`,
-  `partition.rs`: a source says what a worker holds, so sizing sits beside it
-  (D68), and the one resolution every embedder calls with it, carrying where
-  the allowance came from beside the `Parallelism` that never does (D64); the
+- **pgdt-io** — `memory.rs`, `arrangement.rs`, `parallelism.rs`, `ledger.rs`,
+  `cores.rs`, `partition.rs`: a source says what a worker holds, so sizing sits
+  beside it (D68), and the one resolution every embedder calls with it,
+  carrying where the allowance came from beside the `Parallelism` that never
+  does (D64), and carving the ledger a run's held lines draw from (D157); the
   partition advice and the cut read a worker's cost, and nothing in sizing
   reads them.
 - **datafusion-pgdump** — `budget.rs`: the one allowance every scan a session

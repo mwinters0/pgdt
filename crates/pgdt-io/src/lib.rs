@@ -6,13 +6,15 @@
 //! nested under its read contract; and memory and parallelism — the allowance
 //! and its discovery (`memory`), its resolution into what a pass runs under
 //! (`arrangement`), the arrangement and what a worker holds (`parallelism`),
-//! the physical cores a process may run on (`cores`), and where a range is
+//! what a run's held lines may draw past their chunk term (`ledger`), the
+//! physical cores a process may run on (`cores`), and where a range is
 //! cut (`partition`).
 
 #![forbid(unsafe_code)]
 
 mod arrangement;
 mod cores;
+mod ledger;
 mod memory;
 mod parallelism;
 mod partition;
@@ -21,6 +23,7 @@ mod source;
 mod test_support;
 
 pub use arrangement::{Allowance, Arrangement, ArrangementRequest, Jobs};
+pub use ledger::{Admission, Holder, Ledger};
 pub use memory::{DEFAULT_MEMORY_BUDGET, MemoryLimit, available_memory, discover_memory_limit};
 pub use parallelism::{Parallelism, WorkerMemory};
 pub use partition::{PartitionBoundaries, PartitionRead, Partitioning, RetainedUnit};

@@ -149,7 +149,7 @@ impl ReplayPlan {
     /// grows with it (`docs/design/decisions.md`, "D154").
     #[cfg_attr(
         not(any(test, feature = "introspect")),
-        expect(dead_code, reason = "the ledger's carve, not built yet, reads it")
+        expect(dead_code, reason = "a query's draw on the ledger, not built yet, reads it")
     )]
     pub(in crate::stream) fn factor(&self) -> Option<Factor> {
         self.blocks.values().flat_map(PlannedBlock::factors).reduce(Factor::max)

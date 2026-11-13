@@ -5,9 +5,10 @@
 use std::path::Path;
 
 use crate::ByteRangeSource;
+use crate::ledger::Ledger;
 use crate::memory::{
-    DEFAULT_MEMORY_BUDGET, MemoryLimit, available_memory_in, discover_memory_limit_in,
-    statistics_allowance,
+    DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE, MemoryLimit, available_memory_in,
+    discover_memory_limit_in, statistics_allowance,
 };
 use crate::parallelism::{Parallelism, WorkerMemory};
 
@@ -107,6 +108,12 @@ pub struct ArrangementRequest {
     /// that; `pgdt` holds nothing of the kind and leaves it off, the halving
     /// being its margin.
     pub carve_estimate: bool,
+    /// **The charge of the longest line a read over mapped blocks will
+    /// meet**, carved into the ledger before its readers so that line is
+    /// admitted without waiting: it comes off the cap and the margin's
+    /// ceiling as what is `drawn` does. Zero for a pass that meets its lines
+    /// unknown — a mapping pass — whose ledger is what its readers leave.
+    pub line_charge: u64,
 }
 
 impl ArrangementRequest {
@@ -119,6 +126,7 @@ impl ArrangementRequest {
             drawn: 0,
             held: 0,
             carve_estimate: false,
+            line_charge: 0,
         }
     }
 
@@ -135,19 +143,21 @@ impl ArrangementRequest {
 }
 
 /// What one pass runs under, resolved from an allowance: the
-/// [`Parallelism`], what a gathering pass's statistics may hold, and where
-/// the allowance came from.
+/// [`Parallelism`], what a gathering pass's statistics may hold, the
+/// [`Ledger`] its held lines draw from, and where the allowance came from.
 ///
 /// **No `Default`, and no constructor but [`Self::resolve`]**, so no caller
-/// pairs a parallelism with an allowance not carved from it: a parallelism
-/// stated alone is `Allowance::NoneFound` with `Jobs::Stated`, declining
-/// nothing (`docs/design/decisions.md`, "D1", "D83").
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// pairs a parallelism with an allowance or a ledger not carved from it: a
+/// parallelism stated alone is `Allowance::NoneFound` with `Jobs::Stated`,
+/// declining nothing (`docs/design/decisions.md`, "D1", "D83"). A clone shares
+/// its ledger, being the same run's.
+#[derive(Debug, Clone)]
 pub struct Arrangement {
     parallelism: Parallelism,
     allowance: Allowance,
     recommended_jobs: Option<usize>,
     statistics_allowance: Option<u64>,
+    ledger: Ledger,
 }
 
 impl Arrangement {
@@ -174,41 +184,69 @@ impl Arrangement {
     ///
     /// **A stated count is kept**, with the budget the count the allowance
     /// affords would spend beside it.
+    ///
+    /// **The ledger is what the cap leaves** once the budget and what is
+    /// `held` are spent, the `line_charge` carved off the readers' cap first
+    /// so the ledger holds it: under an estimate, what the halved cap leaves
+    /// the budget; with nothing found, a ledger without limit, nothing having
+    /// been stated to carve (`docs/design/decisions.md`, "D157").
     pub fn resolve(allowance: &Allowance, request: ArrangementRequest) -> Self {
-        let ArrangementRequest { jobs, worker_memory, drawn, held, carve_estimate } = request;
+        let ArrangementRequest { jobs, worker_memory, drawn, held, carve_estimate, line_charge } =
+            request;
         let asked = match jobs {
             Jobs::Stated(jobs) | Jobs::Recommended(jobs) => jobs,
         };
-        let carved = match allowance {
-            Allowance::Stated(bytes) | Allowance::Setting(bytes) => {
-                Parallelism::within_shared(asked, worker_memory, *bytes, drawn, held)
+        // What a carved allowance's ledger and readers share: its cap, before
+        // the line's charge comes off it, less what is held.
+        let shared = |bytes: u64| {
+            bytes.saturating_sub(MEMORY_RESERVE).saturating_sub(drawn).saturating_sub(held)
+        };
+        let lined = drawn.saturating_add(line_charge);
+        let (carved, room) = match allowance {
+            Allowance::Stated(bytes) | Allowance::Setting(bytes) => (
+                Parallelism::within_shared(asked, worker_memory, *bytes, lined, held),
+                Some(shared(*bytes)),
+            ),
+            Allowance::Limit(limit) => (
+                Parallelism::within_shared(asked, worker_memory, limit.bytes, lined, held),
+                Some(shared(limit.bytes)),
+            ),
+            Allowance::HalfAvailable(bytes) if carve_estimate => (
+                Parallelism::within_shared(asked, worker_memory, *bytes, lined, held),
+                Some(shared(*bytes)),
+            ),
+            Allowance::HalfAvailable(bytes) => {
+                (estimated(asked, worker_memory, bytes.saturating_sub(line_charge)), Some(*bytes))
             }
-            Allowance::Limit(limit) => {
-                Parallelism::within_shared(asked, worker_memory, limit.bytes, drawn, held)
-            }
-            Allowance::HalfAvailable(bytes) if carve_estimate => {
-                Parallelism::within_shared(asked, worker_memory, *bytes, drawn, held)
-            }
-            Allowance::HalfAvailable(bytes) => estimated(asked, worker_memory, *bytes),
             Allowance::NoneFound if carve_estimate => {
                 let cap = DEFAULT_MEMORY_BUDGET.saturating_sub(drawn);
                 let (jobs, budget) = Parallelism::fit(asked, worker_memory, cap, None);
-                Parallelism::workers(jobs, budget)
+                (Parallelism::workers(jobs, budget), None)
             }
-            Allowance::NoneFound => estimated(asked, worker_memory, DEFAULT_MEMORY_BUDGET),
+            Allowance::NoneFound => (estimated(asked, worker_memory, DEFAULT_MEMORY_BUDGET), None),
         };
         let parallelism = match (jobs, carved.memory_bytes()) {
             (Jobs::Stated(stated), Some(bytes)) => Parallelism::workers(stated, bytes),
             _ => carved,
         };
         let statistics_allowance = allowance.bytes().map(|bytes| {
-            statistics_allowance(bytes, parallelism.budget_bytes()).saturating_sub(drawn)
+            statistics_allowance(bytes, parallelism.budget_bytes()).saturating_sub(lined)
         });
         let recommended_jobs = match jobs {
             Jobs::Stated(_) => None,
             Jobs::Recommended(jobs) => Some(jobs),
         };
-        Self { parallelism, allowance: allowance.clone(), recommended_jobs, statistics_allowance }
+        let ledger = match room {
+            Some(room) => Ledger::limited(room.saturating_sub(parallelism.budget_bytes())),
+            None => Ledger::unlimited(),
+        };
+        Self {
+            parallelism,
+            allowance: allowance.clone(),
+            recommended_jobs,
+            statistics_allowance,
+            ledger,
+        }
     }
 
     /// The arrangement the library's passes are handed.
@@ -234,6 +272,12 @@ impl Arrangement {
     /// statistics by. `None`, where no allowance was found, declines nothing.
     pub fn statistics_allowance(&self) -> Option<u64> {
         self.statistics_allowance
+    }
+
+    /// **The ledger the run's held lines draw from** past their chunk term:
+    /// one per resolution, which every clone shares.
+    pub fn ledger(&self) -> &Ledger {
+        &self.ledger
     }
 }
 

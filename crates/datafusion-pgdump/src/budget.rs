@@ -176,6 +176,8 @@ impl ScanBudget {
             drawn: held.scans,
             held: held.maps.saturating_add(pool),
             carve_estimate: true,
+            // No scan draws from a ledger yet, so none carves its longest line.
+            line_charge: 0,
         };
         let parallelism = Arrangement::resolve(&allowance, request).parallelism();
         // Nothing found draws on `DEFAULT_MEMORY_BUDGET`, the session's

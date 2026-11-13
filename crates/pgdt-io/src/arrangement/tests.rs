@@ -276,3 +276,85 @@ fn what_others_drew_comes_off_the_count_and_the_statistics() {
     );
     assert_eq!(second.allowance(), &allowance);
 }
+
+/// **The ledger is what the cap leaves the readers and the holdings**
+/// (`docs/design/decisions.md`, "D157"): a carved allowance's cap less the
+/// budget and what is held; an estimate's cap less the budget, nothing held
+/// moving it; nothing found, a ledger without limit.
+#[test]
+fn the_ledger_is_what_the_cap_leaves_the_readers_and_the_holdings() {
+    const GIB: u64 = 1 << 30;
+    let memory = Some(WorkerMemory::per_worker(GIB));
+    let allowance = Allowance::Stated(10 * GIB);
+    let cap = 10 * GIB - MEMORY_RESERVE;
+
+    let alone = Arrangement::resolve(&allowance, ArrangementRequest::recommended(24, memory));
+    assert_eq!(alone.parallelism(), Parallelism::workers(7, 7 * GIB));
+    assert_eq!(alone.ledger().capacity(), Some(cap - 7 * GIB));
+
+    let request = ArrangementRequest { held: GIB, ..ArrangementRequest::recommended(24, memory) };
+    let holding = Arrangement::resolve(&allowance, request);
+    assert_eq!(holding.parallelism(), Parallelism::workers(6, 6 * GIB));
+    assert_eq!(holding.ledger().capacity(), Some(cap - 6 * GIB - GIB));
+
+    let request = ArrangementRequest { drawn: GIB, ..ArrangementRequest::recommended(24, memory) };
+    let shared = Arrangement::resolve(&allowance, request);
+    assert_eq!(shared.parallelism(), Parallelism::workers(6, 6 * GIB));
+    assert_eq!(shared.ledger().capacity(), Some(cap - GIB - 6 * GIB));
+
+    let reader = Some(WorkerMemory::per_worker(READER));
+    let request = ArrangementRequest { held: 4 * READER, ..lowered_request(reader) };
+    let estimate = Arrangement::resolve(&Allowance::HalfAvailable(GIB), request);
+    assert_eq!(estimate.parallelism(), Parallelism::workers(17, 17 * READER));
+    assert_eq!(estimate.ledger().capacity(), Some(GIB - 17 * READER));
+
+    for carve_estimate in [false, true] {
+        let request = ArrangementRequest { carve_estimate, ..lowered_request(reader) };
+        let blind = Arrangement::resolve(&Allowance::NoneFound, request);
+        assert_eq!(blind.ledger().capacity(), None, "nothing found carves no limit");
+    }
+}
+
+/// **A read's longest line is carved into the ledger before its readers**:
+/// it comes off the readers' cap and the margin's ceiling as a draw does, so
+/// fewer readers leave the ledger room for it, and off what statistics may
+/// hold beside them.
+#[test]
+fn a_line_charge_is_carved_into_the_ledger_before_the_readers() {
+    const GIB: u64 = 1 << 30;
+    let memory = Some(WorkerMemory::per_worker(GIB));
+    let allowance = Allowance::Stated(10 * GIB);
+    let line_charge = 2 * GIB;
+    let request = ArrangementRequest { line_charge, ..ArrangementRequest::recommended(24, memory) };
+    let lined = Arrangement::resolve(&allowance, request);
+    let drawn =
+        ArrangementRequest { drawn: line_charge, ..ArrangementRequest::recommended(24, memory) };
+    assert_eq!(lined.parallelism(), Arrangement::resolve(&allowance, drawn).parallelism());
+    assert_eq!(lined.parallelism(), Parallelism::workers(5, 5 * GIB));
+    let capacity = lined.ledger().capacity().unwrap();
+    assert_eq!(capacity, 10 * GIB - MEMORY_RESERVE - 5 * GIB);
+    assert!(capacity >= line_charge, "the line is admitted without waiting");
+    assert_eq!(
+        lined.statistics_allowance(),
+        Some(statistics_allowance(10 * GIB, 5 * GIB) - line_charge)
+    );
+
+    // An estimate's readers are capped by what the line leaves of it.
+    let reader = Some(WorkerMemory::per_worker(READER));
+    let request = ArrangementRequest { line_charge: 512 << 20, ..lowered_request(reader) };
+    let estimate = Arrangement::resolve(&Allowance::HalfAvailable(GIB), request);
+    assert_eq!(estimate.parallelism(), Parallelism::workers(8, 8 * READER));
+    assert_eq!(estimate.ledger().capacity(), Some(GIB - 8 * READER));
+}
+
+/// **Every clone of an arrangement shares its ledger**: one run's.
+#[test]
+fn a_clone_shares_its_ledger() {
+    let allowance = Allowance::Stated(1 << 30);
+    let arrangement = Arrangement::resolve(&allowance, lowered_request(None));
+    let clone = arrangement.clone();
+    let mut holder = clone.ledger().holder();
+    let admitted = futures::FutureExt::now_or_never(holder.draw(0, 1 << 20));
+    assert_eq!(admitted, Some(crate::Admission::Held));
+    assert_eq!(arrangement.ledger().drawn(), 1 << 20);
+}
