@@ -64,8 +64,8 @@ unplaced. `Gatherer::field` places nothing: the data-level parse falls.
   its `bytea` text read there too, one long stretch where the typed rows
   decode it by `decode_bytea_into`: the same shape, per stretch rather than
   per byte, priced on the other side of where the two cost the same.
-- **Accepted** (D108), unattended, under STATUS's "Decisions worth another
-  look": a held field read a byte at a time by `Unescaped`, the shape that
-  would undo it, reads the long stretch a byte at a time again, and which
-  costs less over both rows needs a pair of its own. Spelling `escape_at`
-  inline is the rework resting on codegen D108 refuses.
+- **Accepted** (D108): the shape that would undo it, `unescape_owned`
+  reading its held field a byte at a time, is D156's to refuse, and the
+  control's stretches are its stress column's, shorter than real escaped
+  text's. Spelling `escape_at` inline is the rework resting on codegen D108
+  refuses.

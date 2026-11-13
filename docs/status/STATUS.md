@@ -159,17 +159,5 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **33.27's pair resolves a rise on the typed query and `pgdt sql -c`,
-  accepted rather than reworked.** Both are `unescape_owned` over the
-  control's escaped column, a held field now read through `Unescape::run`'s
-  stage, paying a `memchr`, an `escape_at` call and a copy per escape where
-  the parent's machine paid per byte; the strings query reads the same
-  function and falls, its `bytea` text one long stretch. Accepted because the
-  shape that would undo it, `unescape_owned` reading its held field through
-  `Unescaped` a byte at a time, as D156 has a held field read, reads that
-  long stretch a byte at a time again, and which costs less over both rows
-  needs a pair of its own
-  (`runs/count-pair-33.27-20261113/callgrind/reading.txt`). Reconsidering
-  reworks `unescape_owned` to `Unescaped` and takes that pair: 33.27 reopens
-  as a `33.27.1`, or D156's `Rejected` gains the held field read by runs.
+*(None open.)*
 
