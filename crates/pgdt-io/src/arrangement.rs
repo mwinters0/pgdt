@@ -7,8 +7,7 @@ use std::path::Path;
 use crate::ByteRangeSource;
 use crate::ledger::Ledger;
 use crate::memory::{
-    DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE, MemoryLimit, available_memory_in,
-    discover_memory_limit_in, statistics_allowance,
+    DEFAULT_MEMORY_BUDGET, MemoryLimit, available_memory_in, discover_memory_limit_in, margin_room,
 };
 use crate::parallelism::{Parallelism, WorkerMemory};
 
@@ -110,9 +109,11 @@ pub struct ArrangementRequest {
     pub carve_estimate: bool,
     /// **The charge of the longest line a read over mapped blocks will
     /// meet**, carved into the ledger before its readers so that line is
-    /// admitted without waiting: it comes off the cap and the margin's
-    /// ceiling as what is `drawn` does. Zero for a pass that meets its lines
-    /// unknown — a mapping pass — whose ledger is what its readers leave.
+    /// admitted without waiting: it comes off the margin's ceiling the count
+    /// is solved against, and off what statistics may hold, never off the cap
+    /// (`docs/design/decisions.md`, "D157"). Zero for a pass that meets its
+    /// lines unknown — a mapping pass — whose ledger is what its readers
+    /// leave.
     pub line_charge: u64,
 }
 
@@ -185,59 +186,58 @@ impl Arrangement {
     /// **A stated count is kept**, with the budget the count the allowance
     /// affords would spend beside it.
     ///
-    /// **The ledger is what the cap leaves** once the budget and what is
-    /// `held` are spent, the `line_charge` carved off the readers' cap first
-    /// so the ledger holds it: under an estimate, what the halved cap leaves
-    /// the budget; with nothing found, a ledger without limit, nothing having
-    /// been stated to carve (`docs/design/decisions.md`, "D157").
+    /// **The ledger is what the margin's ceiling leaves the budget**
+    /// wherever an allowance is found, an estimate's included, less what
+    /// others drew: one room, which a gathering pass's statistics and its
+    /// held lines share, statistics first. What is `held` opens the
+    /// statistics' draw on it, being statistics a cache hands the pass or
+    /// what is resident beside it, which a pass's statistics account then
+    /// charges in its place. The `line_charge` comes off the ceiling the count
+    /// is solved against, so the room holds it, and what statistics may hold
+    /// is what the room leaves past it. With nothing found, a ledger without
+    /// limit, nothing having been stated to carve
+    /// (`docs/design/decisions.md`, "D157").
     pub fn resolve(allowance: &Allowance, request: ArrangementRequest) -> Self {
         let ArrangementRequest { jobs, worker_memory, drawn, held, carve_estimate, line_charge } =
             request;
         let asked = match jobs {
             Jobs::Stated(jobs) | Jobs::Recommended(jobs) => jobs,
         };
-        // What a carved allowance's ledger and readers share: its cap, before
-        // the line's charge comes off it, less what is held.
         let shared = |bytes: u64| {
-            bytes.saturating_sub(MEMORY_RESERVE).saturating_sub(drawn).saturating_sub(held)
+            Parallelism::within_shared(asked, worker_memory, bytes, drawn, held, line_charge)
         };
-        let lined = drawn.saturating_add(line_charge);
-        let (carved, room) = match allowance {
-            Allowance::Stated(bytes) | Allowance::Setting(bytes) => (
-                Parallelism::within_shared(asked, worker_memory, *bytes, lined, held),
-                Some(shared(*bytes)),
-            ),
-            Allowance::Limit(limit) => (
-                Parallelism::within_shared(asked, worker_memory, limit.bytes, lined, held),
-                Some(shared(limit.bytes)),
-            ),
-            Allowance::HalfAvailable(bytes) if carve_estimate => (
-                Parallelism::within_shared(asked, worker_memory, *bytes, lined, held),
-                Some(shared(*bytes)),
-            ),
+        let carved = match allowance {
+            Allowance::Stated(bytes) | Allowance::Setting(bytes) => shared(*bytes),
+            Allowance::Limit(limit) => shared(limit.bytes),
+            Allowance::HalfAvailable(bytes) if carve_estimate => shared(*bytes),
             Allowance::HalfAvailable(bytes) => {
-                (estimated(asked, worker_memory, bytes.saturating_sub(line_charge)), Some(*bytes))
+                estimated(asked, worker_memory, bytes.saturating_sub(line_charge))
             }
             Allowance::NoneFound if carve_estimate => {
                 let cap = DEFAULT_MEMORY_BUDGET.saturating_sub(drawn);
                 let (jobs, budget) = Parallelism::fit(asked, worker_memory, cap, None);
-                (Parallelism::workers(jobs, budget), None)
+                Parallelism::workers(jobs, budget)
             }
-            Allowance::NoneFound => (estimated(asked, worker_memory, DEFAULT_MEMORY_BUDGET), None),
+            Allowance::NoneFound => estimated(asked, worker_memory, DEFAULT_MEMORY_BUDGET),
         };
         let parallelism = match (jobs, carved.memory_bytes()) {
             (Jobs::Stated(stated), Some(bytes)) => Parallelism::workers(stated, bytes),
             _ => carved,
         };
-        let statistics_allowance = allowance.bytes().map(|bytes| {
-            statistics_allowance(bytes, parallelism.budget_bytes()).saturating_sub(lined)
-        });
+        let room = allowance
+            .bytes()
+            .map(|bytes| margin_room(bytes, parallelism.budget_bytes()).saturating_sub(drawn));
+        let statistics_allowance = room.map(|room| room.saturating_sub(line_charge));
         let recommended_jobs = match jobs {
             Jobs::Stated(_) => None,
             Jobs::Recommended(jobs) => Some(jobs),
         };
         let ledger = match room {
-            Some(room) => Ledger::limited(room.saturating_sub(parallelism.budget_bytes())),
+            Some(room) => {
+                let ledger = Ledger::limited(room);
+                ledger.draw_statistics(held);
+                ledger
+            }
             None => Ledger::unlimited(),
         };
         Self {
@@ -266,7 +266,8 @@ impl Arrangement {
     }
 
     /// **What a gathering pass's statistics may hold**: what the margin
-    /// leaves once the read-buffer budget and what others drew come off it,
+    /// leaves once the read-buffer budget, what others drew and a read's
+    /// longest line come off it — the ledger's room past that line —
     /// carved after the workers (`docs/design/decisions.md`, "D85"), which
     /// `pgdt_mapping::map_file` and `pgdt_mapping::backfill_block` bound their
     /// statistics by. `None`, where no allowance was found, declines nothing.

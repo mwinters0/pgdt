@@ -168,9 +168,9 @@ fn available_memory_reads_memavailable_and_converts_from_kb() {
 fn statistics_are_starved_below_their_own_line_and_unfloored_above_the_crossover() {
     let zero_line = MEMORY_UNPOOLED_BOUND * 100 / (100 - MEMORY_MARGIN_PERCENT);
     assert_eq!(zero_line, 320 << 20);
-    assert_eq!(statistics_allowance(zero_line, 0), 0, "at the line, not only under it");
-    assert_eq!(statistics_allowance(zero_line - (1 << 20), 0), 0);
-    assert!(statistics_allowance(zero_line + (1 << 20), 0) > 0, "and positive above it");
+    assert_eq!(margin_room(zero_line, 0), 0, "at the line, not only under it");
+    assert_eq!(margin_room(zero_line - (1 << 20), 0), 0);
+    assert!(margin_room(zero_line + (1 << 20), 0) > 0, "and positive above it");
 
     let crossover = 5 * (MEMORY_RESERVE - MEMORY_UNPOOLED_BOUND);
     let below = crossover - (64 << 20);
@@ -183,7 +183,7 @@ fn statistics_are_starved_below_their_own_line_and_unfloored_above_the_crossover
     assert!(floor > 0, "an allowance in this band cannot starve statistics");
     for per_worker in [1u64 << 20, 17 << 20, 64 << 20, 96 << 20, 1 << 30] {
         let fitted = Parallelism::within(24, Some(WorkerMemory::per_worker(per_worker)), below);
-        let left = statistics_allowance(below, fitted.memory_bytes().unwrap());
+        let left = margin_room(below, fitted.memory_bytes().unwrap());
         assert!(left >= floor, "{per_worker} left {left}, under the cap's own floor {floor}");
     }
 
@@ -193,5 +193,5 @@ fn statistics_are_starved_below_their_own_line_and_unfloored_above_the_crossover
     assert!(ceiling < above - MEMORY_RESERVE, "the ceiling binds here, not the cap");
     let fitted = Parallelism::within(24, Some(WorkerMemory::per_worker(ceiling / 4)), above);
     assert_eq!(fitted.jobs(), 4, "four workers is what the ceiling exactly affords");
-    assert_eq!(statistics_allowance(above, fitted.memory_bytes().unwrap()), 0);
+    assert_eq!(margin_room(above, fitted.memory_bytes().unwrap()), 0);
 }

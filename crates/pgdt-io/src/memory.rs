@@ -97,10 +97,11 @@ pub const MEMORY_RESERVE: u64 = 384 << 20;
 /// [`BlockCache::affordable`](crate::source::compressed::blocks::BlockCache::affordable) reads the budget the cap leaves, lowered only by
 /// the holdings [`Parallelism::within_shared`](crate::Parallelism::within_shared) cannot fit under the margin.
 ///
-/// **What a gathering pass holds is inside it too**: the statistics account is
-/// billed against this same margin, [`statistics_allowance`] handing a mapping
-/// pass what the resolved arrangement leaves under it and a block that does not
-/// fit declining (`docs/design/decisions.md`, "D85").
+/// **What a gathering pass holds is inside it too**, and a held line: the
+/// statistics account and the ledger are billed against this same margin,
+/// [`margin_room`] being what the resolved arrangement leaves under it, and a
+/// block that does not fit declining (`docs/design/decisions.md`, "D85",
+/// "D157").
 pub const MEMORY_MARGIN_PERCENT: u64 = 20;
 
 /// What a scan holds resident **outside the pools the budget bills**, bounded:
@@ -148,13 +149,16 @@ pub(super) fn margin_allowance(allowance: u64) -> u64 {
         .saturating_sub(MEMORY_UNPOOLED_BOUND)
 }
 
-/// **What a resolved arrangement leaves for a mapping pass's statistics**
-/// ([`Arrangement::statistics_allowance`](crate::Arrangement::statistics_allowance)): the
-/// bytes `pgdt_mapping`'s `StatisticsAccount` may hold under `allowance` —
-/// any but none found, half of what is available included — once `budget`, the read-buffer
-/// budget that arrangement resolved to, comes off [`margin_allowance`]'s
-/// ceiling, which already stands [`MEMORY_UNPOOLED_BOUND`] below its fraction
-/// of the allowance.
+/// **What a resolved arrangement leaves its statistics and held lines**: the
+/// room its [`Ledger`](crate::Ledger) lends under `allowance` — any but none
+/// found, half of what is available included — once `budget`, the
+/// read-buffer budget that arrangement resolved to, comes off
+/// [`margin_allowance`]'s ceiling, which already stands
+/// [`MEMORY_UNPOOLED_BOUND`] below its fraction of the allowance. What
+/// `pgdt_mapping`'s `StatisticsAccount` may hold
+/// ([`Arrangement::statistics_allowance`](crate::Arrangement::statistics_allowance))
+/// is that room less what others drew and a read's longest line
+/// (`docs/design/decisions.md`, "D157").
 ///
 /// **It is carved after the workers, never before them**
 /// (`docs/design/decisions.md`, "D85"): statistics are gathered only as they
@@ -175,8 +179,8 @@ pub(super) fn margin_allowance(allowance: u64) -> u64 {
 /// what is left here is at least `ceiling − cap`, positive but in the few hundred bytes under the line the
 /// ceiling's rounding reaches — an allowance in that band cannot starve
 /// statistics. At and above it the *ceiling* binds, the count is solved right up
-/// against the number this subtracts from, and statistics get only the slack one
-/// worker's step leaves: a wide host at a high `--jobs` is where every block
+/// against the number this subtracts from, and statistics and held lines get only
+/// the slack one worker's step leaves: a wide host at a high `--jobs` is where every block
 /// declines, not a narrow one. At or below `MEMORY_UNPOOLED_BOUND × 100 /
 /// (100 − MEMORY_MARGIN_PERCENT)` the ceiling is zero on its own and nothing is
 /// ever gathered. Both lines are arithmetic between the constants; the zero
@@ -184,7 +188,7 @@ pub(super) fn margin_allowance(allowance: u64) -> u64 {
 ///
 /// Saturating, so an arrangement whose budget already fills the margin leaves
 /// zero rather than wrapping, and every block declines.
-pub(crate) fn statistics_allowance(allowance: u64, budget: u64) -> u64 {
+pub(crate) fn margin_room(allowance: u64, budget: u64) -> u64 {
     margin_allowance(allowance).saturating_sub(budget)
 }
 

@@ -38,12 +38,13 @@ gathering pass handed its parallelism and statistics allowance apart (`GatherOpt
 Code: `arrangement.rs`. Evidence: `reserve`.
 
 ### D157 A run's held lines draw from one ledger its arrangement carves, waiting in file order
-`Arrangement::resolve` carves one `Ledger` a run: the cap less the readers' budget and what is held, a read's longest
-line carved off the readers' cap first; an estimate's cap less the budget; with nothing found, no limit. A draw waits
-behind every earlier waiting line, and the earliest that cannot be admitted asks later holders to give theirs up,
-latest first, each when it next draws. Why: the leftmost line always progresses, and a suspended holder keeps its
-buffer. The earliest is admitted past capacity where nothing else is drawn: refusing is the floor's. Rejected: the
-ledger dropping a suspended holder's buffer; giving up on every wait; the bound reserved per worker. Code:
+`Arrangement::resolve` carves one `Ledger` where an allowance is found: the margin's ceiling less the budget and what
+others drew, a read's longest line off the ceiling, not the cap; none found, no limit. Statistics draw first, opened
+at `held`, never waiting on a line. A line waits behind every earlier waiter; the earliest that cannot be admitted, or
+statistics passing the room, ask later holders to give up, latest first, as each next draws. Why: the leftmost line
+progresses, a suspended holder keeps its buffer, statistics never hang on a line. The earliest is admitted past
+capacity where no other line holds, and never asked: refusing is the floor's. Rejected: dropping a waiter's buffer;
+giving up on every wait; the bound reserved per worker; the cap, lending the margin; a fixed split; first come. Code:
 `ledger.rs`. Evidence: `ledger/tests.rs`.
 
 ### D4 A budget is solved against a source's cost, never divided by it

@@ -124,7 +124,7 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.27** A long field's parse reworked: the rises 33.26 placed — 33.13's fold of a long escaped field (`TextFold`, the gatherer, `bounds::Canonical`), 33.18's `Unescape::step` wherever `Unescaped` is read and a strict `bytea`'s `FieldWalk` and `Check::byte`, 33.19's `LongRead` fan-out and `from_utf8` per run, an escape's byte a run of its own — and its residual's in the same functions, 33.13.3's in `Check::byte` and M277's with M278's in `Gatherer::observe_row` — each reworked into a shape as clean or accepted, its pair against its parent read on the long rows (D108, D155). Every placed rise is reworked, none accepted (D156); its count pair, `b3c217cb` against the tree, falling on all four long rows, resolving a rise on the typed query and `pgdt sql -c`, placed by callgrind in `unescape_owned` reading the control's short escaped stretches through `Unescape::run`'s stage, and accepted (D108) — [notes](../design/roadmap-P33.27-long-parse-notes.md)
 - [x] **33.28** A row's scan reworked: the rises 33.26's residual placed in the scanner — 33.3.1's and 33.3.3's in `ChunkEvents::next_event`, 33.11's in `CopyScanner::next_event` — each reworked into a shape as clean or accepted, its pair against its parent (D108, D155). 33.11's reworked, `CopyScanner` measuring a row against its block's longest by its length alone; 33.3.1's and 33.3.3's placed on every row their pairs resolve and accepted, 33.3.3's in `map_forward`'s loop and the census's `Counter::tier_of` rather than `ChunkEvents::next_event`; its count pair, `169eaf6d` against the tree, resolving a fall on the five control rows and `arrays` and a rise on none — [notes](../design/roadmap-P33.28-scan-notes.md)
 - [x] **33.4** The ledger: a pgdt-io module made only by `Arrangement::resolve` — the cap less the readers' budget and what is held, a read's longest line (`ArrangementRequest::line_charge`) carved off the readers' cap first, an estimate's cap less the budget, an unstated allowance's without limit — each draw a line's whole charge, admitted in file order, the earliest that cannot be admitted asking later holders to give theirs up, the latest first, each when it next draws; tested on its own; no pass draws yet (D157) — [notes](../design/roadmap-P33.4-ledger-notes.md)
-- [ ] **33.4.4** The ledger under the margin: `Arrangement::resolve` carving it as what the margin's ceiling leaves the readers' budget, wherever an allowance is found, an estimate's included, a read's longest line carved into it off the ceiling and the statistics allowance what it leaves past that line; the statistics' draw, admitted ahead of every line and never waiting or declined for one, a draw passing the room asking the latest holders to give up; tested on its own; no pass draws yet
+- [x] **33.4.4** The ledger under the margin: `Arrangement::resolve` carving it as what the margin's ceiling leaves the readers' budget, wherever an allowance is found, an estimate's included, a read's longest line carved into it off the ceiling and the statistics allowance what it leaves past that line; the statistics' draw, admitted ahead of every line and never waiting or declined for one, a draw passing the room asking the latest holders to give up; tested on its own; no pass draws yet (D157) — [notes](../design/roadmap-P33.4.4-margin-notes.md)
 - [ ] **33.4.1** A parse draws: the mapping pass, the back-fill and the interior's pieces handed the ledger with their arrangement, the statistics account charging it as the statistics' draw, a parse drawing for the scalar text it collects past its chunk term and the census for a counted container it holds whole, a holder told to give up re-reading what it held; under today's line limit
 - [ ] **33.4.2** A query draws: the replay's held line past its chunk term drawn with the query's factor (`ReplayPlan::factor`), a holder told to give up re-reading its line from its start; a query's polling contract stated on `TablePartitions` and tested, its partitions driven as `CoalescePartitionsExec` drives them; under today's line limit
 - [ ] **33.4.3** A read over mapped blocks carves its longest line: `pgdt query` and the DataFusion provider handing `Arrangement::resolve` the charge of the longest line the read's blocks hold, the provider carving one ledger per scan inside its `ScanBudget` draw
@@ -162,3 +162,30 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **33.4.4 opens the statistics' draw at what the arrangement was carved
+  around (`held`), so a query's replay lends its lines the room less its
+  settled table's statistics, not the whole room.** The room is the margin's
+  ceiling less the budget, which `held` was carved inside; in a parse `held`
+  is the cache's statistics, which the account charges as `Term::Loaded`
+  against the same statistics allowance (D85), so its first charge replaces
+  the opening draw. Made that way because taking `held` off the room instead
+  would cut every parse's statistics allowance by statistics the account
+  already counts, while leaving it in the room undrawn lets a replay's lines
+  lend bytes its table's statistics hold. Reconsidering takes `held` off the
+  room and the account's `Loaded` term off its draw, before 33.4.1 wires the
+  account (`arrangement.rs`, `Arrangement::resolve`; the 2026-11-14 history
+  entry, "a query's replay, gathering none, lends its lines the whole room").
+- **Under an uncarved estimate the ledger's room need not hold a read's
+  longest line.** Half of `MemAvailable`, which `pgdt` leaves uncarved,
+  fits its readers to the halved cap less the line, not to the margin's
+  ceiling, while the room is what that ceiling leaves them, as 33.4.4's row
+  says; where the readers fill the halved cap the room falls short of the
+  line, which is then admitted only as the earliest line alone. Made that
+  way because solving the count against the ceiling would move every
+  uncarved estimate, line or none, where D11 has `pgdt` cap a source at
+  half of `MemAvailable`, untuned, with no margin. Reconsidering bounds that count by the ceiling less the
+  line wherever a line is charged, or carves its room from the halved cap,
+  before 33.4.3 hands `pgdt query` its charge (`arrangement.rs`,
+  `Arrangement::resolve`; `arrangement/tests.rs`,
+  `a_line_charge_is_carved_into_the_ledger_off_the_ceiling`).

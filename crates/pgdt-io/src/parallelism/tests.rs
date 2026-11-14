@@ -292,20 +292,20 @@ fn a_shared_allowance_leaves_each_arrangement_what_the_others_have_not_drawn() {
     let memory = Some(WorkerMemory::per_worker(per_worker));
     let allowance = 10 << 30;
     assert_eq!(
-        Parallelism::within_shared(24, memory, allowance, 0, 0),
+        Parallelism::within_shared(24, memory, allowance, 0, 0, 0),
         Parallelism::within(24, memory, allowance),
         "nothing drawn is `within` itself"
     );
     assert_eq!(Parallelism::within(24, memory, allowance).jobs(), 7);
 
-    let first = Parallelism::within_shared(4, memory, allowance, 0, 0);
+    let first = Parallelism::within_shared(4, memory, allowance, 0, 0, 0);
     assert_eq!(first.jobs(), 4);
     let drawn = first.memory_bytes().unwrap();
-    let second = Parallelism::within_shared(4, memory, allowance, drawn, 0);
+    let second = Parallelism::within_shared(4, memory, allowance, drawn, 0, 0);
     assert_eq!(second.jobs(), 3);
     assert_eq!(second.memory_bytes(), Some(3 * per_worker));
 
-    let exhausted = Parallelism::within_shared(4, memory, allowance, allowance, 0);
+    let exhausted = Parallelism::within_shared(4, memory, allowance, allowance, 0, 0);
     assert_eq!(exhausted, Parallelism::Serial { memory_bytes: Some(0) });
 }
 
@@ -323,8 +323,8 @@ fn a_holding_comes_off_the_ceiling_and_never_the_cap() {
     let memory = Some(WorkerMemory::per_worker(per_worker));
     let allowance = 10 << 30;
     let held = 2 << 30;
-    let holding = Parallelism::within_shared(24, memory, allowance, 0, held);
-    assert_eq!(holding, Parallelism::within_shared(24, memory, allowance, held, 0));
+    let holding = Parallelism::within_shared(24, memory, allowance, 0, held, 0);
+    assert_eq!(holding, Parallelism::within_shared(24, memory, allowance, held, 0, 0));
     assert_eq!(holding.jobs(), 5);
 
     // Under `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` the cap binds,
@@ -336,18 +336,19 @@ fn a_holding_comes_off_the_ceiling_and_never_the_cap() {
     assert!(lead > 0);
     assert_eq!(Parallelism::within(64, unit, small).jobs(), 4);
     assert_eq!(
-        Parallelism::within_shared(64, unit, small, 0, lead),
+        Parallelism::within_shared(64, unit, small, 0, lead, 0),
         Parallelism::within(64, unit, small),
     );
-    assert_eq!(Parallelism::within_shared(64, unit, small, lead, 0).jobs(), 3);
+    assert_eq!(Parallelism::within_shared(64, unit, small, lead, 0, 0).jobs(), 3);
 
     // One worker, the floor: the ceiling's room at one reader absorbs
     // what it can, and the rest comes off that reader's budget.
     let ceiling = margin_allowance(allowance);
     let short = 256 << 20;
-    let floor = Parallelism::within_shared(4, memory, allowance, 0, ceiling - per_worker + short);
+    let floor =
+        Parallelism::within_shared(4, memory, allowance, 0, ceiling - per_worker + short, 0);
     assert_eq!(floor, Parallelism::Serial { memory_bytes: Some(per_worker - short) });
-    let filled = Parallelism::within_shared(4, memory, allowance, 0, allowance);
+    let filled = Parallelism::within_shared(4, memory, allowance, 0, allowance, 0);
     assert_eq!(filled, Parallelism::Serial { memory_bytes: Some(0) });
 
     // A source recommending nothing keeps its count and its constant
@@ -355,21 +356,21 @@ fn a_holding_comes_off_the_ceiling_and_never_the_cap() {
     let blind = Parallelism::within(8, None, allowance);
     assert_eq!(blind.memory_bytes(), Some(DEFAULT_MEMORY_BUDGET));
     let room = ceiling - DEFAULT_MEMORY_BUDGET;
-    assert_eq!(Parallelism::within_shared(8, None, allowance, 0, room), blind);
+    assert_eq!(Parallelism::within_shared(8, None, allowance, 0, room, 0), blind);
     let left = 10 << 20;
     assert_eq!(
-        Parallelism::within_shared(8, None, allowance, 0, ceiling - left),
+        Parallelism::within_shared(8, None, allowance, 0, ceiling - left, 0),
         Parallelism::workers(8, left),
     );
     assert_eq!(
-        Parallelism::within_shared(8, None, allowance, 0, allowance),
+        Parallelism::within_shared(8, None, allowance, 0, allowance, 0),
         Parallelism::workers(8, 0),
     );
 
     // Nothing held is `fit`'s budget, even past the ceiling: one worker
     // costing more than the cap is budgeted the cap.
     let narrow = 1 << 30;
-    let alone = Parallelism::within_shared(1, memory, narrow, 0, 0);
+    let alone = Parallelism::within_shared(1, memory, narrow, 0, 0, 0);
     assert_eq!(alone.memory_bytes(), Some(narrow - MEMORY_RESERVE));
     assert!(narrow - MEMORY_RESERVE > margin_allowance(narrow));
 }
@@ -449,4 +450,26 @@ fn a_shared_pool_is_billed_before_the_count_is_handed_back() {
     // cost is `n x 32 - 16` MiB: 240 MiB affords eight, and 224 seven.
     assert_eq!(worker_count(Parallelism::workers(8, 240 << 20), charge), 8);
     assert_eq!(worker_count(Parallelism::workers(8, 224 << 20), charge), 7);
+}
+
+/// **A read's longest line bounds the count alone** (`docs/design/decisions.md`,
+/// "D157"): it comes off the ceiling the count is solved against, so the
+/// ceiling's room past the budget holds it, but never off the cap or the
+/// budget, so one reader, the floor, is still budgeted what it costs.
+#[test]
+fn a_line_bounds_the_count_and_never_the_budget() {
+    let per_worker = 1 << 30;
+    let memory = Some(WorkerMemory::per_worker(per_worker));
+    let allowance = 10 << 30;
+    let line = 2 << 30;
+    let lined = Parallelism::within_shared(24, memory, allowance, 0, 0, line);
+    assert_eq!(lined, Parallelism::workers(5, 5 * per_worker));
+    assert!(margin_allowance(allowance) - 5 * per_worker >= line);
+
+    // A line no ceiling holds leaves one reader on its whole charge, where
+    // as much held would come off that reader's budget.
+    let floor = Parallelism::within_shared(4, memory, allowance, 0, 0, allowance);
+    assert_eq!(floor, Parallelism::Serial { memory_bytes: Some(per_worker) });
+    let held = Parallelism::within_shared(4, memory, allowance, 0, allowance, 0);
+    assert_eq!(held, Parallelism::Serial { memory_bytes: Some(0) });
 }

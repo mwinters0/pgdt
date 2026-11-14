@@ -14,6 +14,13 @@
 //! keeps what it holds, and one told [`Admission::GiveUp`] re-reads its line
 //! from the line's start, drawing anew.
 //!
+//! **A pass's statistics draw on the same room, ahead of every line**
+//! ([`Ledger::draw_statistics`]): their draw never waits and is never declined
+//! for a line, and lines are admitted from what it leaves, so what a block's
+//! statistics hold never depends on when a long line was held. A draw passing
+//! the room asks the holders of lines to give theirs up, the latest first, as
+//! the earliest waiting line does; the earliest line is never asked.
+//!
 //! **A ledger without limit** ([`Ledger::unlimited`]) meets every draw at once:
 //! an allowance nobody stated carves nothing to wait on.
 
@@ -43,6 +50,8 @@ struct Shared {
 struct State {
     /// What every line holds, summed.
     drawn: u64,
+    /// What the statistics' draw holds, beside the lines.
+    statistics: u64,
     /// The next [`Holder`]'s identity.
     next_holder: u64,
     /// Each line holding or waiting, in file order.
@@ -93,9 +102,48 @@ impl Ledger {
         self.shared.as_ref().map(|shared| shared.capacity)
     }
 
-    /// What its holders hold now: zero without limit, which keeps no account.
+    /// What its lines and its statistics hold now: zero without limit, which
+    /// keeps no account.
     pub fn drawn(&self) -> u64 {
-        self.shared.as_ref().map_or(0, |shared| shared.lock().drawn)
+        self.shared.as_ref().map_or(0, |shared| {
+            let state = shared.lock();
+            state.drawn + state.statistics
+        })
+    }
+
+    /// What the statistics' draw holds now: zero without limit.
+    pub fn statistics(&self) -> u64 {
+        self.shared.as_ref().map_or(0, |shared| shared.lock().statistics)
+    }
+
+    /// **Hold `total` bytes in all for the run's statistics**, in place of
+    /// what their draw held — admitted at once, ahead of every line, and
+    /// never waiting or declined for one: what statistics may hold is bounded
+    /// by their own allowance, which a block that does not fit declines
+    /// against ([`Arrangement::statistics_allowance`](crate::Arrangement::statistics_allowance)).
+    ///
+    /// **A draw passing the capacity asks the holders of lines to give theirs
+    /// up**, the latest in the file first, until what passes it is asked for,
+    /// each when it next draws; **the earliest line is never asked**, being
+    /// admitted past the capacity where no other line holds, so asking it
+    /// would buy a re-read and no room (`docs/design/decisions.md`, "D157").
+    /// A draw falling wakes every waiting line, which may now be admitted.
+    pub fn draw_statistics(&self, total: u64) {
+        let Some(shared) = &self.shared else { return };
+        let mut woken = Vec::new();
+        {
+            let mut state = shared.lock();
+            let fell = total < state.statistics;
+            state.statistics = total;
+            let short = state.drawn.saturating_add(total).saturating_sub(shared.capacity);
+            if let Some(&earliest) = state.lines.keys().next() {
+                state.ask_later(earliest, short, &mut woken);
+            }
+            if fell {
+                state.wake_waiters(&mut woken);
+            }
+        }
+        woken.into_iter().for_each(Waker::wake);
     }
 
     /// A holder for one reader, drawing for one line at a time.
@@ -127,10 +175,12 @@ impl Holder {
     /// charge, never its growth, so a draw no larger than what it holds is
     /// met at once.
     ///
-    /// **The earliest line is admitted past the capacity where nothing else
-    /// is drawn**, so a line the ledger cannot hold is read as it was before
-    /// a ledger charged it: refusing one for memory is the floor's, which
-    /// parks readers first (`docs/design/decisions.md`, "D157").
+    /// **The earliest line is admitted past the capacity where no other line
+    /// holds**, whatever the statistics' draw holds, so a line the ledger
+    /// cannot hold is read as it was before a ledger charged it, and never
+    /// waits on statistics, which give nothing up: refusing one for memory
+    /// is the floor's, which parks readers first
+    /// (`docs/design/decisions.md`, "D157").
     ///
     /// Dropped while it waits, the line keeps what it held and waits for
     /// nothing.
@@ -263,8 +313,9 @@ impl State {
         }
         let held = line.held;
         let others = self.drawn - held;
+        let beside = others.saturating_add(self.statistics);
         let earliest = self.lines.range(..key).all(|(_, line)| line.wants.is_none());
-        if earliest && (others == 0 || others.saturating_add(charge) <= capacity) {
+        if earliest && (others == 0 || beside.saturating_add(charge) <= capacity) {
             self.drawn += charge - held;
             let line = self.lines.get_mut(&key).expect("the line was entered above");
             (line.held, line.wants, line.waker) = (charge, None, None);
@@ -278,7 +329,7 @@ impl State {
             line.waker = Some(waker.clone());
         }
         if earliest {
-            self.ask_later(key, (others.saturating_add(charge)).saturating_sub(capacity), woken);
+            self.ask_later(key, beside.saturating_add(charge).saturating_sub(capacity), woken);
         }
         Poll::Pending
     }

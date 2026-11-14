@@ -265,11 +265,11 @@ impl Parallelism {
         }
     }
 
-    /// [`Parallelism::within_shared`] with nothing drawn and nothing held —
+    /// [`Parallelism::within_shared`] with nothing drawn, held or lined —
     /// the carving alone, which the tests pin.
     #[cfg(test)]
     pub(crate) fn within(jobs: usize, memory: Option<WorkerMemory>, allowance: u64) -> Self {
-        Self::within_shared(jobs, memory, allowance, 0, 0)
+        Self::within_shared(jobs, memory, allowance, 0, 0, 0)
     }
 
     /// The arrangement `jobs` workers take inside a **resident allowance** —
@@ -300,10 +300,16 @@ impl Parallelism {
     /// its count on that zero.
     ///
     /// **What is `held` comes off the ceiling alone**, as
-    /// [`statistics_allowance`](crate::memory::statistics_allowance) bills statistics (`docs/design/decisions.md`,
+    /// [`margin_room`](crate::memory::margin_room) bills statistics (`docs/design/decisions.md`,
     /// "D85"): the cap is the reserve's, which stands for the arrangements'
     /// own excess over their budgets, and a holding is none of that excess.
     /// So a holding lowers the count first.
+    ///
+    /// **A read's longest line, `line`, bounds the count alone**: it comes off
+    /// the ceiling the count is solved against, so the room the ceiling leaves
+    /// the budget holds it, and never off the cap or the budget, so one
+    /// reader is still budgeted whatever the cap is, the line at that floor
+    /// being the floor's to place (`docs/design/decisions.md`, "D157").
     ///
     /// **Whatever of `held` the ceiling's room cannot absorb at the resolved
     /// count comes off the budget**, for every source: where the count cannot
@@ -322,13 +328,14 @@ impl Parallelism {
         allowance: u64,
         drawn: u64,
         held: u64,
+        line: u64,
     ) -> Self {
         let ceiling = margin_allowance(allowance).saturating_sub(drawn);
         let (jobs, budget) = Self::fit(
             jobs,
             memory,
             allowance.saturating_sub(MEMORY_RESERVE).saturating_sub(drawn),
-            Some(ceiling.saturating_sub(held)),
+            Some(ceiling.saturating_sub(held).saturating_sub(line)),
         );
         let unabsorbed = held.saturating_sub(ceiling.saturating_sub(budget));
         Self::workers(jobs, budget.saturating_sub(unabsorbed))

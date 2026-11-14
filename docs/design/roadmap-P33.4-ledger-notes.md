@@ -28,11 +28,12 @@ mapping passes' read loops and the replay's — so it landed as the first, and
   `poll_next`. Dropped unsettled it stops waiting and keeps what it held.
 - **`ArrangementRequest::line_charge` is the read's longest line's charge**,
   pgdt-io seeing no model: 33.4.3 hands it the charge pgdt-query computes from
-  the map's `LongestLine` and the query's factor. It comes off the readers'
-  cap and ceiling as `drawn` does, and off the statistics allowance; every
-  caller passes zero today, so no arrangement moved.
-- **The earliest line is admitted past the capacity where nothing else is
-  drawn.** Until the floor (33.5) parks readers and refuses, a line the ledger
+  the map's `LongestLine` and the query's factor. It comes off the margin's
+  ceiling the count is solved against and off the statistics allowance
+  ([`roadmap-P33.4.4-margin-notes.md`](roadmap-P33.4.4-margin-notes.md));
+  every caller passes zero today, so no arrangement moved.
+- **The earliest line is admitted past the capacity where no other line
+  holds.** Until the floor (33.5) parks readers and refuses, a line the ledger
   cannot hold is read as it is today, never stopped: so 33.4.1 and 33.4.2
   change nothing a run answers, only when its readers wait.
 - **`Arrangement` is no longer `PartialEq`**: it holds a run's shared state.

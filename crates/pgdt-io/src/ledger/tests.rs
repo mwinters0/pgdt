@@ -54,6 +54,8 @@ fn an_unlimited_ledger_meets_every_draw() {
     assert_eq!(drawn_now(&mut a, 0, u64::MAX), Admission::Held);
     assert_eq!(drawn_now(&mut b, 10, u64::MAX), Admission::Held);
     assert_eq!((ledger.capacity(), ledger.drawn(), a.held()), (None, 0, u64::MAX));
+    ledger.draw_statistics(u64::MAX);
+    assert_eq!((ledger.statistics(), ledger.drawn()), (0, 0));
 }
 
 /// **A draw is a line's whole charge**: growth draws the difference, a draw
@@ -237,9 +239,76 @@ fn the_earliest_line_is_admitted_past_the_capacity_alone() {
     assert_eq!(ledger.drawn(), 50);
 }
 
+/// **The statistics' draw is admitted at once, past the capacity too**, and
+/// lines are admitted from what it leaves: a line it leaves no room for
+/// waits, and is woken and admitted once the draw falls.
+#[test]
+fn statistics_draw_first_and_lines_from_what_they_leave() {
+    let ledger = Ledger::limited(100);
+    ledger.draw_statistics(60);
+    let (mut a, mut b) = (ledger.holder(), ledger.holder());
+    assert_eq!(drawn_now(&mut a, 0, 30), Admission::Held);
+
+    let woken = Woken::new();
+    let mut draw = pin!(b.draw(100, 20));
+    assert_eq!(woken.poll(draw.as_mut()), Poll::Pending);
+    ledger.draw_statistics(120);
+    assert_eq!((ledger.statistics(), ledger.drawn()), (120, 150), "never declined");
+    assert_eq!(woken.times(), 0, "a rise wakes no waiter");
+    ledger.draw_statistics(40);
+    assert_eq!(woken.times(), 1);
+    assert_eq!(woken.poll(draw), Poll::Ready(Admission::Held));
+    assert_eq!(ledger.drawn(), 90);
+}
+
+/// **A statistics' draw passing the capacity asks later holders to give
+/// theirs up, the latest first**, until what passes it is asked for — and
+/// never the earliest line, which would be admitted again alone.
+#[test]
+fn statistics_passing_the_capacity_ask_the_latest_holders_but_never_the_earliest() {
+    let ledger = Ledger::limited(100);
+    let mut holders: Vec<Holder> = (0..3).map(|_| ledger.holder()).collect();
+    let [h0, h100, h200] = &mut holders[..] else { unreachable!() };
+    for (holder, start) in [(&mut *h0, 0), (&mut *h100, 100), (&mut *h200, 200)] {
+        assert_eq!(drawn_now(holder, start, 30), Admission::Held);
+    }
+
+    // 90 drawn, 30 more: the latest line's 30 covers what passes.
+    ledger.draw_statistics(30);
+    assert_eq!(drawn_now(h100, 100, 30), Admission::Held, "nor one it does not need");
+    assert_eq!(drawn_now(h200, 200, 30), Admission::GiveUp);
+    assert_eq!(ledger.drawn(), 90);
+
+    // Statistics past the capacity alone: every later line, never the first.
+    ledger.draw_statistics(200);
+    assert_eq!(drawn_now(h0, 0, 30), Admission::Held, "the earliest line is never asked");
+    assert_eq!(drawn_now(h100, 100, 30), Admission::GiveUp);
+    assert_eq!(drawn_now(h0, 0, 40), Admission::Held, "and grows alone past the capacity");
+    assert_eq!(ledger.drawn(), 240);
+}
+
+/// **The earliest line is admitted past the capacity where no other line
+/// holds, whatever the statistics hold**: they give nothing up, so waiting
+/// on them would never end.
+#[test]
+fn the_earliest_line_never_waits_on_statistics() {
+    let ledger = Ledger::limited(100);
+    ledger.draw_statistics(150);
+    let (mut first, mut second) = (ledger.holder(), ledger.holder());
+    assert_eq!(drawn_now(&mut first, 0, 50), Admission::Held);
+
+    let woken = Woken::new();
+    let mut draw = pin!(second.draw(100, 10));
+    assert_eq!(woken.poll(draw.as_mut()), Poll::Pending, "a second line waits on the first");
+    first.release();
+    assert_eq!(woken.times(), 1);
+    assert_eq!(woken.poll(draw), Poll::Ready(Admission::Held));
+    assert_eq!(ledger.drawn(), 160);
+}
+
 /// **Readers on threads of their own all finish**: each grows a line to past
-/// what the ledger holds beside the others, re-reading from zero where it
-/// gave up, and nothing is left drawn.
+/// what the ledger holds beside the others and the statistics, re-reading
+/// from zero where it gave up, and nothing is left drawn.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_readers_all_finish() {
     let ledger = Ledger::limited(100);
@@ -260,10 +329,21 @@ async fn concurrent_readers_all_finish() {
             }
         })
     });
+    // The statistics' draw rising and falling under them, as a pass's
+    // account does, never past the capacity alone.
+    let statistics = ledger.clone();
+    let gathering = tokio::spawn(async move {
+        for step in 0..200u64 {
+            statistics.draw_statistics((step * 7) % 90);
+            tokio::task::yield_now().await;
+        }
+        statistics.draw_statistics(0);
+    });
     let all = futures::future::try_join_all(readers);
     tokio::time::timeout(std::time::Duration::from_secs(30), all)
         .await
         .expect("every reader finishes")
         .unwrap();
+    gathering.await.unwrap();
     assert_eq!(ledger.drawn(), 0);
 }
