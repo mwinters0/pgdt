@@ -32,10 +32,12 @@ use pgdt_io::{Allowance, Arrangement, ArrangementRequest, Jobs, WorkerMemory};
 /// --memory-limit` grants DataFusion's own operators, in the same container —
 /// and the statistics each dump registered against this budget holds in its
 /// resident map, billed as `pgdt` bills the statistics a cache hands a mapping
-/// pass ([`pgdt_model::DumpIndex::statistics_heap_bytes`]). Where an
-/// allowance was found, both come off the margin's ceiling alone, as
-/// [`ArrangementRequest::held`]; with none found there is no margin and they
-/// come off nothing:
+/// pass ([`pgdt_model::DumpIndex::statistics_heap_bytes`]), and each live
+/// scan's longest line, which its own ledger keeps room for
+/// (`docs/design/decisions.md`, "D160"), so no later scan's ledger lends it
+/// again. Where an allowance was found, all three come off the margin's
+/// ceiling alone, as [`ArrangementRequest::held`]; with none found there is no
+/// margin and they come off nothing:
 /// the cap is the reserve's, standing for the scans' own excess over their
 /// budgets, and neither holding is any of it. So they lower a scan's count
 /// first, and whatever of them the ceiling's room cannot absorb at that count
@@ -72,7 +74,7 @@ pub struct ScanBudget {
 /// allowance and where it came from — the half of a budget-quoting plan note
 /// the library does not tell, provenance being the caller's fact
 /// (`docs/design/decisions.md`, "D64"), and what [`crate::BudgetedPlanNote`]
-/// names — and the three holdings that came off it ([`ScanBudget::draw`]'s
+/// names — and the four holdings that came off it ([`ScanBudget::draw`]'s
 /// terms).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BudgetAccount {
@@ -87,6 +89,10 @@ pub struct BudgetAccount {
     pub resident: u64,
     /// The read-buffer bytes the scans still alive had drawn.
     pub drawn: u64,
+    /// The longest-line charges the scans still alive had carved
+    /// (`pgdt_query::Table::line_charge`), each held off the margin's
+    /// ceiling for as long as its scan lives.
+    pub lines: u64,
 }
 
 /// What a [`ScanBudget`]'s holders have taken of it.
@@ -94,6 +100,8 @@ pub struct BudgetAccount {
 struct Held {
     /// The read-buffer budgets of the scans alive.
     scans: u64,
+    /// The longest-line charges the scans alive carved.
+    lines: u64,
     /// The statistics of the dumps billed to it and not yet dropped.
     maps: u64,
 }
@@ -146,17 +154,20 @@ impl ScanBudget {
     }
 
     /// The arrangement one more scan takes: as many of `jobs` workers as what
-    /// the live scans, the billed maps and `pool` — the session's memory
-    /// pool's finite limit, [`pool_limit`] — leave of `stated`, else of this
+    /// the live scans' budgets and line charges, the billed maps and `pool` —
+    /// the session's memory pool's finite limit, [`pool_limit`] — leave of
+    /// `stated`, else of this
     /// budget's own allowance, affords, at what that many spend less whatever
     /// of the holdings the margin cannot fit beside them
     /// ([`Arrangement::resolve`]), `line_charge` — the scan's longest line
     /// at its query's factor (`pgdt_query::Table::line_charge`) — carved
     /// before its readers. **The scan's ledger is carved here**, inside its
     /// draw, from what the margin's ceiling leaves its budget and the live
-    /// scans' (`docs/design/decisions.md`, "D157"). Held until the returned
-    /// [`Draw`] drops, which keeps the arrangement and the [`BudgetAccount`]
-    /// of what it was carved from.
+    /// scans' (`docs/design/decisions.md`, "D157"), the live scans' line
+    /// charges opening its statistics' draw as the other holdings do, so it
+    /// lends none of their bytes. Budget and line charge are held until the
+    /// returned [`Draw`] drops, which keeps the arrangement and the
+    /// [`BudgetAccount`] of what it was carved from.
     ///
     /// Deficiency register: `deficiency: KD38` — first planned, first served:
     /// a join plans both its tables before either runs, so the first can take
@@ -180,7 +191,7 @@ impl ScanBudget {
             jobs: Jobs::Recommended(jobs),
             worker_memory: memory,
             drawn: held.scans,
-            held: held.maps.saturating_add(pool),
+            held: held.maps.saturating_add(pool).saturating_add(held.lines),
             carve_estimate: true,
             line_charge,
         };
@@ -188,10 +199,16 @@ impl ScanBudget {
         // Nothing found draws on `DEFAULT_MEMORY_BUDGET`, the session's
         // estimate there (`docs/design/decisions.md`, "D11").
         let bytes = arrangement.parallelism().memory_bytes().unwrap_or(0);
-        let account =
-            BudgetAccount { allowance, pool_limit: pool, resident: held.maps, drawn: held.scans };
+        let account = BudgetAccount {
+            allowance,
+            pool_limit: pool,
+            resident: held.maps,
+            drawn: held.scans,
+            lines: held.lines,
+        };
         held.scans += bytes;
-        Draw { budget: Arc::clone(self), bytes, arrangement, account }
+        held.lines += line_charge;
+        Draw { budget: Arc::clone(self), bytes, line_charge, arrangement, account }
     }
 
     /// The budget `state` carries, or the process's own where a session was
@@ -259,6 +276,7 @@ impl Drop for Hold {
 pub(crate) struct Draw {
     budget: Arc<ScanBudget>,
     bytes: u64,
+    line_charge: u64,
     arrangement: Arrangement,
     account: BudgetAccount,
 }
@@ -286,6 +304,7 @@ impl Drop for Draw {
     fn drop(&mut self) {
         let mut held = self.budget.held.lock().unwrap();
         held.scans = held.scans.saturating_sub(self.bytes);
+        held.lines = held.lines.saturating_sub(self.line_charge);
     }
 }
 
@@ -422,6 +441,7 @@ mod tests {
                 pool_limit: 0,
                 resident: 1 << 20,
                 drawn: 0,
+                lines: 0,
             }
         );
         let second = budget.draw(2, memory, 128 << 20, None, 0);
@@ -446,9 +466,43 @@ mod tests {
         assert!(lined.arrangement().ledger().capacity().unwrap() >= line);
         assert!(lined.parallelism().jobs() < 7, "fewer readers than the line's absence affords");
         let later = budget.draw(24, memory, 0, None, 0);
-        let room = later.arrangement().ledger().capacity().unwrap();
+        let ledger = later.arrangement().ledger();
+        let room = ledger.capacity().unwrap() - ledger.statistics();
         let alone = Arc::new(ScanBudget::new(10 << 30)).draw(24, memory, 0, None, 0);
         assert!(room <= alone.arrangement().ledger().capacity().unwrap());
+    }
+
+    /// **Two live scans' ledgers lend no byte twice**: the second's room for
+    /// lines, past what opens its statistics' draw, together with the first's
+    /// longest line, both budgets and what the session holds, fits the
+    /// margin's ceiling, so the line the first was carved around is never
+    /// lent again; the second's account names that charge, and dropping the
+    /// first returns it (`docs/design/decisions.md`, "D160").
+    #[test]
+    fn two_live_scans_ledgers_lend_no_byte_twice() {
+        let memory = Some(WorkerMemory::per_worker(256 << 20));
+        let allowance = 10u64 << 30;
+        let (map, pool, first_line, second_line) = (64u64 << 20, 128 << 20, 2 << 30, 1 << 30);
+        let budget = Arc::new(ScanBudget::new(allowance));
+        let _map = budget.hold(map);
+
+        let first = budget.draw(8, memory, pool, None, first_line);
+        let second = budget.draw(24, memory, pool, None, second_line);
+        assert_eq!(second.account().lines, first_line);
+        let ledger = second.arrangement().ledger();
+        let lends = ledger.capacity().unwrap() - ledger.statistics();
+        assert!(lends >= second_line, "the second's own line fits its room");
+        let budgets = [&first, &second].map(|draw| draw.parallelism().memory_bytes().unwrap());
+        // Drawn on nothing, the first's room is the ceiling less its budget.
+        let ceiling = first.arrangement().ledger().capacity().unwrap() + budgets[0];
+        assert!(
+            lends + first_line + budgets.iter().sum::<u64>() + map + pool <= ceiling,
+            "the second lends {lends} beside the first's line {first_line}, budgets {budgets:?}"
+        );
+
+        drop((first, second));
+        let alone = budget.draw(24, memory, pool, None, second_line);
+        assert_eq!(alone.account().lines, 0, "a dropped scan's line is returned");
     }
 
     /// A pool stating a `Finite` limit bills that limit; the default,

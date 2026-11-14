@@ -260,7 +260,7 @@ impl Finding for BudgetedPlanNote {
 impl BudgetedPlanNote {
     /// Where the budget came from, and what moves it.
     fn clause(&self) -> String {
-        let BudgetAccount { allowance, pool_limit, resident, drawn } = &self.account;
+        let BudgetAccount { allowance, pool_limit, resident, drawn, lines } = &self.account;
         let origin = match allowance {
             Allowance::Setting(_) => Some("stated by pgdump.memory".to_string()),
             Allowance::Stated(_) => Some("stated when the session's budget was built".to_string()),
@@ -282,7 +282,8 @@ impl BudgetedPlanNote {
                 format!(
                     "that budget was carved from an allowance of {allowance} resident byte(s), \
                      {origin}, against which {pool}, the attached dumps' statistics hold \
-                     {resident} byte(s) and the scans still running had drawn {drawn} byte(s)"
+                     {resident} byte(s) and the scans still running had drawn {drawn} byte(s) \
+                     and carved {lines} byte(s) for their longest lines"
                 )
             }
             _ => format!(
@@ -323,7 +324,7 @@ mod tests {
     use super::*;
 
     fn account(allowance: Allowance, pool_limit: u64) -> BudgetAccount {
-        BudgetAccount { allowance, pool_limit, resident: 7, drawn: 11 }
+        BudgetAccount { allowance, pool_limit, resident: 7, drawn: 11, lines: 13 }
     }
 
     fn note(kind: PlanNoteKind, levers: &[PlanLever]) -> PlanNote {
@@ -361,6 +362,7 @@ mod tests {
             "the session's memory pool is granted 1048576 byte(s)",
             "statistics hold 7 byte(s)",
             "had drawn 11 byte(s)",
+            "carved 13 byte(s) for their longest lines",
         ] {
             assert!(message.contains(term), "{term}: {message}");
         }
@@ -409,6 +411,7 @@ mod tests {
                 pool_limit: 1 << 20,
                 resident: 0,
                 drawn: 16 << 20,
+                lines: 0,
             },
         };
         let message = unfound.message();

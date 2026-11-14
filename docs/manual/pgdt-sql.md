@@ -163,16 +163,16 @@ through its streaming decoder because one of its blocks would not fit
 ([Memory](#memory)).
 
 ```
-warning: shop.logs.events: a memory budget of 0 byte(s) is less than the 8388608 byte(s) one reader of this source holds, so this runs at its one-slot floor whatever concurrency is asked for — what lifts it off the floor is a larger memory budget, which is not the same as a larger allowance on a source that recommends no per-reader cost of its own — that budget was carved from an allowance of 4294967296 resident byte(s), the limit /sys/fs/cgroup/memory.max states, against which the session's memory pool is granted 8589934592 byte(s), the attached dumps' statistics hold 7598 byte(s) and the scans still running had drawn 0 byte(s); the settings that move it: pgdump.memory (the allowance), datafusion.runtime.memory_limit (the pool's grant)
+warning: shop.logs.events: a memory budget of 0 byte(s) is less than the 8388608 byte(s) one reader of this source holds, so this runs at its one-slot floor whatever concurrency is asked for — what lifts it off the floor is a larger memory budget, which is not the same as a larger allowance on a source that recommends no per-reader cost of its own — that budget was carved from an allowance of 4294967296 resident byte(s), the limit /sys/fs/cgroup/memory.max states, against which the session's memory pool is granted 8589934592 byte(s), the attached dumps' statistics hold 7598 byte(s) and the scans still running had drawn 0 byte(s) and carved 0 byte(s) for their longest lines; the settings that move it: pgdump.memory (the allowance), datafusion.runtime.memory_limit (the pool's grant)
 ```
 
 **A warning that quotes a memory budget says where that budget came from**:
 the allowance and whether `pgdump.memory` stated it, a memory limit's file
 did, or half of what was free; what `--memory-limit` granted DataFusion's own
 operators; what the attached dumps' caches hold; and what queries still
-running had taken. Then it names the settings that would change what the
-warning reports for this dump and this budget, each as you would `SET` it, and
-no other: `pgdump.memory` where a larger allowance raises the budget, with
+running had taken, and kept for the longest line each reads. Then it names
+the settings that would change what the warning reports for this dump and
+this budget, each as you would `SET` it, and no other: `pgdump.memory` where a larger allowance raises the budget, with
 `datafusion.runtime.memory_limit` beside it where a pool limit was taken;
 `pgdump.chunk_size` where a smaller read makes a reader cheaper; and
 `datafusion.execution.target_partitions` where fewer readers would each get
@@ -267,8 +267,9 @@ The same query refuses on every run, or answers on every run.
 Every dump's scans share one budget, carved from the memory limit the process
 runs under — a container's or a cgroup's — or, where nothing limits it, from
 half of what is free. A `--memory-limit` given to DataFusion's own operators
-comes off it, as does what each attached dump's cache holds in memory, so the
-scans never count on memory already spoken for. `SET pgdump.memory` states
+comes off it, as does what each attached dump's cache holds in memory and
+the longest line each running query keeps room for, so the scans never count
+on memory already spoken for. `SET pgdump.memory` states
 the allowance instead ([below](#scan-settings)).
 
 ## Scan settings

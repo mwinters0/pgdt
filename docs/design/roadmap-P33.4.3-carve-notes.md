@@ -26,8 +26,7 @@ chunk now lowers where the ceiling binds.
   `at(1)`. It reads no byte and refuses what `Table::schema` refuses.
 - **The provider carves the ledger inside `ScanBudget::draw`**, which now
   keeps the `Arrangement` (`Draw::arrangement`). What a scan's ledger lends
-  is the margin's room less the live scans' budgets; another live scan's
-  held lines are not billed against it, as no scan's statistics are.
+  is the margin's room less the live scans' budgets and line charges.
 - **`pgdt query` says what it carved**: `resolved the arrangement` ends
   `line_bytes=…` beside `held_bytes=…` where the charge is not zero
   (`Discovered::resolve_replay`); the manual's "`--jobs` and `--memory`"

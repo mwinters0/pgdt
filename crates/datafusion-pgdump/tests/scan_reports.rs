@@ -197,6 +197,7 @@ async fn a_budget_quoting_note_carries_the_scan_s_account() {
         pool_limit: pool as u64,
         resident,
         drawn: 0,
+        lines: 0,
     };
     // Every note of that plan quotes its budget, each with the one account.
     assert_eq!(accounts, vec![expected; heard.len()], "{heard:#?}");
