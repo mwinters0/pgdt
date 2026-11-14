@@ -32,8 +32,10 @@ today's line limit the earliest line is still admitted alone past the room
   of what it has read (`GivenUp::range`), a CR a streamed row holds back
   excepted, so a re-read needs no record of where the line began.
 - **A query's mapping pass draws on a ledger without limit**: `Table::settle`
-  is handed `ScanOptions`, no arrangement (STATUS, "Decisions worth another
-  look").
+  is handed `ScanOptions`, no arrangement; 33.4.2 hands it one, a query's
+  census drawing as its held line does
+  ([`roadmap-P33-line-bound.md`](roadmap-P33-line-bound.md), "A pass holds a
+  line only where it decodes it").
 - **`backfill_block`'s arrangement is carved around the block it reads**: its
   account loads the block's statistics and its first update replaces the
   `held` the ledger opened at, as `map_file`'s replaces the cache's, which

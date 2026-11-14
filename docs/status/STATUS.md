@@ -126,7 +126,7 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.4** The ledger: a pgdt-io module made only by `Arrangement::resolve` — the cap less the readers' budget and what is held, a read's longest line (`ArrangementRequest::line_charge`) carved off the readers' cap first, an estimate's cap less the budget, an unstated allowance's without limit — each draw a line's whole charge, admitted in file order, the earliest that cannot be admitted asking later holders to give theirs up, the latest first, each when it next draws; tested on its own; no pass draws yet (D157) — [notes](../design/roadmap-P33.4-ledger-notes.md)
 - [x] **33.4.4** The ledger under the margin: `Arrangement::resolve` carving it as what the margin's ceiling leaves the readers' budget, wherever an allowance is found, an estimate's included, a read's longest line carved into it off the ceiling and the statistics allowance what it leaves past that line; the statistics' draw, admitted ahead of every line and never waiting or declined for one, a draw passing the room asking the latest holders to give up; tested on its own; no pass draws yet (D157) — [notes](../design/roadmap-P33.4.4-margin-notes.md)
 - [x] **33.4.1** A parse draws: the mapping pass, the back-fill and the interior's pieces handed the ledger with their arrangement, the statistics account charging it as the statistics' draw, a parse drawing for the scalar text it collects past its chunk term and the census for a counted container it holds whole, a holder told to give up re-reading what it held; under today's line limit (D157, D158) — [notes](../design/roadmap-P33.4.1-draws-notes.md)
-- [ ] **33.4.2** A query draws: the replay's held line past its chunk term drawn with the query's factor (`ReplayPlan::factor`), a holder told to give up re-reading its line from its start; a query's polling contract stated on `TablePartitions` and tested, its partitions driven as `CoalescePartitionsExec` drives them; under today's line limit
+- [ ] **33.4.2** A query draws: the replay's held line past its chunk term drawn with the query's factor (`ReplayPlan::factor`), a holder told to give up re-reading its line from its start; a cold query's mapping pass handed its arrangement by `Table::settle`, as `map_file` is, so its census draws for a counted container it holds whole on the query's ledger rather than `Ledger::unlimited()`; a query's polling contract stated on `TablePartitions` and tested, its partitions driven as `CoalescePartitionsExec` drives them; under today's line limit
 - [ ] **33.4.3** A read over mapped blocks carves its longest line: `pgdt query` and the DataFusion provider handing `Arrangement::resolve` the charge of the longest line the read's blocks hold, the provider carving one ledger per scan inside its `ScanBudget` draw
 - [ ] **33.5** The floor: the pools shrinking and regrowing, readers parked latest first, the earliest line at one reader admitted up to what the cap leaves `at(1)`, a line one reader cannot hold refused for memory, and a read over mapped blocks whose longest line one reader cannot hold refused before it reads a byte, its remedy spelled by `pgdt` and the shell
 - [ ] **33.6** The bound: I71's constant on every path, measured exactly; `LineTooLong` naming it; a batch cut before a value would overflow its column's offsets; `--max-line-bytes`, `pgdump.max_line_bytes`, `ReadOptions::max_line_bytes`, their manual section and tests removed; the real-bound test; `KD93` struck
@@ -163,14 +163,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **33.4.1 leaves a query's mapping pass on a ledger without limit.**
-  `Table::settle` is handed `ScanOptions`, not an arrangement, so a cold
-  query's census — its container fields held whole past their chunk, and the
-  census it reads again for a metadata-level table — draws on
-  `Ledger::unlimited()` (`pgdt-query`'s `dump/settle.rs`, `ColdPass`), met at
-  once as before this slice. The call: 33.4.1's row says *a parse*, and
-  giving `Table::settle` an arrangement, as `map_file` takes one, changes a
-  public signature and its five callers in a slice sized for the mapping
-  crate's read loops. Reconsidering decides which row owns it: 33.4.2's text
-  naming `Table::settle` handed its mapping pass's arrangement (`pgdt query`
-  resolves one already, `QueryPass`), or a row of its own.
