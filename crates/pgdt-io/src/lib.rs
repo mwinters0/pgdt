@@ -43,6 +43,10 @@ pub use source::{REMOTE_READ_TIMEOUT, RemoteSource};
 /// discovery against a root a test built is this crate's own
 /// (`docs/design/decisions.md`, "D11").
 pub mod internal {
+    /// An arrangement of a parallelism a test states, at any budget, under
+    /// no allowance: what a test above this crate plans a replay under.
+    #[cfg(feature = "test-support")]
+    pub use crate::arrangement::arrangement_of;
     pub use crate::memory::{MEMORY_MARGIN_PERCENT, MEMORY_RESERVE, MEMORY_UNPOOLED_BOUND};
     pub use crate::parallelism::{memory_budget_display, worker_count};
     pub use crate::partition::cut;

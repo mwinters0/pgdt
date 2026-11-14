@@ -227,6 +227,7 @@ async fn a_query_s_factor_is_its_columns_and_terms_largest() {
         super::ReplayPlan::new(
             ReadOptions::default(),
             query_options,
+            pgdt_io::Parallelism::default(),
             None,
             "public.t",
             &matches,
@@ -297,6 +298,7 @@ async fn a_planned_replay_hands_its_factor_to_the_instrument() {
             run.index.metadata.clone(),
             ReadOptions::default(),
             query_options,
+            pgdt_io::Parallelism::default(),
         )
         .unwrap()
         .plan

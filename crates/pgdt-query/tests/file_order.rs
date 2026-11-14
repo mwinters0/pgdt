@@ -20,7 +20,7 @@ use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_query::{Dump, QueryOptions, Table, TablePartitions, TableStream};
 
 mod common;
-use common::{Cold, dump_over, edge_cases, mapped, rows_of, types_fixture};
+use common::{Cold, arranged, arranged_as, dump_over, edge_cases, mapped, rows_of, types_fixture};
 
 type Rows = Vec<Vec<Option<String>>>;
 
@@ -46,9 +46,8 @@ async fn table_of(path: &Path, name: &str) -> (Arc<dyn ByteRangeSource>, Dump, T
 
 /// `table` planned over `jobs` partitions.
 fn plan(table: &Table, jobs: usize) -> TablePartitions {
-    let options =
-        QueryOptions { parallelism: Parallelism::workers(jobs, 1 << 30), ..Default::default() };
-    table.plan(ReadOptions::default(), options).unwrap()
+    let replay = arranged_as(Parallelism::workers(jobs, 1 << 30));
+    table.plan(ReadOptions::default(), QueryOptions::default(), &replay).unwrap()
 }
 
 /// What is left of `stream`, as rows.
@@ -140,7 +139,7 @@ async fn resume_refuses_a_partitions_token_and_another_querys() {
     assert!(matches!(refused, Error::ResumeQueryMismatch), "{refused}");
 
     let projected = QueryOptions { projection: Some(Vec::new()), ..Default::default() };
-    let other = table.plan(ReadOptions::default(), projected).unwrap();
+    let other = table.plan(ReadOptions::default(), projected, &arranged(1)).unwrap();
     let mut whole = other.in_file_order(1);
     whole.next().await.unwrap().unwrap();
     let refused = plan.resume(whole.resume_token(), 1).err().unwrap();
@@ -231,9 +230,8 @@ async fn the_earliest_failing_piece_is_the_error() {
     let read = ReadOptions { chunk_size_bytes: 4096, ..ReadOptions::default() };
     let mut split = false;
     for jobs in [1usize, 2, 3, 4, 8] {
-        let options =
-            QueryOptions { parallelism: Parallelism::workers(jobs, 1 << 30), ..Default::default() };
-        let plan = table.plan(read, options).unwrap();
+        let replay = arranged_as(Parallelism::workers(jobs, 1 << 30));
+        let plan = table.plan(read, QueryOptions::default(), &replay).unwrap();
         split |= plan.len() > 1;
         let mut stream = plan.in_file_order(8192);
         let mut last = 0u32;

@@ -83,18 +83,20 @@ struct Seen {
     resolved: Option<(ResolvedSchema, Vec<ComparisonNote>)>,
 }
 
-/// `options` against `table` in `database`, its partitions drained in file
-/// order to the first error.
+/// `options` against `table` in `database`, its replay cut as `replay` allows, its
+/// partitions drained in file order to the first error.
 async fn seen(
     dump: &Path,
     cache: &Path,
     (database, table): (&Option<String>, &str),
     options: QueryOptions,
+    replay: Parallelism,
 ) -> Seen {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
     let cold = Cold {
         cache: CacheMode::enabled(cache.to_path_buf()),
         database: database.clone(),
+        replay,
         ..Cold::default()
     };
     let partitions = match cold.plan(source, table, options).await {
@@ -296,14 +298,11 @@ async fn check(
     tally: &mut Tally,
 ) {
     for (cache, use_statistics, jobs) in [(plain, false, 3), (gathered, true, 1)] {
-        let options = |filter: &Expr| QueryOptions {
-            filter: filter.clone(),
-            use_statistics,
-            parallelism: Parallelism::workers(jobs, 1 << 30),
-            ..base.clone()
-        };
-        let got = seen(dump, cache, (database, table), options(&membership)).await;
-        let want = seen(dump, cache, (database, table), options(&disjunction)).await;
+        let options =
+            |filter: &Expr| QueryOptions { filter: filter.clone(), use_statistics, ..base.clone() };
+        let replay = Parallelism::workers(jobs, 1 << 30);
+        let got = seen(dump, cache, (database, table), options(&membership), replay).await;
+        let want = seen(dump, cache, (database, table), options(&disjunction), replay).await;
         assert_eq!(
             got,
             want,
@@ -364,7 +363,8 @@ async fn check_fixture(
         let named = (&database, table.as_str());
         let decodes = |options: QueryOptions| {
             let (dump, plain) = (&dump, &plain);
-            async move { seen(dump, plain, named, options).await.outcome.is_ok() }
+            let serial = Parallelism::default();
+            async move { seen(dump, plain, named, options, serial).await.outcome.is_ok() }
         };
         let projection = if decodes(everything.clone()).await {
             None

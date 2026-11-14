@@ -103,10 +103,10 @@ async fn read(
         projection: Some(vec!["id".into()]),
         filter: static_filter.unwrap_or_default(),
         use_statistics: false,
-        parallelism: Parallelism::workers(1, 1 << 30),
         ..QueryOptions::default()
     };
-    let plan = table.plan(ReadOptions::default(), options).unwrap();
+    let replay = pgdt_fixtures::arranged_as(Parallelism::workers(1, 1 << 30));
+    let plan = table.plan(ReadOptions::default(), options, &replay).unwrap();
     let plan = Arc::new(plan);
     let dynamic = dynamic.map(|state| plan.under(Arc::new(Constant(Arc::new(state))), evaluation));
     let mut rows = 0;

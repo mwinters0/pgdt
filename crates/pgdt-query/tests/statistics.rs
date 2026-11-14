@@ -673,15 +673,12 @@ async fn a_constant_block_sets_no_direction_in_a_tables_order() {
     let dump = dump_over(source, &index, dir.path()).await.unwrap();
     for (table, _, expected) in &tables {
         let name = TableName::of(None, block(&index, &format!("public.{table}")));
-        let options = QueryOptions {
-            parallelism: Parallelism::workers(1, 1 << 30),
-            ..QueryOptions::default()
-        };
+        let replay = pgdt_fixtures::arranged_as(Parallelism::workers(1, 1 << 30));
         let plan = dump
             .table(&(&name).into())
             .unwrap()
             .unwrap()
-            .plan(ScanOptions::default().read, options)
+            .plan(ScanOptions::default().read, QueryOptions::default(), &replay)
             .unwrap();
         assert_eq!(plan.len(), 1, "{table}");
         assert_eq!(plan.orders(), [*expected], "{table}");

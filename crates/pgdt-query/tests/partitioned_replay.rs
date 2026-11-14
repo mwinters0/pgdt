@@ -32,7 +32,9 @@ use pgdt_query::{
 };
 
 mod common;
-use common::{Cold, dump_over, edge_cases, mapped, partitions_fixture, rows_of, types_fixture};
+use common::{
+    Cold, arranged_as, dump_over, edge_cases, mapped, partitions_fixture, rows_of, types_fixture,
+};
 
 type Rows = Vec<Vec<Option<String>>>;
 
@@ -65,14 +67,16 @@ async fn serial_rows(source: Arc<dyn ByteRangeSource>, table: &str, options: Que
     serial_rows_in(&Cold::default(), source, table, options).await
 }
 
-/// `table`'s cold plan under `scan` and `options`, which must find it.
+/// `table`'s cold plan under `scan` and `options`, its replay cut as
+/// `replay` allows, which must find it.
 async fn plan_of(
     source: Arc<dyn ByteRangeSource>,
     table: &str,
     scan: ScanOptions,
     options: QueryOptions,
+    replay: Parallelism,
 ) -> TablePartitions {
-    let cold = Cold { scan, ..Cold::default() };
+    let cold = Cold { scan, replay, ..Cold::default() };
     cold.plan(source, table, options).await.unwrap().expect("the dump holds the table")
 }
 
@@ -121,7 +125,7 @@ async fn partitioned_rows_in(
     options: QueryOptions,
     jobs: usize,
 ) -> (Rows, usize) {
-    let options = QueryOptions { parallelism: Parallelism::workers(jobs, 1 << 30), ..options };
+    let cold = Cold { replay: Parallelism::workers(jobs, 1 << 30), ..cold.clone() };
     let plan = cold.plan(source, table, options).await.unwrap().expect("the dump holds the table");
     (drained(&plan, cold.max_rows).await, plan.len())
 }
@@ -170,12 +174,9 @@ async fn sub_streams_polled_interleaved_keep_their_own_rows() {
     let source = local(types_fixture(16, "default"));
     let serial = serial_rows(source.clone(), "public.t_int", QueryOptions::default()).await;
 
-    let options = QueryOptions {
-        max_bytes: None,
-        parallelism: Parallelism::workers(4, 1 << 30),
-        ..Default::default()
-    };
-    let plan = plan_of(source, "public.t_int", ScanOptions::default(), options).await;
+    let options = QueryOptions { max_bytes: None, ..Default::default() };
+    let replay = Parallelism::workers(4, 1 << 30);
+    let plan = plan_of(source, "public.t_int", ScanOptions::default(), options, replay).await;
     let streams = (0..plan.len()).map(|partition| plan.stream(partition, 1));
 
     let drained = futures::future::join_all(streams.map(|mut stream| async move {
@@ -195,9 +196,15 @@ async fn sub_streams_polled_interleaved_keep_their_own_rows() {
 #[tokio::test]
 async fn serial_parallelism_is_exactly_one_sub_stream() {
     let source = local(edge_cases());
-    let plan =
-        plan_of(source.clone(), "public.widgets", ScanOptions::default(), QueryOptions::default())
-            .await;
+    let serial = Parallelism::default();
+    let plan = plan_of(
+        source.clone(),
+        "public.widgets",
+        ScanOptions::default(),
+        Default::default(),
+        serial,
+    )
+    .await;
     assert_eq!(plan.len(), 1);
 
     // `--jobs 1` is the same value, so it is the same one sub-stream.
@@ -222,11 +229,9 @@ async fn a_budget_bound_worker_count_announces_why() {
     let source = local(edge_cases());
     let scan = ScanOptions::default();
     let floor = scan.read.chunk_size_bytes as u64;
-    let options = QueryOptions {
-        parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
-        ..Default::default()
-    };
-    let plan = plan_of(source.clone(), "public.widgets", scan, options.clone()).await;
+    let options = QueryOptions::default();
+    let replay = Parallelism::workers(8, DEFAULT_MEMORY_BUDGET);
+    let plan = plan_of(source.clone(), "public.widgets", scan, options.clone(), replay).await;
     let footprint = partition_unit(&source, &scan);
     let planned = (DEFAULT_MEMORY_BUDGET / (footprint + floor)) as usize;
     assert_eq!(planned, 7, "the floored span leaves room for seven of the eight");
@@ -283,8 +288,10 @@ async fn a_budget_bound_worker_count_announces_why() {
 async fn a_budget_below_one_readers_worth_says_the_allocation_bound_it() {
     let source = local(edge_cases());
     let unit = partition_unit(&source, &ScanOptions::default());
-    let options = QueryOptions { parallelism: Parallelism::workers(1, 0), ..Default::default() };
-    let plan = plan_of(source.clone(), "public.widgets", ScanOptions::default(), options).await;
+    let options = QueryOptions::default();
+    let replay = Parallelism::workers(1, 0);
+    let plan =
+        plan_of(source.clone(), "public.widgets", ScanOptions::default(), options, replay).await;
     assert_eq!(plan.len(), 1, "a budget of zero is one reader, not none");
     let notes = plan.plan_notes();
     assert_eq!(notes.len(), 1, "the count note cannot fire at a serial request: {notes:?}");
@@ -318,8 +325,9 @@ async fn a_budget_below_one_readers_worth_says_the_allocation_bound_it() {
 async fn a_budget_that_affords_one_reader_says_nothing_about_a_floor() {
     let source = local(edge_cases());
     let unit = partition_unit(&source, &ScanOptions::default());
-    let options = QueryOptions { parallelism: Parallelism::workers(1, unit), ..Default::default() };
-    let plan = plan_of(source, "public.widgets", ScanOptions::default(), options).await;
+    let replay = Parallelism::workers(1, unit);
+    let plan =
+        plan_of(source, "public.widgets", ScanOptions::default(), Default::default(), replay).await;
     assert!(plan.plan_notes().is_empty(), "{:?}", plan.plan_notes());
 }
 
@@ -329,9 +337,9 @@ async fn a_budget_that_affords_one_reader_says_nothing_about_a_floor() {
 #[tokio::test]
 async fn a_budget_that_affords_every_worker_is_silent() {
     let source = local(types_fixture(16, "default"));
-    let options =
-        QueryOptions { parallelism: Parallelism::workers(4, 1 << 30), ..Default::default() };
-    let plan = plan_of(source, "public.t_int", ScanOptions::default(), options).await;
+    let replay = Parallelism::workers(4, 1 << 30);
+    let plan =
+        plan_of(source, "public.t_int", ScanOptions::default(), Default::default(), replay).await;
     assert!((0..plan.len()).all(|partition| plan.stream(partition, 8192).plan_notes().is_empty()));
 }
 
@@ -426,8 +434,8 @@ async fn batches_sorted_on_their_source_offset_are_the_serial_order() {
     let expected = serial_rows_in(&cold, source.clone(), "public.widgets", options.clone()).await;
     assert!(expected.len() > 3, "the oracle needs several rows per partition");
 
-    let options = QueryOptions { parallelism: Parallelism::workers(2, 1 << 30), ..options };
-    let plan = plan_of(source, "public.widgets", ScanOptions::default(), options).await;
+    let replay = Parallelism::workers(2, 1 << 30);
+    let plan = plan_of(source, "public.widgets", ScanOptions::default(), options, replay).await;
     let mut streams: Vec<_> = (0..plan.len()).map(|partition| plan.stream(partition, 1)).collect();
     assert!(streams.len() > 1, "one sub-stream would make this the serial path");
 
@@ -497,9 +505,8 @@ async fn a_reported_offset_is_the_start_of_a_row() {
 /// with no rows is a plan whose partitions yield nothing.
 #[tokio::test]
 async fn a_table_that_is_not_in_the_dump_settles_no_plan() {
-    let options =
-        QueryOptions { parallelism: Parallelism::workers(8, 1 << 30), ..Default::default() };
-    let plan = Cold::default().plan(local(edge_cases()), "public.not_a_table", options).await;
+    let cold = Cold { replay: Parallelism::workers(8, 1 << 30), ..Cold::default() };
+    let plan = cold.plan(local(edge_cases()), "public.not_a_table", Default::default()).await;
     assert!(plan.unwrap().is_none());
 }
 
@@ -510,12 +517,9 @@ async fn a_table_that_is_not_in_the_dump_settles_no_plan() {
 #[tokio::test]
 async fn a_sub_streams_resume_token_is_refused_by_the_whole_stream() {
     let source = local(types_fixture(16, "default"));
-    let options = QueryOptions {
-        max_bytes: None,
-        parallelism: Parallelism::workers(4, 1 << 30),
-        ..Default::default()
-    };
-    let plan = plan_of(source, "public.t_int", ScanOptions::default(), options).await;
+    let options = QueryOptions { max_bytes: None, ..Default::default() };
+    let replay = Parallelism::workers(4, 1 << 30);
+    let plan = plan_of(source, "public.t_int", ScanOptions::default(), options, replay).await;
     let mut first = plan.stream(0, 1);
     first.next().await.expect("the first sub-stream has rows").unwrap();
     let token = first.resume_token();
@@ -623,10 +627,11 @@ async fn a_block_shaped_source_is_not_charged_the_batch_span() {
     xz.hint_read_size(ScanOptions::default().read.chunk_size_bytes);
     let reader = xz.block_decode_bytes().expect("a compressed source states its block-path cost");
     let budget = 4 * reader;
-    let options =
-        QueryOptions { parallelism: Parallelism::workers(4, budget), ..Default::default() };
+    let options = QueryOptions::default();
+    let replay = Parallelism::workers(4, budget);
 
-    let plan = plan_of(plain, "public.widgets", ScanOptions::default(), options.clone()).await;
+    let plan =
+        plan_of(plain, "public.widgets", ScanOptions::default(), options.clone(), replay).await;
     match plan.plan_notes() {
         [note] => {
             let PlanNoteKind::BatchSpanNarrowed {
@@ -649,7 +654,7 @@ async fn a_block_shaped_source_is_not_charged_the_batch_span() {
         other => panic!("expected exactly one plan note, got {other:?}"),
     }
 
-    let plan = plan_of(xz, "public.widgets", ScanOptions::default(), options).await;
+    let plan = plan_of(xz, "public.widgets", ScanOptions::default(), options, replay).await;
     assert!(
         (0..plan.len()).all(|partition| plan.stream(partition, 8192).plan_notes().is_empty()),
         "the span is not charged here, so the budget affords every worker: {:?}",
@@ -699,9 +704,10 @@ async fn a_budget_declined_block_path_announces_the_block_to_budget_for() {
 
     // A budget below one block, so no whole block can be held.
     let budget = index.largest_unit() - 1;
-    let options =
-        QueryOptions { parallelism: Parallelism::workers(4, budget), ..Default::default() };
-    let plan = plan_of(xz.clone(), "public.widgets", ScanOptions::default(), options).await;
+    let replay = Parallelism::workers(4, budget);
+    let plan =
+        plan_of(xz.clone(), "public.widgets", ScanOptions::default(), Default::default(), replay)
+            .await;
     let notes = plan.plan_notes();
     let declined = notes
         .iter()
@@ -755,13 +761,14 @@ async fn a_block_path_that_was_taken_is_silent() {
 
     let compressed = xz_compress(&edge_cases(), &["--block-size=512"]);
     let xz = Arc::new(CompressedFileSource::open(compressed.path()).unwrap());
-    let affordable =
-        QueryOptions { parallelism: Parallelism::workers(4, 1 << 30), ..Default::default() };
-    let plan = plan_of(xz, "public.widgets", ScanOptions::default(), affordable.clone()).await;
+    let (affordable, replay) = (QueryOptions::default(), Parallelism::workers(4, 1 << 30));
+    let plan =
+        plan_of(xz, "public.widgets", ScanOptions::default(), affordable.clone(), replay).await;
     assert!(!declines(plan.plan_notes()), "{:?}", plan.plan_notes());
 
     let plain = local(edge_cases());
-    let plan = plan_of(plain, "public.widgets", ScanOptions::default(), affordable.clone()).await;
+    let plan =
+        plan_of(plain, "public.widgets", ScanOptions::default(), affordable.clone(), replay).await;
     assert!(!declines(plan.plan_notes()), "{:?}", plan.plan_notes());
 
     // A single-block file, under a budget far too small to hold its one
@@ -769,8 +776,9 @@ async fn a_block_path_that_was_taken_is_silent() {
     // the budget says.
     let single = xz_compress(&edge_cases(), &[]);
     let xz = Arc::new(CompressedFileSource::open(single.path()).unwrap());
-    let options = QueryOptions { parallelism: Parallelism::workers(4, 64), ..Default::default() };
-    let plan = plan_of(xz, "public.widgets", ScanOptions::default(), options).await;
+    let replay = Parallelism::workers(4, 64);
+    let plan =
+        plan_of(xz, "public.widgets", ScanOptions::default(), Default::default(), replay).await;
     assert!(!declines(plan.plan_notes()), "{:?}", plan.plan_notes());
 }
 
@@ -826,8 +834,7 @@ async fn a_gzip_first_pass_plan_says_it_reads_serially_until_the_end() {
             pgdt_io::Recognized::Mismatch => unreachable!("claiming nothing is never a mismatch"),
         }
     };
-    let options =
-        QueryOptions { parallelism: Parallelism::workers(4, 1 << 30), ..Default::default() };
+    let (options, replay) = (QueryOptions::default(), Parallelism::workers(4, 1 << 30));
     let first_pass = |notes: &[pgdt_query::PlanNote]| {
         notes.iter().find_map(|n| match &n.kind {
             PlanNoteKind::CompressedFirstPass { codec } => {
@@ -838,8 +845,14 @@ async fn a_gzip_first_pass_plan_says_it_reads_serially_until_the_end() {
     };
 
     let source = opened().await;
-    let plan =
-        plan_of(Arc::clone(&source), "public.small", ScanOptions::default(), options.clone()).await;
+    let plan = plan_of(
+        Arc::clone(&source),
+        "public.small",
+        ScanOptions::default(),
+        options.clone(),
+        replay,
+    )
+    .await;
     let notes = plan.plan_notes();
     let (codec, severity, message) = first_pass(notes).unwrap_or_else(|| panic!("{notes:?}"));
     assert_eq!(codec, "gzip");
@@ -862,7 +875,7 @@ async fn a_gzip_first_pass_plan_says_it_reads_serially_until_the_end() {
         offset += read.len() as u64;
     }
     assert!(source.compression_index().unwrap().is_complete());
-    let plan = plan_of(source, "public.small", ScanOptions::default(), options).await;
+    let plan = plan_of(source, "public.small", ScanOptions::default(), options, replay).await;
     assert!(first_pass(plan.plan_notes()).is_none(), "{:?}", plan.plan_notes());
     assert_eq!(drained(&plan, 8192).await, expected);
 }
@@ -881,9 +894,9 @@ async fn a_gzip_decline_names_its_units() {
     let source = Arc::new(
         CompressedFileSource::with_index(&gz, pgdt_io::CompressionIndex::Gzip(index)).unwrap(),
     );
-    let options =
-        QueryOptions { parallelism: Parallelism::workers(4, budget), ..Default::default() };
-    let plan = plan_of(source, "public.large", ScanOptions::default(), options).await;
+    let replay = Parallelism::workers(4, budget);
+    let plan =
+        plan_of(source, "public.large", ScanOptions::default(), Default::default(), replay).await;
     let notes = plan.plan_notes();
     let declined = notes
         .iter()
@@ -930,12 +943,9 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
     let chunk = partition_unit(&source, &scan);
     let planned = (4 * chunk / (chunk + floor)) as usize;
     assert_eq!(planned, 3, "eight jobs at this budget plan down to three");
-    let options = QueryOptions {
-        parallelism: Parallelism::workers(8, 4 * chunk),
-        max_source_span: Some(chunk as usize),
-        ..Default::default()
-    };
-    let plan = plan_of(source, "public.t_int", scan, options).await;
+    let options = QueryOptions { max_source_span: Some(chunk as usize), ..Default::default() };
+    let plan =
+        plan_of(source, "public.t_int", scan, options, Parallelism::workers(8, 4 * chunk)).await;
     assert_eq!(plan.len(), planned, "the budget binds before the job count does");
     match plan.plan_notes() {
         [narrowed, d] => {
@@ -1004,9 +1014,8 @@ async fn the_span_floors_at_the_announced_chunk_not_the_shipped_one() {
 
     // Eight readers of one unit inside eight units: the count is afforded at no
     // span at all, so what the span narrows to is the floor and nothing else.
-    let options =
-        QueryOptions { parallelism: Parallelism::workers(8, 8 * unit), ..Default::default() };
-    let plan = plan_of(source, "public.t_int", scan, options).await;
+    let replay = Parallelism::workers(8, 8 * unit);
+    let plan = plan_of(source, "public.t_int", scan, Default::default(), replay).await;
     assert_eq!(plan.len(), planned);
     match plan.plan_notes() {
         [narrowed, limited] => {
@@ -1046,12 +1055,9 @@ async fn an_unbounded_span_falls_back_to_the_decode_footprint_alone() {
     let expected = serial_rows(source.clone(), "public.t_int", QueryOptions::default()).await;
 
     let chunk = partition_unit(&source, &ScanOptions::default());
-    let options = QueryOptions {
-        parallelism: Parallelism::workers(8, 2 * chunk),
-        max_source_span: None,
-        ..Default::default()
-    };
-    let plan = plan_of(source, "public.t_int", ScanOptions::default(), options).await;
+    let options = QueryOptions { max_source_span: None, ..Default::default() };
+    let replay = Parallelism::workers(8, 2 * chunk);
+    let plan = plan_of(source, "public.t_int", ScanOptions::default(), options, replay).await;
     assert_eq!(plan.len(), 2, "an unbounded span divides by the decode footprint alone");
     match plan.plan_notes() {
         [d] => {
@@ -1091,8 +1097,8 @@ async fn a_dump_s_plan_replays_as_the_mapping_pass_would() {
     let path = partitions_fixture(16, "load-via-partition-root");
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
     let dump = mapped(Arc::clone(&source), &StatisticsRequest::DATA).await;
-    let options =
-        QueryOptions { parallelism: Parallelism::workers(4, 1 << 30), ..QueryOptions::default() };
+    let options = QueryOptions::default();
+    let replay = arranged_as(Parallelism::workers(4, 1 << 30));
 
     let mut compared = 0;
     for name in dump.tables() {
@@ -1109,7 +1115,7 @@ async fn a_dump_s_plan_replays_as_the_mapping_pass_would() {
             4,
         )
         .await;
-        let plan = table.plan(ReadOptions::default(), options.clone()).unwrap();
+        let plan = table.plan(ReadOptions::default(), options.clone(), &replay).unwrap();
         assert_eq!(plan.len(), count, "{}", name.qualified_name());
         let schema = table.schema(&options).unwrap();
         assert_eq!(plan.resolved_schema().schema(), schema.schema());
@@ -1208,7 +1214,6 @@ async fn a_segment_inside_a_line_reads_only_to_its_limit() {
     };
     let options = QueryOptions {
         schema_mode: pgdt_codec::SchemaMode::Strings,
-        parallelism: Parallelism::workers(16, 1 << 30),
         max_source_span: None,
         ..QueryOptions::default()
     };
@@ -1220,7 +1225,8 @@ async fn a_segment_inside_a_line_reads_only_to_its_limit() {
     let expected = serial_rows_in(&cold, source.clone(), "public.t", options.clone()).await;
     assert_eq!(expected.len(), 3, "`a`, the long row and `b`");
 
-    let plan = plan_of(source.clone(), "public.t", scan, options).await;
+    let replay = Parallelism::workers(16, 1 << 30);
+    let plan = plan_of(source.clone(), "public.t", scan, options, replay).await;
     assert!(plan.len() > 4, "the line is cut into several segments: {}", plan.len());
     source.reads.lock().unwrap().clear();
     assert_eq!(drained(&plan, 8192).await, expected);

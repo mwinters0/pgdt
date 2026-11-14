@@ -242,7 +242,7 @@ async fn a_cold_query_reads_a_hypertable_and_its_chunks() {
 /// plan's start raising the same.
 fn timescaledb_notes(table: &Table, inheritance: Inheritance) -> Option<Vec<PlanNoteKind>> {
     let options = QueryOptions { inheritance, ..QueryOptions::default() };
-    let plan = table.plan(ReadOptions::default(), options).ok()?;
+    let plan = table.plan(ReadOptions::default(), options, &pgdt_fixtures::arranged(1)).ok()?;
     let ours = |kind: &PlanNoteKind| {
         matches!(
             kind,

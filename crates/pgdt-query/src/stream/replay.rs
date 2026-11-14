@@ -24,7 +24,7 @@ use pgdt_dump::{ChunkedScanner, CopyScanner, Event, Row};
 use pgdt_io::{Admission, ByteRangeSource, Ledger};
 
 use self::dynamic::{DynamicRead, Skip};
-use self::plan::{ReplayPlan, resolve_for_query};
+use self::plan::{ReplayPlan, charged, resolve_for_query};
 use self::segment::{Segment, SegmentEntry, first_row_start};
 use super::note::EarlyStop;
 use super::resume::{InCopyResume, ResumeToken};
@@ -83,15 +83,15 @@ pub(super) fn replay<'a>(
         let semantics = query_options.semantics;
 
         // The chunk length every segment's replay repeats, announced once for
-        // the whole sub-stream. The budget comes from `QueryOptions`, the plan
-        // holding only a `ReadOptions`: a cold query states the two passes'
-        // parallelism separately because they split differently. **The replay loop could not grant a
+        // the whole sub-stream. The budget is the replay's own arrangement's:
+        // a cold query carves the two passes apart because they split
+        // differently. **The replay loop could not grant a
         // wait** (`docs/design/decisions.md`, "D5"): a batch's
         // `StringViewBuilder` holds every chunk it has taken a `Utf8View` into
         // until it flushes, so this loop can never be the task that frees one
         // it waits on. Stated rather than left to the default, so whatever the
         // mapping pass granted is un-stated on the same source.
-        announce_read_loop(source, read, query_options.parallelism);
+        announce_read_loop(source, read, plan.parallelism);
 
         let mut rows_emitted = resume.as_ref().map_or(0, |t| t.rows_emitted);
         // Where a token paused inside a block, and which block: its scanner
@@ -122,7 +122,7 @@ pub(super) fn replay<'a>(
         // bytes and the query's decode beside them.
         let mut holder = ledger.holder();
         let factor = plan.factor();
-        let charge = move |held: u64| held.saturating_add(factor.map_or(0, |f| f.of(held)));
+        let charge = move |held: u64| charged(factor, held);
 
         // Every block holding a stop gets its entry up front, so a drained
         // stream tells one whose stop never fired from one with none planned.

@@ -278,7 +278,7 @@ async fn a_metadata_level_table_is_censused_by_its_query_and_refused_by_a_held_p
     let table = dump.table(&selector).unwrap().expect("the map holds the table");
     let refused = |result: pgdt_core::Result<_>| matches!(result, Err(Error::TableAtMetadataLevel { table }) if table == "public.t_array_shape");
     assert!(refused(table.schema(&QueryOptions::default()).map(|_| ())));
-    let plan = |options: QueryOptions| table.plan(ReadOptions::default(), options);
+    let plan = |options: QueryOptions| table.plan(ReadOptions::default(), options, &arranged(1));
     assert!(refused(plan(QueryOptions::default()).map(|_| ())));
     let strings = QueryOptions { schema_mode: SchemaMode::Strings, ..QueryOptions::default() };
     table.schema(&strings).unwrap();

@@ -31,7 +31,7 @@ mapping passes' read loops and the replay's — so it landed as the first, and
   the map's `LongestLine` and the query's factor. It comes off the margin's
   ceiling the count is solved against and off the statistics allowance
   ([`roadmap-P33.4.4-margin-notes.md`](roadmap-P33.4.4-margin-notes.md));
-  every caller passes zero today, so no arrangement moved.
+  a mapping pass passes zero, meeting its lines unknown.
 - **The earliest line is admitted past the capacity where no other line
   holds.** Until the floor (33.5) parks readers and refuses, a line the ledger
   cannot hold is read as it is today, never stopped: so 33.4.1 and 33.4.2

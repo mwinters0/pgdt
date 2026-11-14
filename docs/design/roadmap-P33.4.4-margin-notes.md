@@ -10,8 +10,8 @@ bounds the count off that ceiling alone (`Parallelism::within_shared`'s
 
 ## What the next slices inherit
 
-- **Nothing a run answers moved.** Every caller passes `line_charge: 0`, and
-  with none every count, budget and statistics allowance is what it was:
+- **Nothing a run answers moved.** With `line_charge: 0`, a mapping pass's,
+  every count, budget and statistics allowance is what it was:
   the statistics allowance is the room less the line, the old formula
   exactly. Only `Ledger::capacity` moved, which nothing reads.
 - **`Ledger::draw_statistics(total)` is the statistics' whole draw**, in

@@ -13,13 +13,13 @@ use pgdt_codec::ResolvedSchema;
 use pgdt_core::{Error, Result};
 use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::{Held, Opened, SourceWatch};
-use pgdt_io::ByteRangeSource;
+use pgdt_io::{Arrangement, ByteRangeSource};
 use pgdt_mapping::MapRun;
 use pgdt_model::{CopyBlock, DumpIndex, DumpMetadata, TableName};
 
 use crate::options::{Inheritance, QueryOptions};
 use crate::predicate::{ComparisonNote, column_divergences};
-use crate::stream::{TablePartitions, table_schema};
+use crate::stream::{TablePartitions, table_line_charge, table_schema};
 use crate::summary::{TableSummary, table_summary};
 
 mod descendants;
@@ -396,15 +396,46 @@ impl Table {
         Ok(column_divergences(&self.schema(options)?, options.semantics))
     }
 
+    /// **The charge of the longest line a query of this table under
+    /// `options` will hold**, each piece read with `read`: the longest line
+    /// its blocks hold, as the map records it ([`CopyBlock::longest_line`]),
+    /// and what the query's batch decodes beside it, its one factor — or
+    /// nothing where that line fits its chunk, no reader holding it past its
+    /// chunk term. What a caller hands
+    /// [`ArrangementRequest::line_charge`](pgdt_io::ArrangementRequest::line_charge)
+    /// before resolving the arrangement it plans under ([`Self::plan`]), so
+    /// that line is admitted without waiting on the readers carved beside it
+    /// (`docs/design/decisions.md`, "D157", "D160"). Reads no byte of the
+    /// dump; refuses what [`Self::schema`] refuses.
+    pub fn line_charge(&self, read: ReadOptions, options: &QueryOptions) -> Result<u64> {
+        let blocks = self.read(options)?;
+        if blocks.is_empty() {
+            return Ok(0);
+        }
+        let database = self.name.database.as_deref();
+        let table = self.name.qualified_name();
+        let metadata = self.metadata.as_deref();
+        table_line_charge(database, &table, &blocks, metadata, options, read.chunk_size_bytes)
+    }
+
     /// The partitioned replay of this table under `options`, each piece read
-    /// with `read` ([`TablePartitions`]): planned now, reading nothing, its
-    /// partitions streamed when the caller runs them, its notes led by what
+    /// with `read` ([`TablePartitions`]), cut as `arrangement`'s parallelism
+    /// allows and its held lines drawing on `arrangement`'s ledger — the
+    /// replay's own, carved around the charge [`Self::line_charge`] answers,
+    /// as a mapping pass takes its arrangement whole
+    /// (`docs/design/decisions.md`, "D83", "D157"): planned now, reading
+    /// nothing, its partitions streamed when the caller runs them, its notes led by what
     /// the read hears of TimescaleDB's catalog — a hypertable's root's own
     /// rows and absent chunks, or a read unchecked for compression
     /// (`docs/design/decisions.md`, "D135"). Refuses what a query's
     /// plan refuses, before a byte is read, and a source the dump's watch
     /// cannot check while it is read (`docs/design/decisions.md`, "D21").
-    pub fn plan(&self, read: ReadOptions, options: QueryOptions) -> Result<TablePartitions> {
+    pub fn plan(
+        &self,
+        read: ReadOptions,
+        options: QueryOptions,
+        arrangement: &Arrangement,
+    ) -> Result<TablePartitions> {
         let inheritance = options.inheritance;
         let blocks = self.read(&options)?;
         // A table read alone holding no block of its own reads nothing, under
@@ -422,6 +453,7 @@ impl Table {
             &blocks,
             read,
             options,
+            arrangement,
         )?;
         let partitions = partitions.noting(self.notes.of(inheritance));
         Ok(match schema {

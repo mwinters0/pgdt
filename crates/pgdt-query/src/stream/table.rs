@@ -14,7 +14,7 @@ use pgdt_core::Result;
 use pgdt_model::{CopyBlock, DumpMetadata};
 
 use super::note::{EarlyStop, PlanNote};
-use super::replay::plan::plan_table;
+use super::replay::plan::{line_charge, plan_table};
 use super::resume::ResumeToken;
 use crate::options::QueryOptions;
 use crate::predicate::ComparisonNote;
@@ -237,6 +237,24 @@ pub(crate) fn table_schema(
 ) -> Result<ResolvedSchema> {
     let (_, _, schema) = plan_table(database, table, blocks, query_options, metadata)?;
     Ok(schema)
+}
+
+/// **The charge of the longest line a query of a table over `blocks` will
+/// hold**, each piece read `chunk` bytes at a time: that line's length and
+/// what its query's batch decodes beside it, nothing where it fits its chunk
+/// ([`Table::line_charge`](crate::Table::line_charge)) — read off the
+/// opening every plan of the table shares, as [`table_schema`] is, or the
+/// refusal its plan would raise. No byte of the dump is read.
+pub(crate) fn table_line_charge(
+    database: Option<&str>,
+    table: &str,
+    blocks: &[CopyBlock],
+    metadata: Option<&DumpMetadata>,
+    query_options: &QueryOptions,
+    chunk: usize,
+) -> Result<u64> {
+    let (_, planned, _) = plan_table(database, table, blocks, query_options, metadata)?;
+    Ok(line_charge(&planned, blocks, chunk))
 }
 
 /// Blocking [`Iterator`] wrapper over a [`TableStream`], for sync callers

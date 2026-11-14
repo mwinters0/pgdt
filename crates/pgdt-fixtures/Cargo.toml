@@ -24,7 +24,8 @@ mapping = [
 
 [dependencies]
 pgdt-dump = { path = "../pgdt-dump", optional = true }
-pgdt-io = { path = "../pgdt-io", optional = true }
+# `test-support` for an arrangement at a budget a test states (`arranged_as`).
+pgdt-io = { path = "../pgdt-io", optional = true, features = ["test-support"] }
 pgdt-mapping = { path = "../pgdt-mapping", optional = true }
 pgdt-model = { path = "../pgdt-model", optional = true }
 tempfile = { workspace = true }

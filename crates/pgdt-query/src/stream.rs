@@ -41,8 +41,8 @@ pub use self::note::{EarlyStop, PlanLever, PlanNote, PlanNoteKind};
 pub use self::partitions::{DynamicPartitions, TablePartitions};
 pub use self::replay::dynamic::{DynamicFilter, RowEvaluation};
 pub use self::resume::ResumeToken;
-pub(crate) use self::table::table_schema;
 pub use self::table::{BlockingTableIter, TableStream};
+pub(crate) use self::table::{table_line_charge, table_schema};
 
 #[cfg(test)]
 mod tests;

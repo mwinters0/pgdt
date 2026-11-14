@@ -1,9 +1,9 @@
 //! A query's held lines on its run's ledger (`docs/design/decisions.md`,
-//! "D157", "D158", "D159"): a line held past its chunk term draws its bytes
-//! and its query's decode beside them, returns the draw before any batch is
-//! yielded, and answers what a ledger without limit answers however its
-//! partitions are driven — its cold mapping pass's census drawing on its
-//! own.
+//! "D157", "D158", "D159", "D160"): the ledger carved around its longest
+//! line, a line held past its chunk term draws its bytes and its query's
+//! decode beside them, returns the draw before any batch is yielded, and
+//! answers what a ledger without limit answers however its partitions are
+//! driven — its cold mapping pass's census drawing on its own.
 
 use std::future::Future;
 use std::path::Path;
@@ -20,7 +20,7 @@ use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::{
     Admission, Allowance, Arrangement, ArrangementRequest, ByteRangeSource, Extent, Jobs,
-    LocalFileSource,
+    LocalFileSource, WorkerMemory,
 };
 use pgdt_query::{QueryOptions, ScanExtent, Table, TablePartitions};
 use tokio_util::sync::CancellationToken;
@@ -58,6 +58,29 @@ fn lending(jobs: usize, capacity: u64) -> Arrangement {
     arrangement
 }
 
+/// `chunk`-byte reads.
+fn reads(chunk: usize) -> ReadOptions {
+    ReadOptions { chunk_size_bytes: chunk, ..ReadOptions::default() }
+}
+
+/// `table` settled by a typed cold mapping pass over `source`, writing no
+/// cache, read in `chunk`-byte reads under `arrangement`, its held lines
+/// drawing on its ledger.
+async fn settled(
+    source: Arc<dyn ByteRangeSource>,
+    table: &str,
+    chunk: usize,
+    arrangement: &Arrangement,
+) -> Table {
+    let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
+    let (extent, typed, token) =
+        (ScanExtent::UntilTargetSettled, SchemaMode::Typed, CancellationToken::new());
+    let read = reads(chunk);
+    let settled =
+        Table::settle(opened, &selector(table), read, arrangement, extent, typed, &token).await;
+    settled.unwrap().expect("the dump holds it")
+}
+
 /// `table`'s typed cold plan in `source`, writing no cache, both passes read
 /// in `chunk`-byte reads under `arrangement`, their held lines drawing on its
 /// ledger one pass after the other, as `pgdt query`'s draw on their own.
@@ -67,16 +90,8 @@ async fn plan(
     chunk: usize,
     arrangement: &Arrangement,
 ) -> TablePartitions {
-    let read = ReadOptions { chunk_size_bytes: chunk, ..ReadOptions::default() };
-    let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
-    let (extent, typed, token) =
-        (ScanExtent::UntilTargetSettled, SchemaMode::Typed, CancellationToken::new());
-    let settled =
-        Table::settle(opened, &selector(table), read, arrangement, extent, typed, &token).await;
-    let settled = settled.unwrap().expect("the dump holds it");
-    let options =
-        QueryOptions { parallelism: arrangement.parallelism(), ..QueryOptions::default() };
-    settled.plan(read, options).unwrap().drawing_on(arrangement.ledger())
+    let settled = settled(source, table, chunk, arrangement).await;
+    settled.plan(reads(chunk), QueryOptions::default(), arrangement).unwrap()
 }
 
 /// A dump held in memory, every read answered at once: a replay polled by
@@ -125,13 +140,8 @@ async fn a_held_line_draws_its_bytes_and_its_query_s_decode() {
     let cases =
         [("text", "short", text.as_str(), (1, 1)), ("bigint[]", "{1}", array.as_str(), (65, 16))];
     for (declared, short, long, (held, per)) in cases {
-        let file = format!(
-            "CREATE TABLE public.t (\n    a integer,\n    b {declared}\n);\n\n\
-             COPY public.t (a, b) FROM stdin;\n1\t{short}\n2\t{long}\n3\t{short}\n\\.\n\n"
-        );
-        let line = format!("2\t{long}\n").len() as u64;
+        let (source, line) = long_row(declared, short, long);
         let charge = line + (line * held).div_ceil(per);
-        let source: Arc<dyn ByteRangeSource> = Arc::new(Memory(Bytes::from(file)));
         let unlimited = plan(Arc::clone(&source), "public.t", CHUNK, &arranged(1)).await;
         let want: Vec<_> = unlimited.stream(0, 8192).map(Result::unwrap).collect().await;
         let want = joined(&want);
@@ -165,6 +175,74 @@ async fn a_held_line_draws_its_bytes_and_its_query_s_decode() {
             assert_eq!(joined(&batches), want, "{declared}, short by {short_by}");
             assert_eq!(earlier.held(), 1 - short_by, "{declared}: the earlier line waited on");
         }
+    }
+}
+
+/// `public.t`, an `integer` beside a `long` value of `declared`, between two
+/// rows holding `short`: a dump held in memory, and the long row's line.
+fn long_row(declared: &str, short: &str, long: &str) -> (Arc<dyn ByteRangeSource>, u64) {
+    let file = format!(
+        "CREATE TABLE public.t (\n    a integer,\n    b {declared}\n);\n\n\
+         COPY public.t (a, b) FROM stdin;\n1\t{short}\n2\t{long}\n3\t{short}\n\\.\n\n"
+    );
+    let line = format!("2\t{long}\n").len() as u64;
+    (Arc::new(Memory(Bytes::from(file))), line)
+}
+
+/// **A read over mapped blocks carves its longest line**
+/// (`docs/design/decisions.md`, "D157", "D160"): the charge a table answers
+/// is what that line draws once it outgrows its chunk — its bytes and its
+/// query's one factor of them, a projection reading no long column charging
+/// its bytes alone — and nothing where it fits its chunk; and an arrangement
+/// carved around it, whose readers would otherwise leave its ledger less than
+/// the line, admits that line without waiting, whatever else holds the rest.
+#[tokio::test]
+async fn a_read_over_mapped_blocks_carves_its_longest_line() {
+    let digits = "1,".repeat(8 << 10);
+    let array = format!("{{{digits}2}}");
+    let text = "x".repeat(16 << 10);
+    let cases =
+        [("text", "short", text.as_str(), (1, 1)), ("bigint[]", "{1}", array.as_str(), (65, 16))];
+    for (declared, short, long, (held, per)) in cases {
+        let (source, line) = long_row(declared, short, long);
+        let table = settled(Arc::clone(&source), "public.t", CHUNK, &arranged(1)).await;
+        let every = QueryOptions::default();
+        let charge = line + (line * held).div_ceil(per);
+        assert_eq!(table.line_charge(reads(CHUNK), &every).unwrap(), charge, "{declared}");
+        let narrow = QueryOptions { projection: Some(vec!["a".into()]), ..every.clone() };
+        assert_eq!(table.line_charge(reads(CHUNK), &narrow).unwrap(), line, "{declared}");
+        let whole = reads(line as usize);
+        assert_eq!(table.line_charge(whole, &every).unwrap(), 0, "{declared}: it fits its chunk");
+
+        // Readers a byte larger than the line, as many as the allowance
+        // affords: they leave the room less than the line, unless it is
+        // carved.
+        let reader = Some(WorkerMemory::per_worker(charge + 1));
+        let request = |line_charge| ArrangementRequest {
+            line_charge,
+            ..ArrangementRequest::recommended(1 << 20, reader)
+        };
+        let allowance = Allowance::Stated(1 << 30);
+        let bare = Arrangement::resolve(&allowance, request(0));
+        assert!(bare.ledger().capacity().unwrap() < charge, "{declared}: the readers fill it");
+        let arrangement = Arrangement::resolve(&allowance, request(charge));
+        let ledger = arrangement.ledger();
+        let rest = ledger.capacity().unwrap() - ledger.drawn() - charge;
+        let mut earlier = ledger.holder();
+        assert_eq!(earlier.draw(0, rest).await, Admission::Held);
+        let plan = table.plan(reads(CHUNK), every, &arrangement).unwrap();
+        let mut stream = plan.stream(0, 8192);
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        let mut rows = 0;
+        loop {
+            match stream.poll_next_unpin(&mut cx) {
+                std::task::Poll::Ready(Some(batch)) => rows += batch.unwrap().num_rows(),
+                std::task::Poll::Ready(None) => break,
+                std::task::Poll::Pending => panic!("{declared}: the carved line waited"),
+            }
+        }
+        assert_eq!(rows, 3, "{declared}");
+        assert_eq!(earlier.held(), rest, "{declared}: nothing was asked of the rest");
     }
 }
 

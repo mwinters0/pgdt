@@ -47,6 +47,15 @@ buffer; giving up on every wait; a bound per worker; the cap, lending the margin
 the room, a back-fill billed twice; an uncarved estimate's room unmargined, past halving. Code: `ledger.rs`. Evidence:
 `ledger/tests.rs`.
 
+### D160 A read over mapped blocks carves its longest line at its query's factor, then plans under that arrangement
+`Table::line_charge` answers the longest line the read's blocks hold, held whole at its query's one factor, or zero
+where it fits its chunk; `pgdt query` and each provider scan hand it to `ArrangementRequest::line_charge` (D157), and
+`Table::plan` takes that arrangement whole. Why: the line then fits a room its readers leave, never waiting on them;
+a line within its chunk draws nothing; a count and a ledger meet only as carved together (D83). Rejected: only the
+groups pruning keeps, or zero where nothing reads a field, which a block-level record cannot place and a dynamic filter
+arriving after planning moves; a ledger handed beside a parallelism in `QueryOptions`. Code: `Table::line_charge`,
+`ScanBudget::draw`. Evidence: `tests/ledger.rs`.
+
 ### D4 A budget is solved against a source's cost, never divided by it
 `WorkerMemory` carries a per-worker term and a shared pool term (`affords`, `at`): the block pool's retention list is
 flat below `POOL_DEPTH` and a unit per reader above, which no scalar expresses. `BufferPool` is bounded in bytes,

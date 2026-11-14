@@ -14,7 +14,7 @@ use pgdt_codec::ResolvedSchema;
 use pgdt_core::{Error, Result};
 use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::SourceWatch;
-use pgdt_io::{ByteRangeSource, Ledger, Partitioning};
+use pgdt_io::{Arrangement, ByteRangeSource, Ledger, Partitioning};
 use pgdt_model::{BlockStatistics, CopyBlock, DumpMetadata, Sortedness, TableName};
 
 use super::merge;
@@ -41,8 +41,8 @@ use crate::summary::partition_orders;
 /// ([`Table::settle`](crate::Table::settle)).
 ///
 /// The cut is made where the source said it was willing to be cut
-/// ([`ByteRangeSource::partitions`]) and no finer than the query's
-/// parallelism allows; **what N sub-streams cost resident is N times one**,
+/// ([`ByteRangeSource::partitions`]) and no finer than the parallelism of
+/// the arrangement it was planned under allows; **what N sub-streams cost resident is N times one**,
 /// N solved against what the source charges concurrent readers
 /// (`Partitioning::worker_memory`, a shared pool term included) plus, on a
 /// source retaining by chunk alone, what a sub-stream's in-flight batch pins
@@ -66,8 +66,11 @@ use crate::summary::partition_orders;
 /// **Its sub-streams progress while their caller polls or drops each one
 /// it holds**, the ordinary `Stream` contract — a task per partition, as
 /// DataFusion's `CoalescePartitionsExec` runs them, or a re-poll on wake. A
-/// sub-stream holding a line past its chunk term draws on the plan's ledger
-/// ([`Self::drawing_on`]); where an earlier line cannot be admitted it is
+/// sub-stream holding a line past its chunk term draws on the ledger of the
+/// arrangement it was planned under ([`Table::plan`](crate::Table::plan)): its
+/// bytes and what the query's batch decodes beside them, its query's one
+/// factor, until the batch holding its row is emitted, a line given up read
+/// again from its start (`docs/design/decisions.md`, "D157", "D159"); where an earlier line cannot be admitted it is
 /// asked to give its line up, and hears that only when next polled, so one
 /// left unpolled mid-line keeps its draw and an earlier line waits on it.
 /// **One left unpolled at a batch it yielded holds nothing**: each returns
@@ -90,7 +93,7 @@ pub struct TablePartitions {
     /// filter's cut is made from again ([`Self::cut_under`]).
     matches: Vec<CopyBlock>,
     advice: Vec<Partitioning>,
-    /// What each sub-stream's held line draws on ([`Self::drawing_on`]).
+    /// What each sub-stream's held line draws on: its arrangement's.
     ledger: Ledger,
 }
 
@@ -98,11 +101,12 @@ impl TablePartitions {
     /// Plan the replay of `table` over `blocks`, every block of it in a
     /// complete map of `source`, against `metadata`, the dump's DDL: its
     /// columns, every block resolved, statistics consulted, and the blocks
-    /// cut into as many partitions as `query_options.parallelism` and the
-    /// source's own advice allow. A request [`QueryOptions::validate`]
-    /// refuses is refused here, and so is a source `watch` cannot check
-    /// during a read, where the replay's reads are planned
-    /// ([`SourceWatch::require_checkable`]).
+    /// cut into as many partitions as `arrangement`'s parallelism and the
+    /// source's own advice allow, each drawing on its ledger. A request
+    /// [`QueryOptions::validate`] refuses is refused here, and so is a source
+    /// `watch` cannot check during a read, where the replay's reads are
+    /// planned ([`SourceWatch::require_checkable`]).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         source: Arc<dyn ByteRangeSource>,
         watch: Arc<SourceWatch>,
@@ -111,6 +115,7 @@ impl TablePartitions {
         blocks: &[CopyBlock],
         read: ReadOptions,
         query_options: QueryOptions,
+        arrangement: &Arrangement,
     ) -> Result<Self> {
         query_options.validate()?;
         watch.require_checkable(source.as_ref())?;
@@ -122,6 +127,7 @@ impl TablePartitions {
             metadata,
             read,
             query_options,
+            arrangement.parallelism(),
         )?;
         let resolved = plan.schema.clone();
         let reading = plan.query_options.statistics_view();
@@ -156,22 +162,8 @@ impl TablePartitions {
             statistics: Arc::new(statistics),
             matches,
             advice,
-            ledger: Ledger::unlimited(),
+            ledger: arrangement.ledger().clone(),
         })
-    }
-
-    /// **These partitions, each sub-stream's held line drawing on `ledger`**
-    /// — the replay's run's, its arrangement's
-    /// ([`Arrangement::ledger`](pgdt_io::Arrangement::ledger)), carved
-    /// beside the parallelism its [`QueryOptions`] carry. A line held past
-    /// its chunk term draws its bytes and what the query's batch decodes
-    /// beside them, its query's one factor, until the batch holding its row
-    /// is emitted; a line given up is read again from its start
-    /// (`docs/design/decisions.md`, "D157", "D159"). A plan handed none
-    /// draws on a ledger without limit, whose draws are met at once.
-    pub fn drawing_on(mut self, ledger: &Ledger) -> Self {
-        self.ledger = ledger.clone();
-        self
     }
 
     /// This plan, reporting `schema` — a plan over no block, of a table read

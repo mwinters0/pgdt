@@ -5,7 +5,6 @@
 use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
 use pgdt_core::{Error, Result};
-use pgdt_io::Parallelism;
 use pgdt_model::{PostgresInvalidValues, StatisticsView, UnrepresentableTier};
 
 use crate::predicate::Expr;
@@ -96,17 +95,6 @@ pub struct QueryOptions {
     /// typed read and every filter reading the field take it alike; a
     /// filter's literal is read as before.
     pub postgres_invalid_values: PostgresInvalidValues,
-    /// How much concurrency the replay may use, and what it may hold while
-    /// it does — [`Parallelism::Serial`] by default. A cold query's mapping
-    /// pass reads under its own [`ScanOptions`](pgdt_dump::ScanOptions)
-    /// ([`Table::settle`](crate::Table::settle)), the two passes splitting
-    /// differently (`docs/design/decisions.md`, "D1"). The replay loop
-    /// announces it to the source
-    /// ([`pgdt_io::ByteRangeSource::hint_parallelism`]), and `jobs`, capped by
-    /// what the bytes afford, is how many partitions
-    /// [`Table::plan`](crate::Table::plan) cuts. Nothing here spawns — the
-    /// caller runs them.
-    pub parallelism: Parallelism,
     /// Whether the replay skips the row groups whose statistics — gathered by
     /// a mapping pass ([`pgdt_mapping::map_file`]) — prove no row satisfies
     /// `filter`, and stops reading a block sorted on a column `filter` bounds
@@ -135,7 +123,6 @@ impl Default for QueryOptions {
             schema_mode: SchemaMode::default(),
             unrepresentable: UnrepresentableMode::default(),
             postgres_invalid_values: PostgresInvalidValues::default(),
-            parallelism: Parallelism::default(),
             use_statistics: true,
             inheritance: Inheritance::default(),
         }

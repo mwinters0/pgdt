@@ -1387,11 +1387,9 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
     std::fs::write(compressed.path(), bytes).unwrap();
 
     let xz = CompressedFileSource::open(compressed.path()).unwrap();
-    let options = QueryOptions {
-        parallelism: Parallelism::Serial { memory_bytes: Some(index.largest_unit() - 1) },
-        ..Default::default()
-    };
-    let cold = Cold { cache: mode, ..Cold::default() };
+    let options = QueryOptions::default();
+    let replay = Parallelism::Serial { memory_bytes: Some(index.largest_unit() - 1) };
+    let cold = Cold { cache: mode, replay, ..Cold::default() };
     let stream = cold.stream(Arc::new(xz), "public.widgets", options).await.unwrap();
     let items: Vec<_> = stream.expect("the dump holds the table").collect().await;
     let (last, rows) = items.split_last().expect("the stream yields");

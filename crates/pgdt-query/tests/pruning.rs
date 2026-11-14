@@ -30,7 +30,7 @@ use pgdt_query::{
 
 mod common;
 use common::{Cold, VERSIONS, all_fixtures, parsed_copy, statistics_fixture, types_fixture};
-use pgdt_fixtures::arranged;
+use pgdt_fixtures::{arranged, arranged_as};
 use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
 
@@ -117,27 +117,43 @@ struct Attempt {
     stops: Vec<EarlyStop>,
 }
 
+/// A query's options beside the parallelism its replay is cut under — the
+/// serial path, from options alone.
+#[derive(Debug, Clone)]
+struct Query {
+    options: QueryOptions,
+    replay: Parallelism,
+}
+
+impl From<QueryOptions> for Query {
+    fn from(options: QueryOptions) -> Self {
+        Self { options, replay: Parallelism::default() }
+    }
+}
+
 /// The plan of a cold query of `table` — in `database`, where one is named —
 /// in `source`, opened through the cache at `cache` and read with `scan`,
-/// under `options`; `None` where the dump holds no such table.
+/// under `query`; `None` where the dump holds no such table.
 async fn planned(
     source: Arc<dyn ByteRangeSource>,
     cache: &Path,
     database: Option<&str>,
     table: &str,
     scan: ScanOptions,
-    options: QueryOptions,
+    query: impl Into<Query>,
 ) -> pgdt_core::Result<Option<TablePartitions>> {
+    let Query { options, replay } = query.into();
     let cache = CacheMode::enabled(cache.to_path_buf());
-    let cold = Cold { scan, cache, database: database.map(str::to_owned), ..Cold::default() };
+    let database = database.map(str::to_owned);
+    let cold = Cold { scan, cache, database, replay, ..Cold::default() };
     cold.plan(source, table, options).await
 }
 
-/// `options` against `table`, its partitions drained in the order the plan
+/// `query` against `table`, its partitions drained in the order the plan
 /// cut them, which is file order (`docs/design/decisions.md`, "D51"), up to
 /// the first error.
-async fn attempt(dump: &Path, cache: &Path, table: &str, options: QueryOptions) -> Attempt {
-    attempt_in(dump, cache, None, table, options).await
+async fn attempt(dump: &Path, cache: &Path, table: &str, query: impl Into<Query>) -> Attempt {
+    attempt_in(dump, cache, None, table, query).await
 }
 
 /// [`attempt`], of `table` in `database` where one is named.
@@ -146,10 +162,10 @@ async fn attempt_in(
     cache: &Path,
     database: Option<&str>,
     table: &str,
-    options: QueryOptions,
+    query: impl Into<Query>,
 ) -> Attempt {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
-    let plan = planned(source, cache, database, table, ScanOptions::default(), options).await;
+    let plan = planned(source, cache, database, table, ScanOptions::default(), query).await;
     let plan = match plan {
         Ok(Some(plan)) => plan,
         Ok(None) => {
@@ -187,8 +203,8 @@ async fn attempt_in(
 }
 
 /// [`attempt`], its notes and stops kept only where it answers.
-async fn answer(dump: &Path, cache: &Path, table: &str, options: QueryOptions) -> Answer {
-    answer_in(dump, cache, None, table, options).await
+async fn answer(dump: &Path, cache: &Path, table: &str, query: impl Into<Query>) -> Answer {
+    answer_in(dump, cache, None, table, query).await
 }
 
 /// [`answer`], of `table` in `database` where one is named.
@@ -197,9 +213,9 @@ async fn answer_in(
     cache: &Path,
     database: Option<&str>,
     table: &str,
-    options: QueryOptions,
+    query: impl Into<Query>,
 ) -> Answer {
-    let Attempt { outcome, notes, stops } = attempt_in(dump, cache, database, table, options).await;
+    let Attempt { outcome, notes, stops } = attempt_in(dump, cache, database, table, query).await;
     outcome.map(|(rows, resolved)| (rows, notes, resolved, stops))
 }
 
@@ -234,13 +250,17 @@ fn term(column: &str, op: Comparing, value: &str) -> Predicate {
 /// constructor taking the value.
 type Comparing = fn(String) -> PredicateOp;
 
-fn with(filter: Expr, use_statistics: bool, jobs: usize) -> QueryOptions {
-    QueryOptions {
-        filter,
-        use_statistics,
-        parallelism: Parallelism::workers(jobs, 1 << 30),
-        ..QueryOptions::default()
+/// `filter` read with statistics or without, its replay cut for `jobs`.
+fn with(filter: Expr, use_statistics: bool, jobs: usize) -> Query {
+    Query {
+        options: QueryOptions { filter, use_statistics, ..QueryOptions::default() },
+        replay: Parallelism::workers(jobs, 1 << 30),
     }
+}
+
+/// `query` with its options changed by `change`.
+fn changed(query: Query, change: impl FnOnce(QueryOptions) -> QueryOptions) -> Query {
+    Query { options: change(query.options), ..query }
 }
 
 /// The literals a column's terms compare against: its stored bounds and
@@ -365,11 +385,9 @@ async fn check(
     tally: &mut Tally,
 ) {
     for jobs in [1, SPLIT_JOBS] {
-        let options = |use_statistics| QueryOptions {
-            filter: filter.clone(),
-            use_statistics,
-            parallelism: Parallelism::workers(jobs, 1 << 30),
-            ..base.clone()
+        let options = |use_statistics| Query {
+            options: QueryOptions { filter: filter.clone(), use_statistics, ..base.clone() },
+            replay: Parallelism::workers(jobs, 1 << 30),
         };
         let reference = attempt_in(dump, plain, database, table, options(false)).await;
         // A TimescaleDB chunk whose rows are compressed refuses, and so does
@@ -771,8 +789,9 @@ async fn a_plan_bounds_its_rows_by_the_groups_its_pruning_kept() {
             (with(filter.clone(), false, SPLIT_JOBS), block.row_count, 0),
             (with(Expr::all(Vec::new()), true, SPLIT_JOBS), block.row_count, 0),
         ] {
-            let what = format!("pg_dump {version} under {:?}", options.filter);
-            let plan = table.plan(ReadOptions::default(), options).unwrap();
+            let what = format!("pg_dump {version} under {:?}", options.options.filter);
+            let Query { options, replay } = options;
+            let plan = table.plan(ReadOptions::default(), options, &arranged_as(replay)).unwrap();
             assert_eq!(plan.kept_rows(), expected, "{what}");
             assert_eq!(plan.kept_value_bytes()[0], Some(ids[kept]), "{what}: id");
             assert_eq!(plan.kept_value_bytes()[8], Some(low_card[kept]), "{what}: low_card");
@@ -808,9 +827,9 @@ async fn collated_text_prunes_by_its_bytewise_bounds_in_datafusion_semantics_alo
         let filter = Expr::all([term("default_text", PredicateOp::Ge, "a")]);
         for semantics in [ComparisonSemantics::Postgres, ComparisonSemantics::DataFusion] {
             for jobs in [1, SPLIT_JOBS] {
-                let options = |use_statistics| QueryOptions {
-                    semantics,
-                    ..with(filter.clone(), use_statistics, jobs)
+                let options = |use_statistics| {
+                    let query = with(filter.clone(), use_statistics, jobs);
+                    changed(query, |options| QueryOptions { semantics, ..options })
                 };
                 let cache = cache::colocated_path(&dump);
                 let (rows, notes, ..) =
@@ -863,9 +882,9 @@ async fn an_enum_is_pruned_by_the_set_of_bounds_in_the_order_asked_for() {
             let leaf = term("v_mood", op, literal);
             let what = format!("pg_dump {version}, {semantics:?}, {} {literal}", leaf.op.symbol());
             let filter = Expr::all([leaf]);
-            let options = |use_statistics| QueryOptions {
-                semantics,
-                ..with(filter.clone(), use_statistics, 1)
+            let options = |use_statistics| {
+                let query = with(filter.clone(), use_statistics, 1);
+                changed(query, |options| QueryOptions { semantics, ..options })
             };
             let cache = cache::colocated_path(&dump);
             let (answered, notes, ..) =
@@ -915,10 +934,9 @@ async fn a_term_reads_the_set_gathering_stored_under_the_kind_it_compares_by() {
                 leaf.op.symbol()
             );
             let filter = Expr::all([leaf]);
-            let options = |use_statistics| QueryOptions {
-                semantics,
-                schema_mode,
-                ..with(filter.clone(), use_statistics, 1)
+            let options = |use_statistics| {
+                let query = with(filter.clone(), use_statistics, 1);
+                changed(query, |options| QueryOptions { semantics, schema_mode, ..options })
             };
             let cache = cache::colocated_path(&dump);
             let (answered, notes, ..) =
@@ -1135,9 +1153,9 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
         read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
         ..ScanOptions::default()
     };
-    let plan = async |options: QueryOptions| {
+    let plan = async |query: Query| {
         let source: Arc<dyn ByteRangeSource> = Arc::clone(&source) as _;
-        planned(source, &cache, None, "public.ordered", scan, options).await.unwrap().unwrap()
+        planned(source, &cache, None, "public.ordered", scan, query).await.unwrap().unwrap()
     };
     let assert_undeep = |what: &str| {
         let starts = std::mem::take(&mut *source.starts.lock().unwrap());
@@ -1146,10 +1164,9 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
         assert!(inside.is_empty(), "{what}: read at {inside:?}");
     };
 
-    let split = QueryOptions {
-        filter: filter.clone(),
-        parallelism: Parallelism::workers(SPLIT_JOBS, 1 << 30),
-        ..QueryOptions::default()
+    let split = Query {
+        options: QueryOptions { filter: filter.clone(), ..QueryOptions::default() },
+        replay: Parallelism::workers(SPLIT_JOBS, 1 << 30),
     };
     let split = plan(split).await;
     for mut stream in (0..split.len()).map(|i| split.stream(i, 8192)) {
@@ -1179,7 +1196,7 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
     for (filter, max_rows, expected) in [(filter, 13, 39 + 501), (straddling, 1, 1 + 101)] {
         let options =
             QueryOptions { filter, projection: Some(vec!["id".into()]), ..QueryOptions::default() };
-        let planned = plan(options.clone()).await;
+        let planned = plan(options.clone().into()).await;
         let mut token = None;
         let mut rows = 0;
         loop {

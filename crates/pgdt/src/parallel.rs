@@ -221,6 +221,18 @@ impl Discovered<'_> {
     /// `docs/design/decisions.md`, "D85"). A pass holding none passes `0`
     /// ([`Discovered::resolve_pass`]).
     pub(crate) fn resolve(&self, source: &dyn ByteRangeSource, held: u64) -> Resolved {
+        self.resolve_carving(source, held, 0)
+    }
+
+    /// [`Discovered::resolve`], carving `line_charge` — the charge of the
+    /// longest line a read over mapped blocks will hold — before the readers
+    /// (`pgdt_io::ArrangementRequest::line_charge`).
+    fn resolve_carving(
+        &self,
+        source: &dyn ByteRangeSource,
+        held: u64,
+        line_charge: u64,
+    ) -> Resolved {
         // A stated `--memory` replaces the discovered allowance rather than
         // bypassing the reserve and the margin: one carving, whichever end
         // the allowance came from. With neither, a machine that has said
@@ -229,7 +241,11 @@ impl Discovered<'_> {
         // nothing, the library's default capping a source's charge
         // (`docs/design/decisions.md`, "D11", "D85").
         let allowance = self.args.memory.map_or_else(|| self.found.clone(), Allowance::Stated);
-        let request = ArrangementRequest { held, ..ArrangementRequest::of(source, self.args.jobs) };
+        let request = ArrangementRequest {
+            held,
+            line_charge,
+            ..ArrangementRequest::of(source, self.args.jobs)
+        };
         let arrangement = Arrangement::resolve(&allowance, request);
         let asks = request.worker_memory.filter(|memory| !memory.is_zero()).map(|memory| {
             memory.at(arrangement.recommended_jobs().unwrap_or(arrangement.parallelism().jobs()))
@@ -240,12 +256,27 @@ impl Discovered<'_> {
     /// **`query`'s passes, each carved around what it holds**: the mapping
     /// pass around the statistics a loaded cache hands it, `held` its index's
     /// heap, and the replay — carved only once that pass has settled the
-    /// table — around the settled table's, which the table and its plan keep
-    /// (`pgdt_query::TablePartitions::under`). Each from the one allowance
-    /// with nothing drawn, since the two never run at once and the map is
-    /// gone before a row is read (`docs/design/decisions.md`, "D85").
+    /// table ([`Discovered::resolve_replay`]) — around the settled table's,
+    /// which the table and its plan keep (`pgdt_query::TablePartitions::under`).
+    /// Each from the one allowance with nothing drawn, since the two never
+    /// run at once and the map is gone before a row is read
+    /// (`docs/design/decisions.md`, "D85").
     pub(crate) fn resolve_pass(&self, source: &dyn ByteRangeSource, held: u64) -> QueryPass {
-        QueryPass { resolved: self.resolve(source, held), held }
+        self.resolve_replay(source, held, 0)
+    }
+
+    /// **`query`'s replay**, carved as [`Discovered::resolve_pass`] carves a
+    /// pass and around `line_charge` too, the charge of the longest line the
+    /// settled table's blocks hold at its query's factor
+    /// (`pgdt_query::Table::line_charge`), so that line is admitted without
+    /// waiting on its readers (`docs/design/decisions.md`, "D157").
+    pub(crate) fn resolve_replay(
+        &self,
+        source: &dyn ByteRangeSource,
+        held: u64,
+        line_charge: u64,
+    ) -> QueryPass {
+        QueryPass { resolved: self.resolve_carving(source, held, line_charge), held, line_charge }
     }
 }
 
@@ -253,12 +284,14 @@ impl Discovered<'_> {
 /// statistics heap it was carved around ([`Discovered::resolve_pass`]).
 pub(crate) struct QueryPass {
     /// The mapping pass's in [`pgdt_dump::ScanOptions::parallelism`], its
-    /// count and budget on its own `scan started` line; the replay's in
-    /// [`pgdt_query::QueryOptions::parallelism`], which `resolved the
-    /// arrangement` announces and a plan note's origin clause quotes.
+    /// count and budget on its own `scan started` line; the replay's handed
+    /// whole to [`pgdt_query::Table::plan`], which `resolved the arrangement`
+    /// announces and a plan note's origin clause quotes.
     pub(crate) resolved: Resolved,
     /// The statistics heap the pass holds while it runs.
     held: u64,
+    /// The longest line's charge the replay was carved around.
+    line_charge: u64,
 }
 
 impl QueryPass {
@@ -282,12 +315,13 @@ impl QueryPass {
 
     /// The replay's `resolved the arrangement`, said once the mapping pass
     /// has settled the table and the replay is carved: [`Resolved::announce`],
-    /// with `held_bytes=` where the settled table holds statistics. Said once,
+    /// with `held_bytes=` where the settled table holds statistics and
+    /// `line_bytes=` where its longest line was carved. Said once,
     /// after the pass: before it the line would name a count the held
     /// statistics may lower, and the pass's own carve is printed where the
     /// pass maps nothing.
     pub(crate) fn announce_replay(&self) {
-        self.resolved.announce_holding(self.held);
+        self.resolved.announce_holding(self.held, self.line_charge);
     }
 }
 
@@ -452,25 +486,26 @@ impl Resolved {
     /// (`RT8`), or the library's default where that cannot be read
     /// (`docs/design/decisions.md`, "D64").
     pub(crate) fn announce(&self) {
-        self.announce_holding(0);
+        self.announce_holding(0, 0);
     }
 
     /// [`Resolved::announce`], naming `held` as `held_bytes=` where the pass
-    /// was carved around statistics it holds.
-    fn announce_holding(&self, held: u64) {
+    /// was carved around statistics it holds, and `line` as `line_bytes=`
+    /// where it was carved around its longest line.
+    fn announce_holding(&self, held: u64, line: u64) {
         let (jobs, memory_bytes) = (self.jobs_display(), self.budget_display());
         let statistics_bytes = self.statistics_allowance_display();
-        if held == 0 {
-            tracing::info!(%jobs, %memory_bytes, %statistics_bytes, "resolved the arrangement");
-        } else {
-            tracing::info!(
-                %jobs,
-                %memory_bytes,
-                %statistics_bytes,
-                held_bytes = held,
-                "resolved the arrangement",
-            );
-        }
+        // A field `None` names is left off the line.
+        let held_bytes = (held > 0).then_some(held);
+        let line_bytes = (line > 0).then_some(line);
+        tracing::info!(
+            %jobs,
+            %memory_bytes,
+            %statistics_bytes,
+            held_bytes,
+            line_bytes,
+            "resolved the arrangement",
+        );
     }
 }
 

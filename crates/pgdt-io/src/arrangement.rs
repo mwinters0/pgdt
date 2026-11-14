@@ -148,10 +148,10 @@ impl ArrangementRequest {
 /// [`Parallelism`], what a gathering pass's statistics may hold, the
 /// [`Ledger`] its held lines draw from, and where the allowance came from.
 ///
-/// **No `Default`, and no constructor but [`Self::resolve`]**, so no caller
-/// pairs a parallelism with an allowance or a ledger not carved from it: a
-/// parallelism stated alone is `Allowance::NoneFound` with `Jobs::Stated`,
-/// declining nothing (`docs/design/decisions.md`, "D1", "D83"). A clone shares
+/// **No `Default`, and no constructor but [`Self::resolve`]** — a test's
+/// aside, behind `test-support` — so no caller pairs a parallelism with an
+/// allowance or a ledger not carved from it: a parallelism stated alone is
+/// `Allowance::NoneFound` with `Jobs::Stated`, declining nothing (`docs/design/decisions.md`, "D1", "D83"). A clone shares
 /// its ledger, being the same run's.
 #[derive(Debug, Clone)]
 pub struct Arrangement {
@@ -285,6 +285,23 @@ impl Arrangement {
     /// one per resolution, which every clone shares.
     pub fn ledger(&self) -> &Ledger {
         &self.ledger
+    }
+}
+
+/// **`parallelism` as an arrangement under [`Allowance::NoneFound`]**, its
+/// ledger without limit and its statistics declining nothing, as
+/// [`Arrangement::resolve`] makes one of a stated count there — but at the
+/// budget `parallelism` states, which no resolution under no allowance
+/// carves. A test's seam, never an embedder's: what a test above this crate
+/// plans a replay's cut under.
+#[cfg(feature = "test-support")]
+pub fn arrangement_of(parallelism: Parallelism) -> Arrangement {
+    Arrangement {
+        parallelism,
+        allowance: Allowance::NoneFound,
+        recommended_jobs: None,
+        statistics_allowance: None,
+        ledger: Ledger::unlimited(),
     }
 }
 

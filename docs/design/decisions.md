@@ -7,7 +7,7 @@ in its topic's file under `decisions/`, which opens with what the topic is and i
 index and the citation target: cite as `docs/design/decisions.md`, "D12". The rules, the caps and the meter included,
 are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D159 -->
+<!-- decision-watermark: D160 -->
 
 ## I/O, memory and parallelism
 [`decisions/io.md`](decisions/io.md)
@@ -16,6 +16,7 @@ are `docs/process.md`, "The decision register".
 - **D3** The memory constants, and what each one is
 - **D83** `--memory` states what the process may hold; one carving serves stated and discovered
 - **D157** A run's held lines draw from one ledger its arrangement carves, waiting in file order
+- **D160** A read over mapped blocks carves its longest line at its query's factor, then plans under that arrangement
 - **D4** A budget is solved against a source's cost, never divided by it
 - **D5** A wait is a permission the read loop grants
 - **D6** `ByteRangeSource` mirrors `object_store` and is dyn-compatible

@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use datafusion::catalog::Session;
 use datafusion::execution::memory_pool::MemoryLimit;
 use datafusion::prelude::SessionContext;
-use pgdt_io::{Allowance, Arrangement, ArrangementRequest, Jobs, Parallelism, WorkerMemory};
+use pgdt_io::{Allowance, Arrangement, ArrangementRequest, Jobs, WorkerMemory};
 
 /// What the pgdump scans of one DataFusion session may hold resident between
 /// them, and how much of it the scans running now have drawn.
@@ -150,8 +150,13 @@ impl ScanBudget {
     /// pool's finite limit, [`pool_limit`] — leave of `stated`, else of this
     /// budget's own allowance, affords, at what that many spend less whatever
     /// of the holdings the margin cannot fit beside them
-    /// ([`Arrangement::resolve`]). Held until the returned [`Draw`]
-    /// drops, which keeps the [`BudgetAccount`] of what it was carved from.
+    /// ([`Arrangement::resolve`]), `line_charge` — the scan's longest line
+    /// at its query's factor (`pgdt_query::Table::line_charge`) — carved
+    /// before its readers. **The scan's ledger is carved here**, inside its
+    /// draw, from what the margin's ceiling leaves its budget and the live
+    /// scans' (`docs/design/decisions.md`, "D157"). Held until the returned
+    /// [`Draw`] drops, which keeps the arrangement and the [`BudgetAccount`]
+    /// of what it was carved from.
     ///
     /// Deficiency register: `deficiency: KD38` — first planned, first served:
     /// a join plans both its tables before either runs, so the first can take
@@ -167,6 +172,7 @@ impl ScanBudget {
         memory: Option<WorkerMemory>,
         pool: u64,
         stated: Option<u64>,
+        line_charge: u64,
     ) -> Draw {
         let mut held = self.held.lock().unwrap();
         let allowance = stated.map_or_else(|| self.allowance.clone(), Allowance::Setting);
@@ -176,18 +182,16 @@ impl ScanBudget {
             drawn: held.scans,
             held: held.maps.saturating_add(pool),
             carve_estimate: true,
-            // A scan's plan is handed no ledger yet, so none carves its
-            // longest line.
-            line_charge: 0,
+            line_charge,
         };
-        let parallelism = Arrangement::resolve(&allowance, request).parallelism();
+        let arrangement = Arrangement::resolve(&allowance, request);
         // Nothing found draws on `DEFAULT_MEMORY_BUDGET`, the session's
         // estimate there (`docs/design/decisions.md`, "D11").
-        let bytes = parallelism.memory_bytes().unwrap_or(0);
+        let bytes = arrangement.parallelism().memory_bytes().unwrap_or(0);
         let account =
             BudgetAccount { allowance, pool_limit: pool, resident: held.maps, drawn: held.scans };
         held.scans += bytes;
-        Draw { budget: Arc::clone(self), bytes, parallelism, account }
+        Draw { budget: Arc::clone(self), bytes, arrangement, account }
     }
 
     /// The budget `state` carries, or the process's own where a session was
@@ -255,14 +259,21 @@ impl Drop for Hold {
 pub(crate) struct Draw {
     budget: Arc<ScanBudget>,
     bytes: u64,
-    parallelism: Parallelism,
+    arrangement: Arrangement,
     account: BudgetAccount,
 }
 
 impl Draw {
-    /// The arrangement the scan runs under.
-    pub(crate) fn parallelism(&self) -> Parallelism {
-        self.parallelism
+    /// The arrangement the scan runs under: its parallelism, and the ledger
+    /// its held lines draw on.
+    pub(crate) fn arrangement(&self) -> &Arrangement {
+        &self.arrangement
+    }
+
+    /// Its parallelism.
+    #[cfg(test)]
+    fn parallelism(&self) -> pgdt_io::Parallelism {
+        self.arrangement.parallelism()
     }
 
     /// What the scan's budget was carved from.
@@ -283,6 +294,7 @@ mod tests {
     use super::*;
     use datafusion::execution::runtime_env::RuntimeEnvBuilder;
     use datafusion::prelude::{SessionConfig, SessionContext};
+    use pgdt_io::Parallelism;
 
     /// **The session's holdings come off the margin's ceiling, and off a
     /// budget only where the count cannot fall**: a resident map, or a pool
@@ -297,29 +309,29 @@ mod tests {
         let allowance = 10u64 << 30;
 
         let alone = Arc::new(ScanBudget::new(allowance));
-        assert_eq!(alone.draw(24, memory, 0, None).parallelism().jobs(), 7);
+        assert_eq!(alone.draw(24, memory, 0, None, 0).parallelism().jobs(), 7);
 
         let mapped = Arc::new(ScanBudget::new(allowance));
         let _map = mapped.hold(2 << 30);
         let pooled = Arc::new(ScanBudget::new(allowance));
         let scanned = Arc::new(ScanBudget::new(allowance));
-        let _scan = scanned.draw(2, memory, 0, None);
+        let _scan = scanned.draw(2, memory, 0, None, 0);
         for budget in [&mapped, &pooled, &scanned] {
             let pool = if Arc::ptr_eq(budget, &pooled) { 2 << 30 } else { 0 };
-            let draw = budget.draw(24, memory, pool, None);
+            let draw = budget.draw(24, memory, pool, None, 0);
             assert_eq!(draw.parallelism().jobs(), 5);
             assert_eq!(draw.parallelism().memory_bytes(), Some(5 * per_worker));
         }
 
         let full = Arc::new(ScanBudget::new(allowance));
         let _map = full.hold(allowance);
-        let draw = full.draw(4, memory, 0, None);
+        let draw = full.draw(4, memory, 0, None, 0);
         assert_eq!(draw.parallelism(), Parallelism::Serial { memory_bytes: Some(0) });
         assert_eq!(full.drawn(), 0);
 
         let drained = Arc::new(ScanBudget::new(allowance));
-        let _all = drained.draw(24, Some(WorkerMemory::per_worker(allowance)), 0, None);
-        let starved = drained.draw(4, memory, 0, None);
+        let _all = drained.draw(24, Some(WorkerMemory::per_worker(allowance)), 0, None, 0);
+        let starved = drained.draw(4, memory, 0, None, 0);
         assert_eq!(starved.parallelism(), Parallelism::Serial { memory_bytes: Some(0) });
     }
 
@@ -331,18 +343,18 @@ mod tests {
         let per_worker = 1u64 << 30;
         let memory = Some(WorkerMemory::per_worker(per_worker));
         let budget = Arc::new(ScanBudget::new(10 << 30));
-        assert_eq!(budget.draw(24, memory, 0, None).parallelism().jobs(), 7);
-        assert_eq!(budget.draw(24, memory, 0, Some(20 << 30)).parallelism().jobs(), 15);
-        let first = budget.draw(24, memory, 0, Some(5 << 30));
+        assert_eq!(budget.draw(24, memory, 0, None, 0).parallelism().jobs(), 7);
+        assert_eq!(budget.draw(24, memory, 0, Some(20 << 30), 0).parallelism().jobs(), 15);
+        let first = budget.draw(24, memory, 0, Some(5 << 30), 0);
         assert_eq!(first.parallelism().jobs(), 3);
         assert_eq!(budget.drawn(), 3 * per_worker);
         // The live draw comes off the next one's, whichever allowance it is.
-        assert_eq!(budget.draw(24, memory, 0, None).parallelism().jobs(), 4);
+        assert_eq!(budget.draw(24, memory, 0, None, 0).parallelism().jobs(), 4);
         assert_eq!(budget.allowance(), &Allowance::Stated(10 << 30));
 
         let unfound =
             Arc::new(ScanBudget { allowance: Allowance::NoneFound, held: Mutex::default() });
-        let stated = unfound.draw(24, memory, 0, Some(10 << 30));
+        let stated = unfound.draw(24, memory, 0, Some(10 << 30), 0);
         assert_eq!(stated.parallelism().jobs(), 7);
         assert_eq!(unfound.drawn(), 7 * per_worker);
     }
@@ -362,18 +374,18 @@ mod tests {
             Arc::new(ScanBudget { allowance: Allowance::NoneFound, held: Mutex::default() });
         let _map = unfound.hold(1 << 30);
 
-        let first = unfound.draw(24, memory, 1 << 30, None);
+        let first = unfound.draw(24, memory, 1 << 30, None, 0);
         assert_eq!(first.parallelism(), Parallelism::workers(2, 2 * per_worker));
         let left = DEFAULT_MEMORY_BUDGET - 2 * per_worker;
-        let second = unfound.draw(24, memory, 0, None);
+        let second = unfound.draw(24, memory, 0, None, 0);
         assert_eq!(second.parallelism(), Parallelism::workers(1, left));
         assert_eq!(unfound.drawn(), DEFAULT_MEMORY_BUDGET);
-        let starved = unfound.draw(4, None, 0, None);
+        let starved = unfound.draw(4, None, 0, None, 0);
         assert_eq!(starved.parallelism(), Parallelism::workers(4, 0));
 
         drop((first, second, starved));
         assert_eq!(unfound.drawn(), 0);
-        let plain = unfound.draw(4, None, 0, None);
+        let plain = unfound.draw(4, None, 0, None, 0);
         assert_eq!(plain.parallelism(), Parallelism::workers(4, DEFAULT_MEMORY_BUDGET));
     }
 
@@ -385,9 +397,12 @@ mod tests {
     fn a_draw_s_allowance_keeps_its_origin() {
         let stated = Arc::new(ScanBudget::new(10 << 30));
         assert_eq!(stated.allowance(), &Allowance::Stated(10 << 30));
-        let draw = stated.draw(2, None, 0, Some(4 << 30));
+        let draw = stated.draw(2, None, 0, Some(4 << 30), 0);
         assert_eq!(draw.account().allowance, Allowance::Setting(4 << 30));
-        assert_eq!(stated.draw(2, None, 0, None).account().allowance, Allowance::Stated(10 << 30));
+        assert_eq!(
+            stated.draw(2, None, 0, None, 0).account().allowance,
+            Allowance::Stated(10 << 30)
+        );
     }
 
     /// **A draw's account is what the budget held when it drew**: the pool's
@@ -399,7 +414,7 @@ mod tests {
         let memory = Some(WorkerMemory::per_worker(per_worker));
         let budget = Arc::new(ScanBudget::new(10 << 30));
         let _map = budget.hold(1 << 20);
-        let first = budget.draw(2, memory, 0, None);
+        let first = budget.draw(2, memory, 0, None, 0);
         assert_eq!(
             first.account(),
             &BudgetAccount {
@@ -409,9 +424,31 @@ mod tests {
                 drawn: 0,
             }
         );
-        let second = budget.draw(2, memory, 128 << 20, None);
+        let second = budget.draw(2, memory, 128 << 20, None, 0);
         assert_eq!(second.account().pool_limit, 128 << 20);
         assert_eq!(second.account().drawn, 2 * per_worker);
+    }
+
+    /// **A scan's ledger is carved inside its draw, around its longest
+    /// line**: readers that would leave it less than the line are fewer, so
+    /// the line fits its room, and the live scans' budgets come off that room
+    /// as they come off the count (`docs/design/decisions.md`, "D157").
+    #[test]
+    fn a_draw_carves_its_scan_s_ledger_around_its_longest_line() {
+        let per_worker = 1u64 << 30;
+        let memory = Some(WorkerMemory::per_worker(per_worker));
+        let line = 2 << 30;
+        let budget = Arc::new(ScanBudget::new(10 << 30));
+        let bare = budget.draw(24, memory, 0, None, 0);
+        assert!(bare.arrangement().ledger().capacity().unwrap() < line);
+        drop(bare);
+        let lined = budget.draw(24, memory, 0, None, line);
+        assert!(lined.arrangement().ledger().capacity().unwrap() >= line);
+        assert!(lined.parallelism().jobs() < 7, "fewer readers than the line's absence affords");
+        let later = budget.draw(24, memory, 0, None, 0);
+        let room = later.arrangement().ledger().capacity().unwrap();
+        let alone = Arc::new(ScanBudget::new(10 << 30)).draw(24, memory, 0, None, 0);
+        assert!(room <= alone.arrangement().ledger().capacity().unwrap());
     }
 
     /// A pool stating a `Finite` limit bills that limit; the default,

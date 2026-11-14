@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::{self, CacheMode, Held};
-use pgdt_io::{Allowance, Arrangement, ArrangementRequest, ByteRangeSource, Jobs, LocalFileSource};
+use pgdt_io::{
+    Allowance, Arrangement, ArrangementRequest, ByteRangeSource, Jobs, LocalFileSource, Parallelism,
+};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{DataBlock, PostgresInvalidValues, SpanBody};
@@ -26,6 +28,14 @@ pub fn arranged(jobs: usize) -> Arrangement {
         ..ArrangementRequest::recommended(jobs, None)
     };
     Arrangement::resolve(&Allowance::NoneFound, request)
+}
+
+/// `parallelism` stated under no allowance, at the budget it states, a ledger
+/// without limit: what a test plans a replay's cut under
+/// (`pgdt_query::Table::plan`), stating the count and budget the cut is
+/// solved against, as a mapping pass's `ScanOptions` state them.
+pub fn arranged_as(parallelism: Parallelism) -> Arrangement {
+    pgdt_io::internal::arrangement_of(parallelism)
 }
 
 /// `fixture` copied into a directory of its own under `dir`, beside the

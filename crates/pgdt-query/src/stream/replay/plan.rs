@@ -17,7 +17,7 @@ use pgdt_codec::{
 use pgdt_core::CopyHeader;
 use pgdt_core::{Error, Result};
 use pgdt_dump::ReadOptions;
-use pgdt_io::{ByteRangeSource, Partitioning};
+use pgdt_io::{ByteRangeSource, Parallelism, Partitioning};
 use pgdt_model::{
     ArrayShape, CopyBlock, DumpMetadata, Unrepresentable, UnrepresentableTier, union_census,
 };
@@ -47,6 +47,10 @@ pub(in crate::stream) struct ReplayPlan {
     /// The chunk and the line limit every piece of the replay reads with.
     pub(in crate::stream) read: ReadOptions,
     pub(in crate::stream) query_options: QueryOptions,
+    /// The count and budget the replay was carved, its arrangement's: what
+    /// the cut is solved against and each sub-stream announces to the source
+    /// (`docs/design/decisions.md`, "D83").
+    pub(in crate::stream) parallelism: Parallelism,
     pub(in crate::stream) metadata: Option<Arc<DumpMetadata>>,
     /// The database every matched block is in — the one their spans record,
     /// a table's blocks sharing it (`docs/design/decisions.md`, "D49").
@@ -91,6 +95,7 @@ impl ReplayPlan {
     pub(in crate::stream) fn new(
         read: ReadOptions,
         query_options: QueryOptions,
+        parallelism: Parallelism,
         database: Option<String>,
         table: &str,
         matches: &[CopyBlock],
@@ -119,6 +124,7 @@ impl ReplayPlan {
         Ok(Self {
             read,
             query_options,
+            parallelism,
             metadata,
             database,
             table,
@@ -149,7 +155,7 @@ impl ReplayPlan {
     /// grows with it (`docs/design/decisions.md`, "D154"). What a held line
     /// draws beside its bytes ([`replay`](super::replay)).
     pub(in crate::stream) fn factor(&self) -> Option<Factor> {
-        self.blocks.values().flat_map(PlannedBlock::factors).reduce(Factor::max)
+        query_factor(&self.blocks)
     }
 
     /// The segments that replay `block` whole, or the runs of groups its
@@ -165,6 +171,40 @@ impl ReplayPlan {
             )];
         };
         kept.iter().map(|run| Segment::over(block, run.clone())).collect()
+    }
+}
+
+/// The largest of `blocks`' decode and key factors ([`ReplayPlan::factor`]).
+fn query_factor(blocks: &BTreeMap<u64, PlannedBlock>) -> Option<Factor> {
+    blocks.values().flat_map(PlannedBlock::factors).reduce(Factor::max)
+}
+
+/// **What a line holding `held` bytes past its chunk term draws** under a
+/// query's one `factor`: its bytes and what its batch decodes beside them
+/// (`docs/design/decisions.md`, "D159") — the one formula a replay's draw and
+/// its arrangement's line charge are both read off.
+pub(in crate::stream) fn charged(factor: Option<Factor>, held: u64) -> u64 {
+    held.saturating_add(factor.map_or(0, |f| f.of(held)))
+}
+
+/// **The charge of the longest line a read of `matches` holds**, its pieces
+/// read `chunk` bytes at a time, under the factor `blocks` — `matches`
+/// planned for its query — fold to: what that line draws once it outgrows its
+/// chunk, its length as I71 measures it held whole, and nothing where every
+/// block's longest line fits its chunk, which no reader draws for
+/// (`docs/design/decisions.md`, "D160").
+pub(in crate::stream) fn line_charge(
+    blocks: &BTreeMap<u64, PlannedBlock>,
+    matches: &[CopyBlock],
+    chunk: usize,
+) -> u64 {
+    let Some(longest) = matches.iter().filter_map(|block| block.longest_line).map(|l| l.len).max()
+    else {
+        return 0;
+    };
+    match longest > chunk as u64 {
+        true => charged(query_factor(blocks), longest),
+        false => 0,
     }
 }
 
@@ -856,6 +896,7 @@ pub(in crate::stream) struct PlannedReplay {
 
 /// The plan and the sub-streams' segments for replaying `matches`: what
 /// [`Table::plan`](crate::Table::plan) plans.
+#[allow(clippy::too_many_arguments)]
 pub(in crate::stream) fn plan_replay(
     source: &dyn ByteRangeSource,
     database: Option<String>,
@@ -864,8 +905,10 @@ pub(in crate::stream) fn plan_replay(
     metadata: Option<Arc<DumpMetadata>>,
     read: ReadOptions,
     query_options: QueryOptions,
+    parallelism: Parallelism,
 ) -> Result<PlannedReplay> {
-    let mut plan = ReplayPlan::new(read, query_options, database, table, matches, metadata)?;
+    let mut plan =
+        ReplayPlan::new(read, query_options, parallelism, database, table, matches, metadata)?;
     // What an instrumented binary reports of the plan (`long-line-resident`'s
     // legs read it there rather than restating it).
     #[cfg(feature = "introspect")]
@@ -874,7 +917,7 @@ pub(in crate::stream) fn plan_replay(
         source,
         matches,
         &plan.kept,
-        plan.query_options.parallelism,
+        plan.parallelism,
         plan.query_options.max_source_span,
         plan.read.chunk_size_bytes,
     );

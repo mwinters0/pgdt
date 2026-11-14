@@ -37,6 +37,7 @@ async fn the_filter_is_resolved_once_per_block_at_plan_time() {
         ReplayPlan::new(
             ReadOptions::default(),
             query_options.clone(),
+            pgdt_io::Parallelism::default(),
             database.clone(),
             &first.header.qualified_name(),
             &matches,

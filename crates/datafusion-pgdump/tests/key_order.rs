@@ -85,7 +85,8 @@ async fn read(dump: &Path, table: &str, schema_mode: SchemaMode) -> (ResolvedSch
     let settled =
         Table::settle(opened, &selector, scan.read, &arranged(1), extent, schema_mode, &token)
             .await;
-    let plan = settled.unwrap().expect("the fixture's table").plan(scan.read, options).unwrap();
+    let settled = settled.unwrap().expect("the fixture's table");
+    let plan = settled.plan(scan.read, options, &arranged(1)).unwrap();
     let mut stream = plan.in_file_order(8192);
     let mut batches = Vec::new();
     while let Some(batch) = stream.next().await {

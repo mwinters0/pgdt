@@ -439,6 +439,29 @@ fn the_replay_s_line_names_the_statistics_it_holds() {
     assert_eq!(line, rendered(|| bare.resolved.announce()));
 }
 
+/// **The replay carves its longest line and names it**: a charge the
+/// readers would otherwise leave no room for lowers the count, the ledger
+/// holds it, and `resolved the arrangement` names it as `line_bytes=`,
+/// beside `held_bytes=` where both are carved.
+#[test]
+fn the_replay_carves_its_longest_line_and_names_it() {
+    let reader = Recommends::reader(24, READER);
+    let flagless = ParallelArgs { jobs: None, memory: None }.found(v2_limit());
+    let bare = flagless.resolve_replay(&reader, 0, 0);
+    let room = bare.resolved.arrangement().ledger().capacity().unwrap();
+    let line = room + 1;
+    let lined = flagless.resolve_replay(&reader, 0, line);
+    assert!(lined.resolved.arrangement().ledger().capacity().unwrap() >= line);
+    assert!(lined.resolved.parallelism().jobs() < bare.resolved.parallelism().jobs());
+    let said = rendered(|| lined.announce_replay());
+    assert!(said.contains(&format!("line_bytes={line}")), "{said}");
+    assert!(!said.contains("held_bytes"), "{said}");
+    let both = flagless.resolve_replay(&reader, READER, line);
+    let said = rendered(|| both.announce_replay());
+    assert!(said.contains(&format!("held_bytes={READER} line_bytes={line}")), "{said}");
+    assert!(!rendered(|| bare.announce_replay()).contains("line_bytes"));
+}
+
 /// **The check `introspect` owes: the instrument must not move the plan it
 /// reports on.** It changes what the process *holds*, which is the point;
 /// what it must not change is what the process *resolves*.

@@ -220,7 +220,8 @@ impl TableProvider for PgDumpTable {
     }
 
     /// The replay planned now, against the session's `target_partitions` and
-    /// what the session's [`ScanBudget`] leaves, under the `pgdump.` settings
+    /// what the session's [`ScanBudget`] leaves, carved around its longest
+    /// line, under the `pgdump.` settings
     /// the session states now ([`PgDumpSettings`]); the partitions are streamed
     /// when DataFusion runs them. The projection is the library's by name, so
     /// an unprojected column is never decoded, and `filters` are the ones
@@ -245,6 +246,25 @@ impl TableProvider for PgDumpTable {
         // A table registered by hand reaches its session's budget only here.
         self.dump.bill(&budget);
         let settings = PgDumpSettings::of(state);
+        let schema = self.resolved.schema().fields();
+        // A filter that does not translate was not answered `Exact`, so
+        // DataFusion keeps it above the scan and it is not needed here.
+        let (answered, translated): (Vec<&Expr>, Vec<_>) = filters
+            .iter()
+            .filter_map(|filter| Some((filter, translate(filter, &self.resolved)?)))
+            .unzip();
+        let query_options = QueryOptions {
+            projection: projection
+                .map(|columns| columns.iter().map(|&i| schema[i].name().clone()).collect()),
+            filter: pgdt_query::Expr::And(translated),
+            ..query_options(&self.dump)
+        };
+        let refused = |err| self.dump.speller().external(err);
+        let read = settings.read_options();
+        // The longest line its blocks hold at its query's factor, carved
+        // inside the draw before its readers, its ledger the scan's own
+        // (`docs/design/decisions.md`, "D157").
+        let line_charge = self.table.line_charge(read, &query_options).map_err(refused)?;
         // deficiency: KD112 — the count asked for is the session's
         // `target_partitions`, the core count where nothing states one, on any
         // device: a plain source's recommendation of one
@@ -262,25 +282,10 @@ impl TableProvider for PgDumpTable {
             source.default_worker_memory(),
             pool_limit(state),
             settings.memory,
+            line_charge,
         ));
-        let parallelism = draw.parallelism();
-        let schema = self.resolved.schema().fields();
-        // A filter that does not translate was not answered `Exact`, so
-        // DataFusion keeps it above the scan and it is not needed here.
-        let (answered, translated): (Vec<&Expr>, Vec<_>) = filters
-            .iter()
-            .filter_map(|filter| Some((filter, translate(filter, &self.resolved)?)))
-            .unzip();
-        let query_options = QueryOptions {
-            projection: projection
-                .map(|columns| columns.iter().map(|&i| schema[i].name().clone()).collect()),
-            filter: pgdt_query::Expr::And(translated),
-            parallelism,
-            ..query_options(&self.dump)
-        };
-        let refused = |err| self.dump.speller().external(err);
         let partitions =
-            self.table.plan(settings.read_options(), query_options).map_err(refused)?;
+            self.table.plan(read, query_options, draw.arrangement()).map_err(refused)?;
         self.report_plan(partitions.plan_notes(), draw.account());
         let metrics = ScanMetrics::planned(partitions.plan_notes());
         let partitions = Arc::new(partitions);

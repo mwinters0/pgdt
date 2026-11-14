@@ -194,11 +194,11 @@ async fn run_evaluating(
     let options = QueryOptions {
         projection: Some(vec!["id".into()]),
         use_statistics,
-        parallelism: Parallelism::workers(jobs, 1 << 30),
         ..QueryOptions::default()
     };
     let table = opened.table(&name.into()).unwrap().unwrap();
-    let plan = table.plan(scan.read, options).unwrap();
+    let replay = pgdt_fixtures::arranged_as(Parallelism::workers(jobs, 1 << 30));
+    let plan = table.plan(scan.read, options, &replay).unwrap();
     let plan = Arc::new(plan);
     let dynamic = dynamic.map(|filter| plan.under(filter, evaluation));
     let (mut partitions, mut pruned, mut dropped, mut unread) = (Vec::new(), 0, 0, 0);
@@ -774,13 +774,11 @@ async fn read_both(
 ) -> Result<(Vec<i32>, u64), String> {
     let opened = opened(dump).await;
     let name = index.tables().into_iter().find(|t| t.qualified_name() == "public.t").unwrap();
-    let options = QueryOptions {
-        projection: Some(vec!["id".into(), "v".into()]),
-        parallelism: Parallelism::workers(1, 1 << 30),
-        ..QueryOptions::default()
-    };
+    let options =
+        QueryOptions { projection: Some(vec!["id".into(), "v".into()]), ..QueryOptions::default() };
     let table = opened.table(&name.into()).unwrap().unwrap();
-    let plan = table.plan(ReadOptions::default(), options).unwrap();
+    let replay = pgdt_fixtures::arranged_as(Parallelism::workers(1, 1 << 30));
+    let plan = table.plan(ReadOptions::default(), options, &replay).unwrap();
     let plan = Arc::new(plan);
     let mut stream = match dynamic {
         Some(filter) => plan.under(filter, RowEvaluation::On).stream(0, 64),
@@ -844,7 +842,7 @@ async fn a_row_the_state_reads_is_held_though_no_column_is() {
     let table = opened(&path).await.table(&name.into()).unwrap().unwrap();
     let options = QueryOptions { projection: Some(Vec::new()), ..QueryOptions::default() };
     let read = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
-    let plan = Arc::new(table.plan(read, options).unwrap());
+    let plan = Arc::new(table.plan(read, options, &arranged(1)).unwrap());
 
     for (dynamic, rows, dropped) in
         [(None, 20, 0), (Some(Moving::constant(term("id", PredicateOp::Gt, "10"))), 10, 10)]

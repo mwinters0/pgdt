@@ -76,7 +76,7 @@ async fn replay(
         ..QueryOptions::default()
     };
     let read = ReadOptions { chunk_size_bytes: chunk, ..ReadOptions::default() };
-    let plan = table.plan(read, options).unwrap();
+    let plan = table.plan(read, options, &pgdt_fixtures::arranged(1)).unwrap();
     // `5` resets the peak resident set to the current one (`proc(5)`).
     std::fs::write("/proc/self/clear_refs", "5").unwrap();
     let before = status_bytes("VmRSS:");

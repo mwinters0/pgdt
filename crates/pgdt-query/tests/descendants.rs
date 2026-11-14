@@ -234,13 +234,13 @@ async fn a_descendant_s_own_column_is_not_its_parent_s() {
     let projected =
         QueryOptions { projection: Some(vec!["breed".into()]), ..QueryOptions::default() };
     assert!(matches!(
-        animal.plan(ReadOptions::default(), projected).map(|_| ()),
+        animal.plan(ReadOptions::default(), projected, &pgdt_fixtures::arranged(1)).map(|_| ()),
         Err(Error::UnknownProjectionColumn { column, .. }) if column == "breed"
     ));
     let breed = Predicate { column: "breed".into(), op: PredicateOp::IsNotNull };
     let filtered = QueryOptions { filter: Expr::Term(breed), ..QueryOptions::default() };
     assert!(matches!(
-        animal.plan(ReadOptions::default(), filtered).map(|_| ()),
+        animal.plan(ReadOptions::default(), filtered, &pgdt_fixtures::arranged(1)).map(|_| ()),
         Err(Error::UnknownPredicateColumn { column, .. }) if column == "breed"
     ));
     let pet = dump.table(&TableSelector::named("pet").in_schema("public")).unwrap().unwrap();

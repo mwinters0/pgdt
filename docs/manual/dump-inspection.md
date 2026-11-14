@@ -1266,7 +1266,9 @@ each of its own lines is then prefixed `mapping{held_bytes=…}:`, what the
 cache's statistics hold. A query the cache already settles runs no mapping
 pass and prints none of them. `resolved the arrangement` comes after that
 pass, naming what the rows are read under, and where the table holds
-statistics it pays for those and ends `held_bytes=…`, what they hold. Two
+statistics it pays for those and ends `held_bytes=…`, what they hold; where
+the table's longest line is longer than a read chunk, it pays up front for
+holding that line while its row is decoded, and says so as `line_bytes=…`. Two
 things can still cut the count: a compressed dump whose largest block the
 budget cannot hold is read through the streaming decoder, and a gzip dump with
 no complete index through its first pass, each **serial whatever `--jobs`

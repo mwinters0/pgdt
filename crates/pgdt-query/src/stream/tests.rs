@@ -211,10 +211,8 @@ async fn a_replay_holds_no_block_s_statistics() {
 
     let dir = tempfile::tempdir().unwrap();
     let source = LocalFileSource::open(two_blocks(dir.path())).unwrap();
-    let query_options = QueryOptions {
-        parallelism: Parallelism::workers(4, pgdt_io::DEFAULT_MEMORY_BUDGET),
-        ..QueryOptions::default()
-    };
+    let query_options = QueryOptions::default();
+    let parallelism = Parallelism::workers(4, pgdt_io::DEFAULT_MEMORY_BUDGET);
     let index = pgdt_mapping::build_index(&source, &ScanOptions::default()).await.unwrap();
     let mut matches: Vec<CopyBlock> = index.blocks().cloned().collect();
     assert_eq!(matches.len(), 2);
@@ -237,6 +235,7 @@ async fn a_replay_holds_no_block_s_statistics() {
         index.metadata.clone(),
         ReadOptions::default(),
         query_options,
+        parallelism,
     )
     .unwrap();
     let serial: Vec<Segment> = matches.iter().flat_map(|block| plan.segments(block)).collect();

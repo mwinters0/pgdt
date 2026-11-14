@@ -148,7 +148,7 @@ mod parsed;
 mod refused;
 pub use answers::{Answer, Answers, Reading, answers, answers_path};
 #[cfg(feature = "mapping")]
-pub use parsed::{arranged, parsed_copy, ungathered};
+pub use parsed::{arranged, arranged_as, parsed_copy, ungathered};
 pub use refused::{REFUSED_FIELDS, RefusedField, refused_field};
 #[cfg(feature = "mapping")]
 pub use refused::{past_refused, sweep_request};

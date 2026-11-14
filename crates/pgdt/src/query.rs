@@ -277,7 +277,7 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     let report = |err: pgdt_core::Error| {
         if about_the_source(&err) { refusal(err, &origin) } else { name_taken_verbatim(err) }
     };
-    let mut query_options = QueryOptions {
+    let query_options = QueryOptions {
         schema_mode,
         unrepresentable,
         postgres_invalid_values,
@@ -312,18 +312,20 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     // The replay, carved now the pass is done: the map it extended is
     // gone, and what stays resident beside the replay's readers is the
     // settled table's statistics, which it and its plan keep
-    // (`docs/design/decisions.md`, "D85").
-    let replay = stated.resolve_pass(settled.source().as_ref(), statistics_held(&settled));
+    // (`docs/design/decisions.md`, "D85"), and the longest line its
+    // blocks hold, carved at its query's factor before the readers so it
+    // is admitted without waiting on them (D157).
+    let line_charge = settled.line_charge(read.options(), &query_options).map_err(&report)?;
+    let held = statistics_held(&settled);
+    let replay = stated.resolve_replay(settled.source().as_ref(), held, line_charge);
     replay.announce_replay();
     let replay = replay.resolved;
-    query_options.parallelism = replay.parallelism();
     // Partitioned, not serial: `Parallelism::Serial` — `--jobs 1` — is
     // one partition, so the serial path is reached through the same
-    // plan rather than branched to (D51).
-    let plan = settled.plan(read.options(), query_options).map_err(&report)?;
-    // Its held lines draw on the replay's own ledger, carved beside its
-    // parallelism (`docs/design/decisions.md`, "D157").
-    let plan = plan.drawing_on(replay.arrangement().ledger());
+    // plan rather than branched to (D51). Its held lines draw on the
+    // replay's own ledger, carved beside its parallelism.
+    let plan =
+        settled.plan(read.options(), query_options, replay.arrangement()).map_err(&report)?;
     // Known from the plan alone, before any block is read — unlike
     // `announce_comparisons` below, which waits on the first batch.
     announce_plan_notes(plan.plan_notes(), &replay);

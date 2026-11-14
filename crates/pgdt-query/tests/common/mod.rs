@@ -24,7 +24,7 @@ use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{ColumnResolution, ResolvedColumn, SchemaMode};
 use pgdt_dump::cache::{CacheMode, SourceWatch, StrictIdentity};
 use pgdt_dump::{ReadOptions, ScanOptions};
-use pgdt_io::ByteRangeSource;
+use pgdt_io::{ByteRangeSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{DumpIndex, PostgresInvalidValues};
@@ -73,16 +73,17 @@ pub fn selector(table: &str) -> TableSelector {
 
 /// A cold query's passes, as `pgdt query` runs them: the mapping pass's
 /// arrangement and extent, the cache it opens through, the database its
-/// selector names beside the table (`--database`), and the rows a batch of
-/// the replay holds. [`Cold::default`] is the serial pass stopping once its
-/// table is settled, writing no cache, in any database, at the batch `pgdt
-/// query` reads.
+/// selector names beside the table (`--database`), the replay's parallelism,
+/// and the rows a batch of the replay holds. [`Cold::default`] is the serial
+/// pass stopping once its table is settled, writing no cache, in any
+/// database, replayed serially at the batch `pgdt query` reads.
 #[derive(Debug, Clone)]
 pub struct Cold {
     pub scan: ScanOptions,
     pub extent: ScanExtent,
     pub cache: CacheMode,
     pub database: Option<String>,
+    pub replay: Parallelism,
     pub max_rows: usize,
 }
 
@@ -93,6 +94,7 @@ impl Default for Cold {
             extent: ScanExtent::UntilTargetSettled,
             cache: CacheMode::DISABLED,
             database: None,
+            replay: Parallelism::default(),
             max_rows: 8192,
         }
     }
@@ -121,7 +123,8 @@ impl Cold {
         Table::settle(opened, &selected, read, &arrangement, extent, schema_mode, &token).await
     }
 
-    /// That table's plan under `options`, read with this pass's chunk.
+    /// That table's plan under `options`, read with this pass's chunk and
+    /// cut as [`Cold::replay`] allows, its ledger without limit.
     pub async fn plan(
         &self,
         source: Arc<dyn ByteRangeSource>,
@@ -131,7 +134,7 @@ impl Cold {
         let Some(found) = self.table(source, table, options.schema_mode).await? else {
             return Ok(None);
         };
-        found.plan(self.scan.read, options).map(Some)
+        found.plan(self.scan.read, options, &arranged_as(self.replay)).map(Some)
     }
 
     /// That plan's whole table in file order, at [`Cold::max_rows`] a batch.
@@ -155,7 +158,7 @@ pub async fn read(
     inheritance: Inheritance,
 ) -> pgdt_core::Result<Vec<String>> {
     let options = QueryOptions { schema_mode, inheritance, ..QueryOptions::default() };
-    let plan = table.plan(ReadOptions::default(), options)?;
+    let plan = table.plan(ReadOptions::default(), options, &arranged(1))?;
     let mut stream = plan.in_file_order(8192);
     let mut rows = Vec::new();
     while let Some(batch) = stream.next().await {

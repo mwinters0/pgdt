@@ -530,9 +530,9 @@ async fn one_table(
         let batch = batch?;
         serial.push((names(&batch), rows_of(&batch)));
     }
-    let partitioned = QueryOptions { parallelism: Parallelism::workers(4, 1 << 30), ..options };
+    let partitioned = Cold { replay: Parallelism::workers(4, 1 << 30), ..cold.clone() };
     let mut merged = Vec::new();
-    let partitions = cold.plan(open(path), table, partitioned).await?.unwrap();
+    let partitions = partitioned.plan(open(path), table, options).await?.unwrap();
     for partition in 0..partitions.len() {
         let mut stream = partitions.stream(partition, cold.max_rows);
         while let Some(batch) = stream.next().await {

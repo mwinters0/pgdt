@@ -106,7 +106,7 @@ async fn library_answer(
             .await
             .map_err(|e| e.to_string())?
             .expect("the dump's own table");
-    let plan = settled.plan(scan.read, options).map_err(|e| e.to_string())?;
+    let plan = settled.plan(scan.read, options, &arranged(1)).map_err(|e| e.to_string())?;
     let mut stream = plan.in_file_order(8192);
     let mut batches = Vec::new();
     while let Some(batch) = stream.next().await {

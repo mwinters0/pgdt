@@ -12,11 +12,9 @@ limit the earliest line is still admitted alone past the room
 
 ## What the next slices inherit
 
-- **A plan's ledger is handed to it**: `TablePartitions::drawing_on(&Ledger)`,
-  a plan handed none drawing on `Ledger::unlimited()`. `pgdt query` hands the
-  replay's arrangement's (`Resolved::arrangement`); the provider hands none,
-  which 33.4.3 carves per scan inside its `ScanBudget` draw. Every sub-stream
-  of a plan, and every run of it, shares that one ledger, a holder each.
+- **A plan's ledger is its arrangement's** (`Table::plan`'s, since
+  [33.4.3](roadmap-P33.4.3-carve-notes.md)). Every sub-stream of a plan, and
+  every run of it, shares that one ledger, a holder each.
 - **`Table::settle(opened, selector, read, &Arrangement, …)`**: the pass's
   `ScanOptions` are built from the arrangement's parallelism, as `map_file`
   builds them. Test helpers keep a `ScanOptions` and resolve it under no
@@ -24,8 +22,7 @@ limit the earliest line is still admitted alone past the room
   the library's default, as `pgdt_fixtures::arranged` has it.
 - **The charge is `held + factor.of(held)`**, the plan's one factor folded
   once per sub-stream, so a query reading a `text` column beside a `bigint[]`
-  is charged `bigint[]`'s for every held line. `line_charge` is still zero
-  everywhere: 33.4.3's.
+  is charged `bigint[]`'s for every held line.
 - **A sub-stream suspended at a yield holds no draw**, so the polling
   contract `TablePartitions` states is the ordinary `Stream` one: a stream
   returning `Pending` is polled again on wake. Only a stream mid-line holds,

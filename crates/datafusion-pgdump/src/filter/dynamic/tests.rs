@@ -42,7 +42,7 @@ use futures::StreamExt;
 use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_codec::{SchemaMode, resolve_columns};
 use pgdt_dump::ReadOptions;
-use pgdt_fixtures::parsed_copy;
+use pgdt_fixtures::{arranged, arranged_as, parsed_copy};
 use pgdt_io::Parallelism;
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 use pgdt_model::TableName;
@@ -124,7 +124,8 @@ async fn read(
         ..QueryOptions::default()
     };
     let table = dump.dump().table(&table.into()).unwrap().expect("one of the dump's tables");
-    let partitions = table.plan(ReadOptions::default(), options).map_err(|e| e.to_string())?;
+    let partitions =
+        table.plan(ReadOptions::default(), options, &arranged(1)).map_err(|e| e.to_string())?;
     let mut batches = Vec::new();
     for partition in 0..partitions.len() {
         let mut stream = partitions.stream(partition, 1024);
@@ -161,11 +162,12 @@ async fn read_dynamic(
         projection: projection.clone(),
         semantics: ComparisonSemantics::DataFusion,
         schema_mode: dump.schema_mode(),
-        parallelism: Parallelism::workers(DYNAMIC_JOBS, 1 << 30),
         ..QueryOptions::default()
     };
     let table = dump.dump().table(&table.into()).unwrap().expect("one of the dump's tables");
-    let partitions = table.plan(ReadOptions::default(), options).map_err(|e| e.to_string())?;
+    let replay = arranged_as(Parallelism::workers(DYNAMIC_JOBS, 1 << 30));
+    let partitions =
+        table.plan(ReadOptions::default(), options, &replay).map_err(|e| e.to_string())?;
     let children =
         collect_columns(tree).into_iter().map(|c| Arc::new(c) as Arc<dyn PhysicalExpr>).collect();
     let dynamic = Arc::new(DynamicFilterPhysicalExpr::new(children, lit(true)));

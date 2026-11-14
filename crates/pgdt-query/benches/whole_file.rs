@@ -110,7 +110,7 @@ async fn scan_once(path: &Path) -> u64 {
     )
     .await;
     let table = table.unwrap().expect("the dataset holds `public.perf`");
-    let plan = table.plan(scan.read, QueryOptions::default()).unwrap();
+    let plan = table.plan(scan.read, QueryOptions::default(), &arrangement).unwrap();
     let mut rows = 0u64;
     let mut stream = plan.in_file_order(8192);
     while let Some(batch) = stream.next().await {

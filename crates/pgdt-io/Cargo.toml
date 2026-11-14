@@ -28,7 +28,8 @@ serde = ["dep:serde", "xz-seek/serde"]
 gzip-1mib-chunks = []
 # What a crate above's tests reach that nothing else may: a gzip file's index
 # built in memory at a spacing the test states (`internal::gzip_indexed_in_memory`),
-# where a first pass places checkpoints at the shipped one alone.
+# where a first pass places checkpoints at the shipped one alone; and an
+# arrangement of a parallelism the test states (`internal::arrangement_of`).
 test-support = []
 
 [dependencies]

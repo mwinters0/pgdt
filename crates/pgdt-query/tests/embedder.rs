@@ -204,7 +204,8 @@ async fn the_tables_and_their_arrow_types_are_listed() {
     assert_eq!(typed[8].1, &DataType::Utf8View);
 }
 
-/// **4. A projection under a filter, streamed four ways**: serially; over
+/// **4. A projection under a filter, streamed four ways**, each plan carved
+/// around the charge of the longest line the query reads: serially; over
 /// several partitions, which together hold the serial rows; as one stream in
 /// file order, which is them in their order; and paused and resumed at its
 /// token, none twice.
@@ -218,17 +219,21 @@ async fn a_projection_and_a_filter_stream_four_ways() {
         .map(|id| vec![Some(id.to_string()), Some("blue".to_string())])
         .collect();
 
-    let serial = table.plan(ReadOptions::default(), blue_past_900()).unwrap();
+    let read = ReadOptions::default();
+    let line_charge = table.line_charge(read, &blue_past_900()).unwrap();
+    let arranged = |jobs| {
+        let request = ArrangementRequest::of(dump.source().as_ref(), Some(jobs));
+        let request = ArrangementRequest { line_charge, ..request };
+        Arrangement::resolve(&Allowance::Stated(ALLOWANCE), request)
+    };
+    let serial = table.plan(read, blue_past_900(), &arranged(1)).unwrap();
     assert_eq!(serial.len(), 1);
     let schema = serial.resolved_schema();
     let names: Vec<&str> = schema.columns().iter().map(|c| c.name()).collect();
     assert_eq!(names, ["id", "low_card"], "the schema is the plan's before any poll");
     assert_eq!(drain(&mut serial.stream(0, 8), &serial).await, expected);
 
-    let request = ArrangementRequest::of(dump.source().as_ref(), Some(4));
-    let arrangement = Arrangement::resolve(&Allowance::Stated(ALLOWANCE), request);
-    let options = QueryOptions { parallelism: arrangement.parallelism(), ..blue_past_900() };
-    let partitioned = table.plan(ReadOptions::default(), options).unwrap();
+    let partitioned = table.plan(read, blue_past_900(), &arranged(4)).unwrap();
     assert!(partitioned.len() > 1, "the plan must split for the partitions to differ");
     let mut every = Rows::new();
     for partition in 0..partitioned.len() {
