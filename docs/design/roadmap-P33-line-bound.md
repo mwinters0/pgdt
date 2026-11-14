@@ -152,7 +152,9 @@ I71 measures it, by every pass that maps the block, which finds each line's end
 whether or not it holds the line. It is a fact of the dump, never a charge, which
 is the pass's and the build's, and `pgdt info` shows it. **A read over mapped
 blocks plans with it**: its arrangement carves the charge of the longest line it
-will meet into the ledger before a reader starts, so that line is admitted
+will meet into the ledger before a reader starts — the longest of the blocks it
+reads a byte of, nothing where its plan reads no field, a long row of that plan
+streamed and kept whatever a dynamic filter later reads — so that line is admitted
 without waiting, and a read whose longest line one reader could not hold is
 refused before it reads a byte, naming that line's start. Every query has it,
 the provider reading only a complete map (`decisions.md`, "D90"); a mapping pass
@@ -327,7 +329,8 @@ edge, pgdt-dump depending on pgdt-io already.
   a `ScanOptions` field: options are configuration reused across runs and a
   ledger is one run's state, as the cancellation is (`decisions.md`, "D26").
   The DataFusion provider carves one per scan, inside that scan's draw on the
-  session's `ScanBudget`.
+  session's `ScanBudget`, and bills each live scan's line charge to every scan
+  drawn after it, off the margin's ceiling as what the session holds is.
 - **The held line and the line streamed** — pgdt-dump's `scan/chunked.rs`,
   the carry and its draws; the resync where it is, pgdt-mapping's interior and
   pgdt-query's `replay/segment.rs`.

@@ -148,11 +148,12 @@ impl ArrangementRequest {
 /// [`Parallelism`], what a gathering pass's statistics may hold, the
 /// [`Ledger`] its held lines draw from, and where the allowance came from.
 ///
-/// **No `Default`, and no constructor but [`Self::resolve`]** — a test's
-/// aside, behind `test-support` — so no caller pairs a parallelism with an
-/// allowance or a ledger not carved from it: a parallelism stated alone is
-/// `Allowance::NoneFound` with `Jobs::Stated`, declining nothing (`docs/design/decisions.md`, "D1", "D83"). A clone shares
-/// its ledger, being the same run's.
+/// **No `Default`, and no constructor an embedder has but [`Self::resolve`]**,
+/// so no caller pairs a parallelism with an allowance or a ledger not carved
+/// from it: a parallelism stated alone is `Allowance::NoneFound` with
+/// `Jobs::Stated`, declining nothing (`docs/design/decisions.md`, "D1",
+/// "D83"). A test's own, at a budget it states, is `test-support`'s
+/// `arrangement_of`. A clone shares its ledger, being the same run's.
 #[derive(Debug, Clone)]
 pub struct Arrangement {
     parallelism: Parallelism,

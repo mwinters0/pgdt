@@ -32,9 +32,11 @@ raising it to clear that gate makes one number answer two questions. Re-setting 
 ### D83 `--memory` states what the process may hold; one carving serves stated and discovered
 A read-buffer budget is a number no operator can size a container from, so `--memory` states what the process may hold
 and `Arrangement::resolve` carves it, reserve off the top and `margin_allowance` on the count, exactly as a discovered
-limit (D3); `resolve` is the `Arrangement`'s only constructor, so no pass holds a parallelism and an allowance not
-carved from each other. Rejected: a second flag; keeping the budget flag and giving statistics what it leaves (D85); a
-gathering pass handed its parallelism and statistics allowance apart (`GatherOptions`), which two carves could pair.
+limit (D3); `resolve` is the only constructor an embedder has, so no pass holds a parallelism and an allowance not
+carved from each other; a test states a cut's budget by `test-support`'s `arrangement_of`. Rejected: a second flag;
+keeping the budget flag and giving statistics what it leaves (D85); a gathering pass handed its parallelism and
+statistics allowance apart (`GatherOptions`), which two carves could pair; a test's allowance worked back through the
+reserve and margin, tying cut tests to them; a `resolve` input stating a budget.
 Code: `arrangement.rs`. Evidence: `reserve`.
 
 ### D157 A run's held lines draw from one ledger its arrangement carves, waiting in file order

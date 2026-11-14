@@ -128,6 +128,8 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.4.1** A parse draws: the mapping pass, the back-fill and the interior's pieces handed the ledger with their arrangement, the statistics account charging it as the statistics' draw, a parse drawing for the scalar text it collects past its chunk term and the census for a counted container it holds whole, a holder told to give up re-reading what it held; under today's line limit (D157, D158) — [notes](../design/roadmap-P33.4.1-draws-notes.md)
 - [x] **33.4.2** A query draws: the replay's held line past its chunk term drawn with the query's factor (`ReplayPlan::factor`), a holder told to give up re-reading its line from its start; a cold query's mapping pass handed its arrangement by `Table::settle`, as `map_file` is, so its census draws for a counted container it holds whole on the query's ledger rather than `Ledger::unlimited()`; a query's polling contract stated on `TablePartitions` and tested, its partitions driven as `CoalescePartitionsExec` drives them; under today's line limit (D158, D159) — [notes](../design/roadmap-P33.4.2-query-notes.md)
 - [x] **33.4.3** A read over mapped blocks carves its longest line: `pgdt query` and the DataFusion provider handing `Arrangement::resolve` the charge of the longest line the read's blocks hold, its query's factor known before the arrangement, the provider carving one ledger per scan inside its `ScanBudget` draw; the replay handed that arrangement whole, `Table::plan` taking `&Arrangement` as the mapping passes do, `QueryOptions` losing `parallelism` and `TablePartitions::drawing_on` gone (D160) — [notes](../design/roadmap-P33.4.3-carve-notes.md)
+- [ ] **33.4.5** A live scan's line charge is billed to the scans drawn after it: `ScanBudget` holding each live draw's `line_charge` until its `Draw` drops and handing their sum to every later draw as `ArrangementRequest::held`, off the margin's ceiling and never the cap, `BudgetAccount` naming it, as the spec's "Where it lives" states (D157, D160); a test that two concurrent scans' ledgers lend no byte twice
+- [ ] **33.4.6** The charge counts only lines the read can hold: `Table::line_charge` passing over a block whose runs the static filter prunes whole, and zero where the batch, the static filter and the planned sorted stop read no field, a row past its chunk in such a plan streamed and kept whatever a dynamic filter reads (`reads_no_field`), D160's rejection rewritten, as the spec's "A held line is charged, and admitted in file order" states; tests that a pruned block's line and a no-field read charge nothing, and that a dynamic filter reading a field leaves such a plan's long row kept
 - [ ] **33.5** The floor: the pools shrinking and regrowing, readers parked latest first, the earliest line at one reader admitted up to what the cap leaves `at(1)`, a line one reader cannot hold refused for memory, and a read over mapped blocks whose longest line one reader cannot hold refused before it reads a byte, its remedy spelled by `pgdt` and the shell
 - [ ] **33.6** The bound: I71's constant on every path, measured exactly; `LineTooLong` naming it; a batch cut before a value would overflow its column's offsets; `--max-line-bytes`, `pgdump.max_line_bytes`, `ReadOptions::max_line_bytes`, their manual section and tests removed; the real-bound test; `KD93` struck
 - [ ] **33.29** The readers off a long field's parse reworked: the rises 33.26's residual placed in M276's datetime readers and in `ResolvedTerm::eval`, the per-row reader test 33.14, 33.14.1 and 33.15 each add — each reworked into a shape as clean or accepted, its pair against its parent (D108, D155)
@@ -162,18 +164,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A test states a replay's budget through a constructor `resolve` does not
-  own.** 33.4.3 took `parallelism` out of `QueryOptions`, and some forty tests
-  had stated a replay's count and budget there — `Parallelism::workers(4, 1 <<
-  30)`, a budget one byte under a block — which no `Arrangement::resolve`
-  carves exactly. So pgdt-io's `test-support` gained
-  `internal::arrangement_of(Parallelism)`, an arrangement at that parallelism
-  under `Allowance::NoneFound` with a ledger without limit, reached as
-  `pgdt_fixtures::arranged_as`; `Arrangement`'s rustdoc now says "no
-  constructor but `resolve` — a test's aside, behind `test-support`". The
-  alternative was rewriting each test to resolve an allowance whose carve
-  lands on its budget, coupling every cut test to the reserve and margin
-  constants. Reconsidering means either that rewrite or a `resolve` input
-  stating a budget, and deleting `arrangement_of`
-  ([`../design/roadmap-P33.4.3-carve-notes.md`](../design/roadmap-P33.4.3-carve-notes.md)).
