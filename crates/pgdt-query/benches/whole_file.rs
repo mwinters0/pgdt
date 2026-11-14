@@ -33,6 +33,7 @@ use futures::StreamExt;
 use pgdt_codec::SchemaMode;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
+use pgdt_fixtures::arranged;
 use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_query::{QueryOptions, ScanExtent, Table, TableSelector};
 use tokio_util::sync::CancellationToken;
@@ -97,7 +98,17 @@ async fn scan_once(path: &Path) -> u64 {
     let scan = ScanOptions::default();
     let extent = ScanExtent::UntilTargetSettled;
     let token = CancellationToken::new();
-    let table = Table::settle(opened, &selector, scan, extent, SchemaMode::Typed, &token).await;
+    let arrangement = arranged(1);
+    let table = Table::settle(
+        opened,
+        &selector,
+        scan.read,
+        &arrangement,
+        extent,
+        SchemaMode::Typed,
+        &token,
+    )
+    .await;
     let table = table.unwrap().expect("the dataset holds `public.perf`");
     let plan = table.plan(scan.read, QueryOptions::default()).unwrap();
     let mut rows = 0u64;

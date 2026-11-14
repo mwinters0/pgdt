@@ -115,7 +115,10 @@ impl Cold {
         };
         let opened = self.cache.open_source(source).await?;
         let token = CancellationToken::new();
-        Table::settle(opened, &selected, self.scan, self.extent, schema_mode, &token).await
+        // Its count under no allowance: a ledger without limit.
+        let arrangement = arranged(self.scan.parallelism.jobs());
+        let (read, extent) = (self.scan.read, self.extent);
+        Table::settle(opened, &selected, read, &arrangement, extent, schema_mode, &token).await
     }
 
     /// That table's plan under `options`, read with this pass's chunk.

@@ -7,7 +7,7 @@ in its topic's file under `decisions/`, which opens with what the topic is and i
 index and the citation target: cite as `docs/design/decisions.md`, "D12". The rules, the caps and the meter included,
 are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D158 -->
+<!-- decision-watermark: D159 -->
 
 ## I/O, memory and parallelism
 [`decisions/io.md`](decisions/io.md)
@@ -97,6 +97,7 @@ are `docs/process.md`, "The decision register".
 - **D141** A long value is decoded once beside its line: a `bytea` into its column, an escaped text as its own block
 - **D153** A nested value is decoded into its builders as the output grammars' walk reads it, its tier tested by a walk of its own
 - **D154** A decode factor is what a column's reserved builders and walk hold per text byte; a query's, its largest
+- **D159** A query's drawn line ends its batch, and a replay returns every draw before it yields
 - **D84** The batch span is derived from the budget and the count, and spent before the count is cut
 - **D48** Mapping and replay are separate passes, and `splice` owns the seam
 - **D49** One target per query, the early stop conservative, and `ResumeToken` opaque, fingerprinting the query

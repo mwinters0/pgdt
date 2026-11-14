@@ -297,7 +297,33 @@ impl GivenUp {
     }
 }
 
-/// **Draw from `holder` what `carry` holds past its chunk once it absorbs
+/// **A reader's draws on its run's ledger**: its [`Holder`], and what it is
+/// charged for the bytes its carry holds past its chunk — those bytes alone
+/// where it holds no copy of them, as a parse does, or with what a query's
+/// batch decodes beside them (`docs/design/decisions.md`, "D157").
+pub struct Drawing<'a> {
+    holder: &'a mut Holder,
+    charge: &'a (dyn Fn(u64) -> u64 + Sync),
+}
+
+impl<'a> Drawing<'a> {
+    /// `holder`'s draws, charged the bytes held alone.
+    pub fn held(holder: &'a mut Holder) -> Self {
+        Self { holder, charge: &held_alone }
+    }
+
+    /// `holder`'s draws, charged `charge` of the bytes held.
+    pub fn charged(holder: &'a mut Holder, charge: &'a (dyn Fn(u64) -> u64 + Sync)) -> Self {
+        Self { holder, charge }
+    }
+}
+
+/// The charge of bytes held with no copy beside them.
+fn held_alone(bytes: u64) -> u64 {
+    bytes
+}
+
+/// **Draw from `drawing` what `carry` holds past its chunk once it absorbs
 /// `chunk`**, the bytes a read loop read from `read_pos`, before it absorbs
 /// them (`docs/design/decisions.md`, "D157", "D158"): the line it carries, or the
 /// field of a streamed row it holds whole, keyed by where that starts
@@ -309,20 +335,22 @@ impl GivenUp {
 /// "D5"). **A reader told to give up drops what it holds of the line**
 /// ([`ChunkCarry::give_up`]), waits to be admitted again — holding nothing, no
 /// later line can ask it — and reads those bytes again from the source, a
-/// chunk at a time, before it absorbs `chunk`; a re-read costs time, never an
-/// answer.
+/// chunk at a time, before it absorbs `chunk`; a re-read costs time, never
+/// an answer.
 pub async fn draw_absorbing(
     carry: &mut ChunkCarry,
-    holder: &mut Holder,
+    drawing: Drawing<'_>,
     source: &dyn ByteRangeSource,
     read_pos: u64,
     chunk: &mut Bytes,
 ) -> Result<()> {
-    let charge = carry.charge_absorbing(chunk);
-    if charge == 0 {
+    let Drawing { holder, charge: charged } = drawing;
+    let held = carry.charge_absorbing(chunk);
+    if held == 0 {
         holder.release();
         return Ok(());
     }
+    let charge = charged(held);
     let start = carry.holding_from(read_pos);
     let len = chunk.len();
     if admitted(holder, start, charge, chunk).await == Admission::GiveUp {
@@ -719,13 +747,13 @@ impl ChunkedScanner {
 
     /// [`next_chunk`](Self::next_chunk), handing the fields of a row the
     /// open block streams to `fold`, its reader's ([`FieldFold`]), and
-    /// drawing what the carry holds past its chunk from `holder`, its
+    /// drawing what the carry holds past its chunk through `drawing`, its
     /// reader's draws on the run's ledger ([`draw_absorbing`]).
     pub async fn next_chunk_folding(
         &mut self,
         source: &dyn ByteRangeSource,
         fold: Option<&mut dyn FieldFold>,
-        holder: Option<&mut Holder>,
+        drawing: Option<Drawing<'_>>,
     ) -> Result<ChunkEvents<'_>> {
         let mut bytes = match self.end {
             Some(end) => {
@@ -740,8 +768,8 @@ impl ChunkedScanner {
                 bytes
             }
         };
-        if let Some(holder) = holder {
-            draw_absorbing(&mut self.carry, holder, source, self.read_pos, &mut bytes).await?;
+        if let Some(drawing) = drawing {
+            draw_absorbing(&mut self.carry, drawing, source, self.read_pos, &mut bytes).await?;
         }
         Ok(self.feed(bytes, fold))
     }

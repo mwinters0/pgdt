@@ -47,7 +47,7 @@ pgdt-mapping = { path = "../pgdt-mapping", features = ["test-support"] }
 # The benches' `#[global_allocator]`, as `pgdt-codec`'s.
 mimalloc = { workspace = true }
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 xz-seek = { workspace = true }
 
 [[bench]]

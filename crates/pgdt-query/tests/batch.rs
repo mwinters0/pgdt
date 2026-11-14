@@ -736,7 +736,9 @@ impl ByteRangeSource for LiveReads {
 /// **A value many chunks long is a view into the line the carry held, and
 /// the chunks it was copied out of are released as it grows**: the replay
 /// keeps the carried line as a block of the batch rather than copying the
-/// value out of it, and holds no read under a line it has copied.
+/// value out of it, and holds no read under a line it has copied. The line
+/// ends its batch, its draw returned as the batch is emitted
+/// (`docs/design/decisions.md`, "D159").
 #[tokio::test]
 async fn a_long_value_is_a_view_into_its_carried_line() {
     use arrow::array::{AsArray, ByteView};
@@ -757,16 +759,14 @@ async fn a_long_value_is_a_view_into_its_carried_line() {
     let cold = Cold { scan, ..Cold::default() };
     let mut stream =
         cold.stream(source.clone(), "public.t", QueryOptions::default()).await.unwrap().unwrap();
-    let batch = stream.next().await.expect("one batch").unwrap();
+    let batch = stream.next().await.expect("the long line's batch").unwrap();
+    let rest = stream.next().await.expect("the row after it").unwrap();
     assert!(stream.next().await.is_none());
     assert_eq!(
         rows_of(&batch),
-        [
-            vec![Some("1".into()), Some("short".into())],
-            vec![Some("2".into()), Some(value.clone())],
-            vec![Some("3".into()), Some("short".into())],
-        ]
+        [vec![Some("1".into()), Some("short".into())], vec![Some("2".into()), Some(value.clone())]]
     );
+    assert_eq!(rows_of(&rest), [vec![Some("3".into()), Some("short".into())]]);
 
     let column = batch.column(1).as_string_view();
     let view = ByteView::from(column.views()[1]);

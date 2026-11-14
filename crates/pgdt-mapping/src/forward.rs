@@ -10,8 +10,8 @@ use pgdt_dump::attach_text;
 use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_dump::dump_metadata_from_spans;
 use pgdt_dump::internal::Builder;
-use pgdt_dump::internal::announce_read_loop;
 use pgdt_dump::internal::derived_diagnostics;
+use pgdt_dump::internal::{Drawing, announce_read_loop};
 use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ScanOptions};
 use pgdt_io::{ByteRangeSource, Extent, Ledger, internal::memory_budget_display};
 use pgdt_model::{DumpIndex, PostgresInvalidValues, Span, SpanBody, timescaledb};
@@ -292,7 +292,7 @@ pub async fn map_forward(
         // its observer.
         let mut fold = builder.row_fold();
         let fold = fold.as_mut().map(|f| f as _);
-        let read = chunked.next_chunk_folding(source, fold, Some(&mut holder)).await;
+        let read = chunked.next_chunk_folding(source, fold, Some(Drawing::held(&mut holder))).await;
         let mut chunk = match read {
             Ok(chunk) => chunk,
             // The check point above, reached through the read rather than

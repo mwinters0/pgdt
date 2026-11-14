@@ -36,9 +36,9 @@ use pgdt_core::{Error, Result, RowEndingRefusal};
 use pgdt_model::LongestLine;
 
 pub use self::chunked::{
-    ChunkCarry, ChunkEvents, ChunkPass, ChunkedScanner, FieldFold, GivenUp, LineMapping, Passes,
-    ReadOptions, SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions, StreamedLine, announce_read_loop,
-    draw_absorbing, scan,
+    ChunkCarry, ChunkEvents, ChunkPass, ChunkedScanner, Drawing, FieldFold, GivenUp, LineMapping,
+    Passes, ReadOptions, SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions, StreamedLine,
+    announce_read_loop, draw_absorbing, scan,
 };
 
 /// The start of a COPY data block.

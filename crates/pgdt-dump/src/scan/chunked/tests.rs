@@ -773,7 +773,11 @@ fn a_held_line_waits_behind_an_earlier_one_and_gives_its_own_up() {
             assert!(draw.as_mut().poll(&mut cx).is_pending(), "the reader holds the room");
             draw
         });
-        let mut next = std::pin::pin!(chunked.next_chunk_folding(&source, None, Some(&mut reader)));
+        let mut next = std::pin::pin!(chunked.next_chunk_folding(
+            &source,
+            None,
+            Some(Drawing::held(&mut reader))
+        ));
         let mut chunk = loop {
             match next.as_mut().poll(&mut cx) {
                 Poll::Ready(chunk) => break chunk.unwrap(),

@@ -101,10 +101,11 @@ async fn library_answer(
     let (scan, extent) = (ScanOptions::default(), ScanExtent::UntilTargetSettled);
     let token = CancellationToken::new();
     let selector = TableSelector::from(table);
-    let settled = Table::settle(opened, &selector, scan, extent, schema_mode, &token)
-        .await
-        .map_err(|e| e.to_string())?
-        .expect("the dump's own table");
+    let settled =
+        Table::settle(opened, &selector, scan.read, &arranged(1), extent, schema_mode, &token)
+            .await
+            .map_err(|e| e.to_string())?
+            .expect("the dump's own table");
     let plan = settled.plan(scan.read, options).map_err(|e| e.to_string())?;
     let mut stream = plan.in_file_order(8192);
     let mut batches = Vec::new();

@@ -19,9 +19,9 @@ use pgdt_codec::ResolvedSchema;
 use pgdt_core::CopyHeader;
 use pgdt_core::Result;
 use pgdt_core::internal::{RawRow, RowSplit, validated_prefix};
-use pgdt_dump::internal::announce_read_loop;
+use pgdt_dump::internal::{Drawing, announce_read_loop};
 use pgdt_dump::{ChunkedScanner, CopyScanner, Event, Row};
-use pgdt_io::ByteRangeSource;
+use pgdt_io::{Admission, ByteRangeSource, Ledger};
 
 use self::dynamic::{DynamicRead, Skip};
 use self::plan::{ReplayPlan, resolve_for_query};
@@ -56,10 +56,20 @@ use crate::prune::SortedStop;
 /// chunk ([`reads_no_field`]): counted and held to its block's width, its
 /// bytes never held, so a replay reading no field holds no line at any
 /// length (`docs/design/decisions.md`, "D138").
+///
+/// **A line held past its chunk term draws on `ledger`** before its chunk is
+/// absorbed (`docs/design/decisions.md`, "D158"), charged its bytes and what
+/// the query's one factor says its batch decodes beside them
+/// ([`ReplayPlan::factor`]). Its row ends its batch, and the draw is
+/// returned before any batch is yielded: a stream suspended at a yield holds
+/// nothing, so a caller holding it back stalls no other, and a cut before
+/// the row draws again once the earlier rows are out
+/// (`docs/design/decisions.md`, "D159").
 #[allow(clippy::too_many_arguments)]
 pub(super) fn replay<'a>(
     source: &'a dyn ByteRangeSource,
     plan: Arc<ReplayPlan>,
+    ledger: Ledger,
     max_rows: usize,
     segments: Vec<Segment>,
     shared: StreamShared,
@@ -108,6 +118,11 @@ pub(super) fn replay<'a>(
         // One buffer for the whole replay: every row of a block has the same
         // width, so it grows only at a block wider than any before.
         let mut split = RowSplit::default();
+        // This sub-stream's draws, for one line at a time, each charged its
+        // bytes and the query's decode beside them.
+        let mut holder = ledger.holder();
+        let factor = plan.factor();
+        let charge = move |held: u64| held.saturating_add(factor.map_or(0, |f| f.of(held)));
 
         // Every block holding a stop gets its entry up front, so a drained
         // stream tells one whose stop never fired from one with none planned.
@@ -235,7 +250,20 @@ pub(super) fn replay<'a>(
                         Skip::Rest => break,
                     }
                 }
-                let mut chunk = chunked.next_chunk(source).await?;
+                let drawing = Drawing::charged(&mut holder, &charge);
+                let mut chunk = chunked.next_chunk_folding(source, None, Some(drawing)).await?;
+                // The line this chunk's carry pass completes, where it was
+                // drawn for past its chunk term, and its charge: its row, the
+                // chunk's first, ends its batch.
+                let drawn = chunk
+                    .held()
+                    .map(|(start, _)| (start, holder.held()))
+                    .filter(|&(_, charge)| charge > 0);
+                if drawn.is_some()
+                    && let Some((_, _, batcher, _, _)) = active.as_mut()
+                {
+                    batcher.holds_drawn_line();
+                }
                 // Whether the line this chunk leaves for the next may be
                 // streamed, under the dynamic state just read.
                 if let Some(opened) = active.as_ref()
@@ -356,6 +384,7 @@ pub(super) fn replay<'a>(
                                     if batcher.cuts_before(raw, &mut split) {
                                         let begins_at = batcher.batch_start().unwrap_or(row.offset);
                                         let batch = batcher.flush()?;
+                                        holder.release();
                                         chunks.invalidate_block_cache();
                                         rows_emitted += batch.num_rows() as u64;
                                         *shared.batch_offset.lock().unwrap() = begins_at;
@@ -378,6 +407,15 @@ pub(super) fn replay<'a>(
                                             }),
                                         };
                                         yield batch;
+                                        // The row's line, still held, is
+                                        // drawn for again.
+                                        if let Some((start, charge)) = drawn
+                                            .filter(|&(start, _)| start == row.offset)
+                                        {
+                                            while holder.draw(start, charge).await
+                                                == Admission::GiveUp
+                                            {}
+                                        }
                                     }
                                     batcher.push_row(
                                         *header_offset,
@@ -419,6 +457,7 @@ pub(super) fn replay<'a>(
                                 *shared.batch_offset.lock().unwrap() = begins_at;
                                 *shared.position.lock().unwrap() =
                                     snapshot(chunk.scanner(), &active, rows_emitted, fingerprint);
+                                holder.release();
                                 yield batch;
                             }
                         }
@@ -440,6 +479,7 @@ pub(super) fn replay<'a>(
                         *shared.batch_offset.lock().unwrap() = begins_at;
                         *shared.position.lock().unwrap() =
                             snapshot(chunk.scanner(), &active, rows_emitted, fingerprint);
+                        holder.release();
                         yield batch;
                     }
                     // The line just consumed ended at or past this
@@ -485,6 +525,8 @@ pub(super) fn replay<'a>(
                     break;
                 }
             }
+            // Whatever the segment's last line drew is returned with it.
+            holder.release();
 
             if let Some(stopped_at) = stopped_at {
                 let owned_end = seg_limit.saturating_add(1).min(block.terminator_offset);

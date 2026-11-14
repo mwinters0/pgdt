@@ -146,11 +146,8 @@ impl ReplayPlan {
     /// decode factors over the columns its batch reads and key factors over
     /// its filter's terms, each term's key dropped before its row is
     /// decoded — `None` where the query holds nothing beside its line that
-    /// grows with it (`docs/design/decisions.md`, "D154").
-    #[cfg_attr(
-        not(any(test, feature = "introspect")),
-        expect(dead_code, reason = "a query's draw on the ledger, not built yet, reads it")
-    )]
+    /// grows with it (`docs/design/decisions.md`, "D154"). What a held line
+    /// draws beside its bytes ([`replay`](super::replay)).
     pub(in crate::stream) fn factor(&self) -> Option<Factor> {
         self.blocks.values().flat_map(PlannedBlock::factors).reduce(Factor::max)
     }

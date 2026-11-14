@@ -22,7 +22,7 @@ use pgdt_codec::key::ValueKey;
 use pgdt_codec::{ResolvedSchema, SchemaMode};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
-use pgdt_fixtures::{parsed_copy, sweep_request, types_fixture};
+use pgdt_fixtures::{arranged, parsed_copy, sweep_request, types_fixture};
 use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_model::Finding;
 use pgdt_query::{QueryOptions, ScanExtent, Table, TableSelector};
@@ -82,7 +82,9 @@ async fn read(dump: &Path, table: &str, schema_mode: SchemaMode) -> (ResolvedSch
     let selector = TableSelector::named(table).in_schema("public");
     let (scan, extent) = (ScanOptions::default(), ScanExtent::UntilTargetSettled);
     let token = CancellationToken::new();
-    let settled = Table::settle(opened, &selector, scan, extent, schema_mode, &token).await;
+    let settled =
+        Table::settle(opened, &selector, scan.read, &arranged(1), extent, schema_mode, &token)
+            .await;
     let plan = settled.unwrap().expect("the fixture's table").plan(scan.read, options).unwrap();
     let mut stream = plan.in_file_order(8192);
     let mut batches = Vec::new();

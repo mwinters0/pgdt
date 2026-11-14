@@ -42,6 +42,15 @@ address-space limit); counting parts first to reserve exactly (a second read); s
 in pgdt-codec. Code: `batch/builder/factor.rs`, `RowBatcher::cuts_before`, `ReplayPlan::factor`. Evidence:
 `factor/tests.rs`, `tests/decoded_copies.rs`.
 
+### D159 A query's drawn line ends its batch, and a replay returns every draw before it yields
+A replay draws a line held past its chunk term as a parse does (D158), charged its bytes and its query's factor of them
+(D154). The line's row ends its batch, and every draw is returned before a batch is yielded, a cut before the row
+drawing again. Why: a batch holds the line until it is emitted, and a stream held back at a yield, as a merge in file
+order holds one, must hold nothing an earlier line waits on. Rejected: returning it at the next chunk, which the batch
+outlives; summing a batch's lines on one draw, whose give-up would drop rows already decoded; cutting only under a
+limited ledger, batches varying with the allowance. Code: `stream/replay.rs`, `RowBatcher::holds_drawn_line`.
+Evidence: `tests/ledger.rs`.
+
 ### D84 The batch span is derived from the budget and the count, and spent before the count is cut
 `max_source_span` is a ceiling: a partitioned replay derives the span it charges from the budget and the reader count,
 narrowing the span before it cuts the count, never below the announced read chunk (`ReadOptions::chunk_size_bytes`, the

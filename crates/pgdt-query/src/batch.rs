@@ -90,7 +90,8 @@ pub(crate) struct RowBatcher {
     /// term a line past it draws beyond.
     long_field: usize,
     /// Whether the in-flight batch holds a long walked value, so it flushes
-    /// after its row and no later row grows its reserved builders.
+    /// after its row and no later row grows its reserved builders, or a line
+    /// its replay drew for ([`Self::holds_drawn_line`]).
     holds_long: bool,
 }
 
@@ -175,16 +176,26 @@ impl RowBatcher {
         self.decodes_fields
     }
 
-    /// Whether any of the four flush triggers has fired: a long value held
-    /// (`docs/design/decisions.md`, "D154"), the row cap, the byte cap and the
-    /// source span. All four are evaluated after a row has been appended, so
-    /// each may be overshot by at most one row. The span trigger cannot fire on an empty batch whatever
-    /// its cap, `span` staying `None` until a row lands.
+    /// Whether any of the four flush triggers has fired: a long value held,
+    /// or a line its replay drew for (`docs/design/decisions.md`, "D154",
+    /// "D159"), the row cap, the byte cap and the source span. All four are
+    /// evaluated after a row has been appended, so each may be overshot by at
+    /// most one row. Neither the first nor the span trigger fires on an empty
+    /// batch, a drawn line's row being one a filter may drop and `span`
+    /// staying `None` until a row lands.
     pub(crate) fn should_flush(&self) -> bool {
-        self.holds_long
+        (self.holds_long && self.rows_in_batch > 0)
             || self.rows_in_batch >= self.max_rows
             || self.options.max_bytes.is_some_and(|max| self.bytes_in_batch >= max)
             || self.source_span_reached()
+    }
+
+    /// **The next row is a line its replay drew for past its chunk term**,
+    /// so the batch flushes after the next row that leaves it holding one,
+    /// and the draw is returned as it is emitted
+    /// (`docs/design/decisions.md`, "D159").
+    pub(crate) fn holds_drawn_line(&mut self) {
+        self.holds_long = true;
     }
 
     /// **Whether the in-flight batch must be flushed before `row`**: it holds

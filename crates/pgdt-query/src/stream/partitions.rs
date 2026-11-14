@@ -14,7 +14,7 @@ use pgdt_codec::ResolvedSchema;
 use pgdt_core::{Error, Result};
 use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::SourceWatch;
-use pgdt_io::{ByteRangeSource, Partitioning};
+use pgdt_io::{ByteRangeSource, Ledger, Partitioning};
 use pgdt_model::{BlockStatistics, CopyBlock, DumpMetadata, Sortedness, TableName};
 
 use super::merge;
@@ -62,6 +62,18 @@ use crate::summary::partition_orders;
 /// the dump is dropped keeps them. Keeping none until a filter arrives would
 /// free nothing: the [`Table`](crate::Table) still holds them, and the
 /// provider bills its dump whole.
+///
+/// **Its sub-streams progress while their caller polls or drops each one
+/// it holds**, the ordinary `Stream` contract — a task per partition, as
+/// DataFusion's `CoalescePartitionsExec` runs them, or a re-poll on wake. A
+/// sub-stream holding a line past its chunk term draws on the plan's ledger
+/// ([`Self::drawing_on`]); where an earlier line cannot be admitted it is
+/// asked to give its line up, and hears that only when next polled, so one
+/// left unpolled mid-line keeps its draw and an earlier line waits on it.
+/// **One left unpolled at a batch it yielded holds nothing**: each returns
+/// its draw before it yields, so a caller holding back a stream whose batch
+/// it has, as a merge in file order does ([`Self::in_file_order`]), stalls
+/// no other (`docs/design/decisions.md`, "D159").
 pub struct TablePartitions {
     source: Arc<dyn ByteRangeSource>,
     watch: Arc<SourceWatch>,
@@ -78,6 +90,8 @@ pub struct TablePartitions {
     /// filter's cut is made from again ([`Self::cut_under`]).
     matches: Vec<CopyBlock>,
     advice: Vec<Partitioning>,
+    /// What each sub-stream's held line draws on ([`Self::drawing_on`]).
+    ledger: Ledger,
 }
 
 impl TablePartitions {
@@ -142,7 +156,22 @@ impl TablePartitions {
             statistics: Arc::new(statistics),
             matches,
             advice,
+            ledger: Ledger::unlimited(),
         })
+    }
+
+    /// **These partitions, each sub-stream's held line drawing on `ledger`**
+    /// — the replay's run's, its arrangement's
+    /// ([`Arrangement::ledger`](pgdt_io::Arrangement::ledger)), carved
+    /// beside the parallelism its [`QueryOptions`] carry. A line held past
+    /// its chunk term draws its bytes and what the query's batch decodes
+    /// beside them, its query's one factor, until the batch holding its row
+    /// is emitted; a line given up is read again from its start
+    /// (`docs/design/decisions.md`, "D157", "D159"). A plan handed none
+    /// draws on a ledger without limit, whose draws are met at once.
+    pub fn drawing_on(mut self, ledger: &Ledger) -> Self {
+        self.ledger = ledger.clone();
+        self
     }
 
     /// This plan, reporting `schema` — a plan over no block, of a table read
@@ -282,10 +311,12 @@ impl TablePartitions {
         let shared = StreamShared::new(token.clone()).with_plan_notes(plan.notes().collect());
         let shared_for_stream = shared.clone();
         let (source, watch) = (Arc::clone(&self.source), Arc::clone(&self.watch));
+        let ledger = self.ledger.clone();
         let inner = try_stream! {
             let mut rows = Box::pin(replay(
                 source.as_ref(),
                 plan,
+                ledger,
                 max_rows,
                 segments,
                 shared_for_stream,
@@ -430,6 +461,7 @@ impl TablePartitions {
         let shared_for_stream = shared.clone();
         let source = Arc::clone(&self.source);
         let watch = Arc::clone(&self.watch);
+        let ledger = self.ledger.clone();
         let inner = try_stream! {
             let (groups, dynamic) = match dynamic {
                 None => (planned, None),
@@ -448,6 +480,7 @@ impl TablePartitions {
             let mut rows = Box::pin(replay(
                 source.as_ref(),
                 plan,
+                ledger,
                 max_rows,
                 segments,
                 shared_for_stream,

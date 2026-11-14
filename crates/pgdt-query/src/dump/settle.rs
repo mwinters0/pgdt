@@ -11,8 +11,8 @@ use pgdt_core::internal::statistics_loaded;
 use pgdt_core::{CopyHeader, Error, Result};
 use pgdt_dump::cache::{CacheMode, Held, Opened, SourceWatch};
 use pgdt_dump::internal::{announce_read_loop, scan_preamble};
-use pgdt_dump::{ScanOptions, attach_text};
-use pgdt_io::{ByteRangeSource, Extent, Ledger};
+use pgdt_dump::{ReadOptions, ScanOptions, attach_text};
+use pgdt_io::{Arrangement, ByteRangeSource, Extent, Ledger};
 use pgdt_mapping::internal::{MapStop, Pass, Target, map_forward, reread_rows, splice};
 use pgdt_model::timescaledb::TimescaleDb;
 use pgdt_model::{CopyBlock, DumpIndex, DumpMetadata, TableName};
@@ -28,8 +28,8 @@ type Settled = (TableName, TableRead, Option<Arc<DumpMetadata>>);
 
 impl Table {
     /// **A cold query's one table**: the dump `opened` opened, its map
-    /// extended from wherever its cache stops — under `scan`, saving to the
-    /// open's mode as it goes — until the table `selector` selects is
+    /// extended from wherever its cache stops — in `read`'s chunks under
+    /// `arrangement`, saving to the open's mode as it goes — until the table `selector` selects is
     /// settled, or to the file's end under [`ScanExtent::Full`]; then that
     /// table, as [`Dump::table`](crate::Dump::table) would hand it back over a
     /// complete map, sharing the open's source and watch. `None` where the
@@ -51,6 +51,14 @@ impl Table {
     /// under [`SchemaMode::Strings`] holds none, and its plan under
     /// [`SchemaMode::Typed`] refuses as a complete map's does.
     ///
+    /// **Its readers draw on `arrangement`'s ledger** for what they hold
+    /// past their chunk, as [`map_file`](pgdt_mapping::map_file)'s do: the
+    /// census's counted container a block's row holds whole, and the census
+    /// read again for a metadata-level table (`docs/design/decisions.md`,
+    /// "D157", "D158"). The arrangement is the pass's own, carved around the
+    /// statistics its cache hands it; the replay's is another, carved once
+    /// the table is settled.
+    ///
     /// **It learns no [`Inheritance`](crate::Inheritance) mode**: a table any
     /// descendant is declared for is settled with them, so the table it hands
     /// back is read under either, as a complete map's is
@@ -65,14 +73,16 @@ impl Table {
     pub async fn settle(
         opened: Opened,
         selector: &TableSelector,
-        scan: ScanOptions,
+        read: ReadOptions,
+        arrangement: &Arrangement,
         extent: ScanExtent,
         schema_mode: SchemaMode,
         cancel: &CancellationToken,
     ) -> Result<Option<Table>> {
         let Opened { source, watch, cache, mode, .. } = opened;
         watch.require_checkable(source.as_ref())?;
-        let ledger = Ledger::unlimited();
+        let scan = ScanOptions { read, parallelism: arrangement.parallelism() };
+        let ledger = arrangement.ledger().clone();
         let pass =
             ColdPass { source: source.as_ref(), watch: &watch, mode: &mode, scan, ledger, cancel };
         let settled = pass.settle(cache, selector, extent, schema_mode).await;
@@ -92,9 +102,8 @@ impl Table {
 }
 
 /// What the pass reads under: the open's source, watch and mode, the
-/// caller's arrangement and token, and the ledger its readers draw a line
-/// held past its chunk from — one without limit, a query's mapping pass
-/// being handed no allowance to carve one from.
+/// caller's read options, parallelism and token, and the ledger its readers
+/// draw a line held past its chunk from, the caller's arrangement's.
 struct ColdPass<'a> {
     source: &'a dyn ByteRangeSource,
     watch: &'a SourceWatch,

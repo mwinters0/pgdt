@@ -180,15 +180,16 @@ impl ReadFlags {
     }
 }
 
-/// The [`ScanOptions`] one pass gathering nothing runs under — `parse
-/// --preamble-only`'s, or a `query`'s mapping pass: the read flags'
-/// [`ReadOptions`] and the already-resolved arrangement's parallelism
-/// ([`crate::parallel::Discovered::resolve`]). `parse`'s mapping pass gathers,
-/// and takes the arrangement itself ([`Resolved::arrangement`]).
-///
-/// **Resolved once per pass and passed in, not re-resolved here.** `query`
-/// passes its mapping pass's, its replay's going into [`pgdt_query::QueryOptions`]
+/// The [`ScanOptions`] `parse --preamble-only` runs under, the one pass
+/// drawing on no ledger: the read flags' [`ReadOptions`] and the
+/// already-resolved arrangement's parallelism
+/// ([`crate::parallel::Discovered::resolve`]). Every other pass holds lines,
+/// so takes the arrangement itself ([`Resolved::arrangement`]): `parse`'s
+/// mapping pass, and `query`'s, its replay's parallelism going into
+/// [`pgdt_query::QueryOptions`] and its ledger to the plan
 /// ([`crate::parallel::Discovered::resolve_pass`]).
+///
+/// **Resolved once per pass and passed in, not re-resolved here.**
 pub(crate) fn scan_options(read: ReadFlags, parallel: &Resolved) -> ScanOptions {
     ScanOptions { read: read.options(), parallelism: parallel.parallelism() }
 }

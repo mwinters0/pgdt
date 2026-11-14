@@ -16,7 +16,7 @@ use tracing::Instrument;
 
 use crate::args::{
     IdentityArgs, ModeParser, OverwriteArgs, ReadFlags, cache_mode, parse_chunk_size,
-    parse_max_line_bytes, scan_options,
+    parse_max_line_bytes,
 };
 use crate::parallel::{ParallelArgs, Resolved};
 use crate::refusal::{about_the_source, refusal};
@@ -297,7 +297,8 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     let settled = Table::settle(
         opened,
         &selector,
-        scan_options(read, &mapping.resolved),
+        read.options(),
+        mapping.resolved.arrangement(),
         ScanExtent::UntilTargetSettled,
         schema_mode,
         &CancellationToken::new(),
@@ -320,6 +321,9 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     // one partition, so the serial path is reached through the same
     // plan rather than branched to (D51).
     let plan = settled.plan(read.options(), query_options).map_err(&report)?;
+    // Its held lines draw on the replay's own ledger, carved beside its
+    // parallelism (`docs/design/decisions.md`, "D157").
+    let plan = plan.drawing_on(replay.arrangement().ledger());
     // Known from the plan alone, before any block is read — unlike
     // `announce_comparisons` below, which waits on the first batch.
     announce_plan_notes(plan.plan_notes(), &replay);

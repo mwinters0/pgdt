@@ -19,7 +19,7 @@
 use std::ops::Range;
 
 use pgdt_core::{Error, Result};
-use pgdt_dump::internal::{ChunkCarry, draw_absorbing};
+use pgdt_dump::internal::{ChunkCarry, Drawing, draw_absorbing};
 use pgdt_dump::{CopyEnd, ScanOptions};
 use pgdt_io::{
     ByteRangeSource, Extent, Ledger, PartitionRead, Partitioning, WaitPolicy,
@@ -534,7 +534,7 @@ async fn scan_partition(
         let len = usize::try_from(end - at).unwrap_or(usize::MAX);
         let mut bytes = source.read_range(at, len).await?;
         // Drawn in this half, which can wait: the blocking half absorbs it.
-        draw_absorbing(&mut carry, &mut holder, source, at, &mut bytes).await?;
+        draw_absorbing(&mut carry, Drawing::held(&mut holder), source, at, &mut bytes).await?;
         let eof = end >= size;
         // The observer, the carry and its fold go to the blocking pool with
         // the bytes and come back with the scan, one read of the piece at a
