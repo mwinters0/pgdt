@@ -127,7 +127,7 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.4.4** The ledger under the margin: `Arrangement::resolve` carving it as what the margin's ceiling leaves the readers' budget, wherever an allowance is found, an estimate's included, a read's longest line carved into it off the ceiling and the statistics allowance what it leaves past that line; the statistics' draw, admitted ahead of every line and never waiting or declined for one, a draw passing the room asking the latest holders to give up; tested on its own; no pass draws yet (D157) — [notes](../design/roadmap-P33.4.4-margin-notes.md)
 - [x] **33.4.1** A parse draws: the mapping pass, the back-fill and the interior's pieces handed the ledger with their arrangement, the statistics account charging it as the statistics' draw, a parse drawing for the scalar text it collects past its chunk term and the census for a counted container it holds whole, a holder told to give up re-reading what it held; under today's line limit (D157, D158) — [notes](../design/roadmap-P33.4.1-draws-notes.md)
 - [x] **33.4.2** A query draws: the replay's held line past its chunk term drawn with the query's factor (`ReplayPlan::factor`), a holder told to give up re-reading its line from its start; a cold query's mapping pass handed its arrangement by `Table::settle`, as `map_file` is, so its census draws for a counted container it holds whole on the query's ledger rather than `Ledger::unlimited()`; a query's polling contract stated on `TablePartitions` and tested, its partitions driven as `CoalescePartitionsExec` drives them; under today's line limit (D158, D159) — [notes](../design/roadmap-P33.4.2-query-notes.md)
-- [ ] **33.4.3** A read over mapped blocks carves its longest line: `pgdt query` and the DataFusion provider handing `Arrangement::resolve` the charge of the longest line the read's blocks hold, the provider carving one ledger per scan inside its `ScanBudget` draw
+- [ ] **33.4.3** A read over mapped blocks carves its longest line: `pgdt query` and the DataFusion provider handing `Arrangement::resolve` the charge of the longest line the read's blocks hold, its query's factor known before the arrangement, the provider carving one ledger per scan inside its `ScanBudget` draw; the replay handed that arrangement whole, `Table::plan` taking `&Arrangement` as the mapping passes do, `QueryOptions` losing `parallelism` and `TablePartitions::drawing_on` gone
 - [ ] **33.5** The floor: the pools shrinking and regrowing, readers parked latest first, the earliest line at one reader admitted up to what the cap leaves `at(1)`, a line one reader cannot hold refused for memory, and a read over mapped blocks whose longest line one reader cannot hold refused before it reads a byte, its remedy spelled by `pgdt` and the shell
 - [ ] **33.6** The bound: I71's constant on every path, measured exactly; `LineTooLong` naming it; a batch cut before a value would overflow its column's offsets; `--max-line-bytes`, `pgdump.max_line_bytes`, `ReadOptions::max_line_bytes`, their manual section and tests removed; the real-bound test; `KD93` struck
 - [ ] **33.29** The readers off a long field's parse reworked: the rises 33.26's residual placed in M276's datetime readers and in `ResolvedTerm::eval`, the per-row reader test 33.14, 33.14.1 and 33.15 each add — each reworked into a shape as clean or accepted, its pair against its parent (D108, D155)
@@ -162,30 +162,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **33.4.2 leaves `KD168` unowned though its promotion trigger has fired.**
-  The entry is promoted "by the ledger drawing a query's factor", which a
-  replay now does: an ordering term over a `jsonb` field draws
-  `JSONB_KEY_FACTOR`, while a number in it is compared from a digit string
-  its exponent pads — `1e100000` holding a hundred thousand digits beside
-  eight bytes of text (`pgdt-codec`'s `value/json/order.rs`) — so such a
-  field's held line is charged short. The call: the stance and its owner are
-  not 33.4.2's to set, an owner being a row nobody has sized; the entry is
-  left as written. Reconsidering decides whether P33 owns it — a row before
-  33.7 comparing such a number without padding it, or charging what it pads
-  — or the entry stays `(c)` with the trigger it has left, such a number met
-  in use.
-
-- **33.4.2 hands the replay its ledger alone, by `TablePartitions::drawing_on`.**
-  The spec's "Where it lives" has a pass handed the ledger "with its
-  arrangement", as `map_file` and now `Table::settle` take one; the replay
-  takes its parallelism from `QueryOptions::parallelism` as before and its
-  ledger from a builder on the plan, a plan handed none drawing on
-  `Ledger::unlimited()` (`pgdt-query`'s `stream/partitions.rs`). The call: a
-  replay's options already carry the arrangement's parallelism, which the
-  provider sets per scan, so the ledger is the one part of it missing, and
-  the builder adds it without moving a field every front end and test sets.
-  Reconsidering would have `Table::plan` take `&Arrangement`, as the mapping
-  passes do, `QueryOptions` losing `parallelism`, so no plan can pair a
-  parallelism with a ledger not carved beside it — 33.4.3 then handing the
-  provider's scan arrangement to the plan whole.

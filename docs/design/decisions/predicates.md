@@ -101,8 +101,9 @@ Evidence: `key/field/tests.rs`, `tests/decoded_copies.rs`.
 ### D152 A normalized type's order holds its pairs' and members' positions, each keyed again as compared
 A `jsonb` term walks its field whole, then compares it holding each object's pairs on the path compared as `u32`
 positions sorted into storage order; a multirange term holds each member as its bounds' positions, sorted and merged as
-the server merges them, a member's range keyed from its text each time it is compared. Each states its key factor
-beside it. Why: a query holds its line and one decoded copy (D141). Rejected: the key tree, tens of bytes a pair or
-member; `usize` positions, twice the factor; a key's length held beside its position, which a sort reading the key
-anyway does not need. Code: `value/json/order.rs`, `nested/key/multirange.rs`, `key/factor.rs`. Evidence:
-`json/order/tests.rs`, `key/field/tests.rs`, `tests/decoded_copies.rs`.
+the server merges them, a member's range keyed from its text each time it is compared. Each states its key factor beside
+it. Why: a query holds its line and one decoded copy (D141). Rejected: the key tree, tens of bytes a pair or member;
+`usize` positions, twice the factor; a key's length held beside its position, which a sort reading the key anyway does
+not need; a `jsonb` number compared in place, a second reader of a scalar keyed whole. Code: `value/json/order.rs`,
+`nested/key/multirange.rs`, `key/factor.rs`. Evidence: `json/order/tests.rs`, `key/field/tests.rs`,
+`tests/decoded_copies.rs`.

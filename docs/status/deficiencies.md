@@ -584,12 +584,6 @@ than reading as a phase nobody has sliced.
   **(c) unowned**; promoted by a caller rendering such an array. Detail:
   `crates/pgdt-query/src/render.rs`.
 
-- **KD168** — a `jsonb` ordering term holds a number's digits padded by its
-  exponent while comparing it, past what its key factor states: `1e100000`
-  holds copies of a hundred thousand digits beside eight bytes of text.
-  **(c) unowned**; promoted by the ledger drawing a query's factor, or such a
-  number met in use. Detail: `crates/pgdt-codec/src/value/json/order.rs`.
-
 - **KD169** — a file opening on blank lines has them in no span of its
   preamble scan, and a `parse --preamble-only` banks that gap, so the whole
   map a later `parse` builds on that cache reports itself broken

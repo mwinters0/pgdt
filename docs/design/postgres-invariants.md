@@ -2751,7 +2751,9 @@ what the input bullet says `jsonb_in` refuses, as `unicode_escape_read` does
 for `JsonWalk`, a strict parse's walk — `jsonb_unread`, which refuses
 what `json_in` refuses (I72), the grammar being one, and `storage_order`; and
 `value/json/order.rs`'s `jsonb_field_order`, which orders a filter's field by
-the rank, length and storage order above, a duplicate key's last pair kept —
+the rank, length and storage order above, a duplicate key's last pair kept,
+and its `JSONB_KEY_FACTOR`, which charges no number's digits past its text
+because the output bullet writes no exponent —
 [`decisions.md`](decisions.md), "D55", where
 this is the row that agrees about structure and diverges at a string.
 

@@ -55,6 +55,6 @@ limit the earliest line is still admitted alone past the room
   up**: at sixteen bytes the fixtures' lines waited and none was given up,
   each ending at its next absorb before an earlier line asked. Both occur at
   four, checked with a temporary probe this slice does not keep.
-- **`KD168`'s promotion trigger has fired**: the ledger now draws a query's
-  factor, under which a `jsonb` ordering term's padded digits are charged
-  short (STATUS, "Decisions worth another look").
+- **A `jsonb` term's number is not the factor's**: it is keyed whole, held
+  as a short value's decode is on any line, so the ledger drawing the factor
+  left nothing of it charged short (`JSONB_KEY_FACTOR`); `KD168` is struck.
