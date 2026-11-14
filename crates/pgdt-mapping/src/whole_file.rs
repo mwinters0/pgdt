@@ -15,7 +15,7 @@ use pgdt_dump::dump_metadata_from_spans;
 use pgdt_dump::internal::Builder;
 use pgdt_dump::internal::{derived_diagnostics, scan_preamble};
 use pgdt_dump::{Event, ReadOptions, ScanOptions, scan as scan_events};
-use pgdt_io::{Arrangement, ByteRangeSource, Extent};
+use pgdt_io::{Arrangement, ByteRangeSource, Extent, Ledger};
 use pgdt_model::internal::IgnoredRefusalsExt;
 use pgdt_model::{Diagnostic, DumpIndex, DumpMetadata, PostgresInvalidValues, Span, timescaledb};
 use tokio_util::sync::CancellationToken;
@@ -298,7 +298,11 @@ impl Mapped {
 /// included, a block whose gathering would pass it declining and recording
 /// the number it declined under
 /// ([`CopyBlock::statistics_declined`](pgdt_model::CopyBlock::statistics_declined);
-/// `docs/design/decisions.md`, "D85"). `invalid` is what gathering does with
+/// `docs/design/decisions.md`, "D85"); its ledger ([`Arrangement::ledger`])
+/// is what every reader of the run draws a line held past its chunk from,
+/// and the statistics draw on first, its `held` being the statistics the
+/// cache hands the run, which the account loads (`docs/design/decisions.md`,
+/// "D157"). `invalid` is what gathering does with
 /// a field its type's `*_in` refuses ([`PostgresInvalidValues`]). **Neither
 /// is part of `statistics`**, which a cache's statistics are compared
 /// against: they are the run's, not what the cache holds
@@ -332,6 +336,7 @@ pub async fn map_file(
     let run = map_file_watched(
         source.as_ref(),
         &scan_options,
+        arrangement.ledger(),
         cancel,
         invalid,
         arrangement.statistics_allowance(),
@@ -346,13 +351,13 @@ pub async fn map_file(
 }
 
 /// [`map_file`] once its watch is open, which then attributes any failure:
-/// reading with `scan_options`, its parallelism the arrangement's, and
-/// bounding the account by `allowance`, the arrangement's statistics
-/// allowance.
+/// reading with `scan_options`, its parallelism the arrangement's, drawing on
+/// `ledger`, and bounding the account by `allowance`, both the arrangement's.
 #[allow(clippy::too_many_arguments)]
 async fn map_file_watched(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
+    ledger: &Ledger,
     cancel: &CancellationToken,
     invalid: PostgresInvalidValues,
     allowance: Option<u64>,
@@ -369,7 +374,7 @@ async fn map_file_watched(
         Held::Disabled | Held::Missing | Held::Replacing(_) => DumpIndex::default(),
     };
     refuse_recorded(invalid, cache, statistics, &index)?;
-    let account = Arc::new(StatisticsAccount::bounded_by(allowance));
+    let account = Arc::new(StatisticsAccount::charging(allowance, ledger.clone()));
     let loaded = index.statistics_heap_bytes();
     #[cfg(feature = "introspect")]
     statistics_loaded(loaded);
@@ -446,6 +451,7 @@ async fn map_file_watched(
         let checked = backfill_statistics(
             source,
             scan_options,
+            ledger,
             cancel,
             invalid,
             allowance,
@@ -473,6 +479,7 @@ async fn map_file_watched(
     let stopped = match map_forward(
         source,
         scan_options,
+        ledger,
         cancel,
         cache,
         watch,
@@ -517,6 +524,7 @@ async fn map_file_watched(
     let backfill = backfill_statistics(
         source,
         scan_options,
+        ledger,
         cancel,
         invalid,
         allowance,

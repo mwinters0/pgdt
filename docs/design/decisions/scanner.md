@@ -34,6 +34,15 @@ its block's longest; I71's bound reserved per line, counted whole by an address-
 `MADV_HUGEPAGE`. Linux's; else a `Vec` (P34). Reopens: a material gap to a sized mapping. Evidence: RT29, RT30;
 `the_carry_keeps_no_line_past_its_row`.
 
+### D158 A reader draws what its carry will hold before absorbing a chunk, holding no read while it waits
+Each read loop draws on its run's ledger (D157) what its carry would hold past its chunk once it absorbs the chunk in
+hand — a line completed or joined, or a held field grown to its next delimiter — keyed by where that starts
+(`draw_absorbing`). A waiting draw drops the chunk, read again once admitted; one told to give up drops what it holds
+and reads it again from its start. Why: the charge is exact before the copy, and a waiter keeping a pooled read could
+starve the earliest line's (D5). Rejected: drawing before the read (every carried tail charged a chunk); after
+absorbing (a field ending in the chunk grows uncharged); keying a field by its row (a later field keeps the largest
+draw); holding the chunk while waiting. Code: `scan/chunked.rs`. Evidence: `chunked/tests.rs`, `tests/ledger.rs`.
+
 ### D25 Parallelize what is CPU-bound
 One core's rate against the device's offer decides each kind of work (decode, extraction, discovery) per source; D2
 holds the answers, D7 who asks, D52 the worker. Readings that disagree reopen it. Evidence: `xz-decode-scaling`,

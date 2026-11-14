@@ -11,7 +11,7 @@ use pgdt_core::{Error, Result};
 use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_dump::internal::{RowFold, announce_read_loop};
 use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ReadOptions, ScanOptions};
-use pgdt_io::{Arrangement, ByteRangeSource, Extent};
+use pgdt_io::{Arrangement, ByteRangeSource, Extent, Ledger};
 use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
 use pgdt_model::{
     BlockCensus, BlockGathered, BlockStatistics, CopyBlock, DataBlock, DumpIndex, DumpMetadata,
@@ -75,6 +75,7 @@ pub(crate) enum Backfill {
 pub(crate) async fn backfill_statistics(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
+    ledger: &Ledger,
     cancel: &CancellationToken,
     invalid: PostgresInvalidValues,
     allowance: Option<u64>,
@@ -120,6 +121,7 @@ pub(crate) async fn backfill_statistics(
     let mut reader = Rereads {
         source,
         scan_options,
+        ledger,
         cancel,
         invalid,
         // There is no cache file to name in a `CachedBlockChanged` refusal
@@ -257,8 +259,12 @@ pub(crate) fn report_statistics_declines(
 /// gathered is what a straight-through pass would have gathered; and its
 /// statistics allowance ([`Arrangement::statistics_allowance`]) bounds what
 /// the block's statistics hold, those it already holds included, a read past
-/// it declining. It takes no cancellation, being no mapping pass: a caller
-/// stops it by dropping it (`docs/design/decisions.md`, "D26").
+/// it declining. Its readers draw what they hold past their chunk from its
+/// ledger, which the block's statistics draw on first, the arrangement's
+/// `held` being what the block holds already, which its account loads
+/// (`docs/design/decisions.md`, "D157"). It takes no cancellation, being no
+/// mapping pass: a caller stops it by dropping it (`docs/design/decisions.md`,
+/// "D26").
 ///
 /// **A block that no longer ends where the map says is refused**,
 /// [`Error::CachedBlockChanged`] naming no cache, this entry point being
@@ -289,7 +295,7 @@ pub async fn backfill_block(
     announce_read_loop(source, read, scan_options.parallelism);
     // What the block holds is alive beside what a read gathers, as a
     // loaded block's statistics are in a pass, until a read replaces them.
-    let account = Arc::new(StatisticsAccount::bounded_by(allowance));
+    let account = Arc::new(StatisticsAccount::charging(allowance, arrangement.ledger().clone()));
     let held = block.statistics.as_deref().map_or(0, BlockStatistics::heap_bytes);
     account.apply(&[(Term::Loaded, held as i64)]);
     let loaded = block.statistics.is_some().then_some(block.header_offset).into_iter().collect();
@@ -297,6 +303,7 @@ pub async fn backfill_block(
     let mut reader = Rereads {
         source,
         scan_options: &scan_options,
+        ledger: arrangement.ledger(),
         cancel: &cancel,
         invalid,
         cache_path: None,
@@ -320,6 +327,9 @@ pub async fn backfill_block(
 struct Rereads<'a> {
     source: &'a dyn ByteRangeSource,
     scan_options: &'a ScanOptions,
+    /// The run's ledger, which every reader draws what it holds past its
+    /// chunk from.
+    ledger: &'a Ledger,
     cancel: &'a CancellationToken,
     invalid: PostgresInvalidValues,
     cache_path: Option<&'a Path>,
@@ -385,6 +395,7 @@ impl Rereads<'_> {
         let read = reread_rows(
             self.source,
             self.scan_options,
+            self.ledger,
             self.cancel,
             self.cache_path,
             metadata,
@@ -484,11 +495,13 @@ struct BlockReread {
 /// `cancel` stopping it first, by its flag or by a read it dropped, whichever
 /// reader made that read, and nothing else answers it; a block no
 /// longer ending where the map says is [`Error::CachedBlockChanged`], naming
-/// `cache_path`.
+/// `cache_path`. Each reader draws what it holds past its chunk from
+/// `ledger` (`docs/design/decisions.md`, "D157").
 #[allow(clippy::too_many_arguments)]
 pub async fn reread_rows(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
+    ledger: &Ledger,
     cancel: &CancellationToken,
     cache_path: Option<&Path>,
     metadata: Option<&DumpMetadata>,
@@ -515,6 +528,7 @@ pub async fn reread_rows(
     let outcome = match scan_region(
         source,
         scan_options,
+        ledger,
         cancel,
         &block.header.qualified_name(),
         block.header_offset,
@@ -537,8 +551,8 @@ pub async fn reread_rows(
         RegionScan::Closed(interior) => (interior.end, interior.census),
         RegionScan::Cancelled => return Ok(None),
         RegionScan::Declined => {
-            match observe_rows(source, scan_options.read, cancel, block, &plan, extent, observer)
-                .await?
+            let read = scan_options.read;
+            match observe_rows(source, read, ledger, cancel, block, &plan, extent, observer).await?
             {
                 Some(read) => read,
                 None => return Ok(None),
@@ -560,9 +574,11 @@ pub async fn reread_rows(
 /// `None` where
 /// `cancel` fired first, read once per chunk as
 /// [`map_forward`](crate::forward::map_forward) reads it.
+#[allow(clippy::too_many_arguments)]
 async fn observe_rows(
     source: &dyn ByteRangeSource,
     read: ReadOptions,
+    ledger: &Ledger,
     cancel: &CancellationToken,
     block: &CopyBlock,
     plan: &CensusPlan,
@@ -573,13 +589,15 @@ async fn observe_rows(
     let mut chunked = ChunkedScanner::to_source_end(scanner, extent, read);
     let mut census = BlockCensus::new(plan.width);
     let mut streamed = plan.fold();
+    let mut holder = ledger.holder();
     loop {
         if cancel.is_cancelled() {
             return Ok(None);
         }
         let block_observer = observer.as_deref_mut().map(|o| o as &mut dyn BlockObserver);
         let mut fold = RowFold::new(Some(&mut streamed), block_observer, block.data_offset);
-        let read = chunked.next_chunk_folding(source, fold.as_mut().map(|f| f as _)).await;
+        let fold = fold.as_mut().map(|f| f as _);
+        let read = chunked.next_chunk_folding(source, fold, Some(&mut holder)).await;
         let mut chunk = match read {
             Ok(chunk) => chunk,
             // The check above, reached through the read rather than

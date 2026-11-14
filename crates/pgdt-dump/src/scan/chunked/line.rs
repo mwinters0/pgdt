@@ -43,6 +43,11 @@ impl CarriedLine {
         self.len() == 0
     }
 
+    /// The length past which the line leaves the carry's buffer: its chunk.
+    pub(super) fn outgrows(&self) -> usize {
+        self.outgrows
+    }
+
     /// Append `bytes`, moving the line to a mapping sized for the whole of
     /// it where they take it past its chunk.
     pub(super) fn extend(&mut self, bytes: &[u8]) {

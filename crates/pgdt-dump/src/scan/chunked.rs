@@ -7,6 +7,7 @@
 mod line;
 
 use std::ops::ControlFlow;
+use std::task::Poll;
 
 use bytes::Bytes;
 
@@ -16,8 +17,8 @@ use super::{CopyScanner, EndingScan, Event, RowEnding};
 use pgdt_core::internal::delimiters;
 use pgdt_core::{Error, Result};
 use pgdt_io::{
-    ByteRangeSource, Extent, Parallelism, SCAN_CHUNK_DEFAULT_SIZE_BYTES, WaitPolicy,
-    internal::memory_budget_display,
+    Admission, ByteRangeSource, Extent, Holder, Parallelism, SCAN_CHUNK_DEFAULT_SIZE_BYTES,
+    WaitPolicy, internal::memory_budget_display,
 };
 
 /// Which of a chunk's two spans is being scanned. The carry pass comes first:
@@ -94,6 +95,11 @@ pub enum ChunkPass {
 /// a long line is. So a pass decoding no field holds no line at any length,
 /// and a census holds only the fields it decodes
 /// (`docs/design/decisions.md`, "D138").
+///
+/// **What it holds past its chunk is drawn from the run's ledger** before
+/// each chunk is absorbed ([`draw_absorbing`]), and dropped and read again
+/// where an earlier line needs the room ([`give_up`](Self::give_up))
+/// (`docs/design/decisions.md`, "D157", "D158").
 #[derive(Debug)]
 pub struct ChunkCarry {
     /// The line being carried, extended by [`absorb`](Self::absorb) with the
@@ -273,6 +279,83 @@ impl StreamedLine {
     }
 }
 
+/// What a carry dropped at a ledger's asking ([`ChunkCarry::give_up`]): the
+/// last bytes it had read, short of a CR a streamed row holds back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GivenUp {
+    len: usize,
+    /// The bytes read past them: a CR held back, or none.
+    after: usize,
+}
+
+impl GivenUp {
+    /// Where the bytes given up lie, the carry's next chunk being read from
+    /// `read_pos`.
+    pub fn range(&self, read_pos: u64) -> std::ops::Range<u64> {
+        let end = read_pos - self.after as u64;
+        end - self.len as u64..end
+    }
+}
+
+/// **Draw from `holder` what `carry` holds past its chunk once it absorbs
+/// `chunk`**, the bytes a read loop read from `read_pos`, before it absorbs
+/// them (`docs/design/decisions.md`, "D157", "D158"): the line it carries, or the
+/// field of a streamed row it holds whole, keyed by where that starts
+/// ([`ChunkCarry::holding_from`]), or nothing, which returns the last draw.
+///
+/// **A draw that waits holds no read**: `chunk` is dropped and read again
+/// once the draw is admitted, so a reader waiting on an earlier line never
+/// keeps a pooled buffer that line's reader needs (`docs/design/decisions.md`,
+/// "D5"). **A reader told to give up drops what it holds of the line**
+/// ([`ChunkCarry::give_up`]), waits to be admitted again — holding nothing, no
+/// later line can ask it — and reads those bytes again from the source, a
+/// chunk at a time, before it absorbs `chunk`; a re-read costs time, never an
+/// answer.
+pub async fn draw_absorbing(
+    carry: &mut ChunkCarry,
+    holder: &mut Holder,
+    source: &dyn ByteRangeSource,
+    read_pos: u64,
+    chunk: &mut Bytes,
+) -> Result<()> {
+    let charge = carry.charge_absorbing(chunk);
+    if charge == 0 {
+        holder.release();
+        return Ok(());
+    }
+    let start = carry.holding_from(read_pos);
+    let len = chunk.len();
+    if admitted(holder, start, charge, chunk).await == Admission::GiveUp {
+        let given = carry.give_up();
+        while admitted(holder, start, charge, chunk).await == Admission::GiveUp {}
+        let range = given.range(read_pos);
+        let step = carry.line.outgrows().max(1) as u64;
+        let mut at = range.start;
+        while at < range.end {
+            let want = step.min(range.end - at);
+            carry.restore(&source.read_range(at, want as usize).await?);
+            at += want;
+        }
+    }
+    if chunk.len() < len {
+        *chunk = source.read_range(read_pos, len).await?;
+    }
+    Ok(())
+}
+
+/// `holder`'s draw of `charge` for the line at `start`, `chunk` dropped
+/// where it waits.
+async fn admitted(holder: &mut Holder, start: u64, charge: u64, chunk: &mut Bytes) -> Admission {
+    let mut draw = std::pin::pin!(holder.draw(start, charge));
+    match futures::poll!(draw.as_mut()) {
+        Poll::Ready(admission) => admission,
+        Poll::Pending => {
+            *chunk = Bytes::new();
+            draw.await
+        }
+    }
+}
+
 /// The longest row a carry holds though it may stream it: a line no longer
 /// can be the terminator, `\.` before a CR, which only the scanner tells
 /// from a row.
@@ -301,6 +384,75 @@ impl ChunkCarry {
     pub fn carried(&self) -> usize {
         let streamed = self.streamed.map_or(0, |line| line.len as usize);
         self.held.len() - self.line_used + self.line.len() + self.tail.len() + streamed
+    }
+
+    /// **What it holds past its chunk once it absorbs `next`**, in bytes: the
+    /// line it carries, completed by `next`'s first line-terminated prefix or
+    /// joined by the whole of it, or the field of a streamed row its fold
+    /// holds whole, grown to `next`'s first delimiter — zero where that is
+    /// no longer than a chunk, which the reader's own term holds. An upper
+    /// bound where `next` starts streaming a row, whose line its fold then
+    /// takes in part.
+    pub fn charge_absorbing(&self, next: &[u8]) -> u64 {
+        let held = match self.streamed {
+            Some(_) if self.field.is_empty() => return 0,
+            Some(row) => {
+                let grows = memchr::memchr2(b'\t', b'\n', next).unwrap_or(next.len());
+                self.field.len() + usize::from(row.cr) + grows
+            }
+            None => {
+                let line = self.held.len() - self.line_used + self.line.len() + self.tail.len();
+                if line == 0 {
+                    return 0;
+                }
+                line + memchr::memchr(b'\n', next).map_or(next.len(), |nl| nl + 1)
+            }
+        };
+        if held > self.line.outgrows() { held as u64 } else { 0 }
+    }
+
+    /// Where what it holds of the line it carries starts in the file, its
+    /// next chunk being read from `read_pos`: the field of a streamed row its
+    /// fold holds whole, or else the line — what a draw for it is keyed by,
+    /// so a row's next held field is a line of its own to the ledger.
+    pub fn holding_from(&self, read_pos: u64) -> u64 {
+        match self.streamed {
+            Some(row) => read_pos - usize::from(row.cr) as u64 - self.field.len() as u64,
+            None => read_pos - self.carried() as u64,
+        }
+    }
+
+    /// **Drop what it holds of the line it carries**, a ledger having asked
+    /// for it (`docs/design/decisions.md`, "D157"): the field of a streamed
+    /// row its fold holds whole, or else the line itself, keeping what it
+    /// counted of a streamed row. Answers where those bytes lie, for
+    /// [`restore`](Self::restore) to take back once they are read again.
+    pub fn give_up(&mut self) -> GivenUp {
+        let given = match self.streamed {
+            Some(row) => {
+                let given = GivenUp { len: self.field.len(), after: usize::from(row.cr) };
+                self.field.clear();
+                given
+            }
+            None => {
+                let given = GivenUp { len: self.carried(), after: 0 };
+                (self.held, self.line_used) = (Bytes::new(), 0);
+                self.line.clear();
+                self.tail.clear();
+                given
+            }
+        };
+        debug_assert!(given.len > 0, "a carry gives up only what it holds");
+        given
+    }
+
+    /// Take back the next `bytes` of what [`give_up`](Self::give_up)
+    /// dropped, read again from where it said they lie.
+    pub fn restore(&mut self, bytes: &[u8]) {
+        match self.streamed {
+            Some(_) => self.field.extend(bytes),
+            None => self.line.extend(bytes),
+        }
     }
 
     /// The bytes this carry keeps allocated between two chunks: the buffers
@@ -562,17 +714,20 @@ impl ChunkedScanner {
     /// read, so the last line is still scanned to the end — and hand out its
     /// events. A read's error is returned as the source gave it.
     pub async fn next_chunk(&mut self, source: &dyn ByteRangeSource) -> Result<ChunkEvents<'_>> {
-        self.next_chunk_folding(source, None).await
+        self.next_chunk_folding(source, None, None).await
     }
 
     /// [`next_chunk`](Self::next_chunk), handing the fields of a row the
-    /// open block streams to `fold`, its reader's ([`FieldFold`]).
+    /// open block streams to `fold`, its reader's ([`FieldFold`]), and
+    /// drawing what the carry holds past its chunk from `holder`, its
+    /// reader's draws on the run's ledger ([`draw_absorbing`]).
     pub async fn next_chunk_folding(
         &mut self,
         source: &dyn ByteRangeSource,
         fold: Option<&mut dyn FieldFold>,
+        holder: Option<&mut Holder>,
     ) -> Result<ChunkEvents<'_>> {
-        let bytes = match self.end {
+        let mut bytes = match self.end {
             Some(end) => {
                 let want = self.chunk_size.min((end - self.read_pos) as usize);
                 if want > 0 { source.read_range(self.read_pos, want).await? } else { Bytes::new() }
@@ -585,6 +740,9 @@ impl ChunkedScanner {
                 bytes
             }
         };
+        if let Some(holder) = holder {
+            draw_absorbing(&mut self.carry, holder, source, self.read_pos, &mut bytes).await?;
+        }
         Ok(self.feed(bytes, fold))
     }
 

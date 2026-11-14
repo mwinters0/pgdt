@@ -7,7 +7,7 @@ in its topic's file under `decisions/`, which opens with what the topic is and i
 index and the citation target: cite as `docs/design/decisions.md`, "D12". The rules, the caps and the meter included,
 are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D157 -->
+<!-- decision-watermark: D158 -->
 
 ## I/O, memory and parallelism
 [`decisions/io.md`](decisions/io.md)
@@ -59,6 +59,7 @@ are `docs/process.md`, "The decision register".
 - **D23** The scanner never owns the bytes it scans, and only the whole `COPY` grammar is structural
 - **D138** A row its reader holds no byte of is streamed once a whole chunk passes inside it
 - **D139** A line past its chunk grows in a mapping of its own, by `mremap`, in huge-page steps
+- **D158** A reader draws what its carry will hold before absorbing a chunk, holding no read while it waits
 - **D25** Parallelize what is CPU-bound
 - **D26** Cancellation is `map_file`'s argument, polled per chunk, closed block or leader window by the mapping passes alone
 - **D27** UTF-8 is validated once per chunk; `unsafe` is denied everywhere and allowed at the site that needs it

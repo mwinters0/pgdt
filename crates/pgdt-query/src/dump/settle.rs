@@ -12,7 +12,7 @@ use pgdt_core::{CopyHeader, Error, Result};
 use pgdt_dump::cache::{CacheMode, Held, Opened, SourceWatch};
 use pgdt_dump::internal::{announce_read_loop, scan_preamble};
 use pgdt_dump::{ScanOptions, attach_text};
-use pgdt_io::{ByteRangeSource, Extent};
+use pgdt_io::{ByteRangeSource, Extent, Ledger};
 use pgdt_mapping::internal::{MapStop, Pass, Target, map_forward, reread_rows, splice};
 use pgdt_model::timescaledb::TimescaleDb;
 use pgdt_model::{CopyBlock, DumpIndex, DumpMetadata, TableName};
@@ -72,7 +72,9 @@ impl Table {
     ) -> Result<Option<Table>> {
         let Opened { source, watch, cache, mode, .. } = opened;
         watch.require_checkable(source.as_ref())?;
-        let pass = ColdPass { source: source.as_ref(), watch: &watch, mode: &mode, scan, cancel };
+        let ledger = Ledger::unlimited();
+        let pass =
+            ColdPass { source: source.as_ref(), watch: &watch, mode: &mode, scan, ledger, cancel };
         let settled = pass.settle(cache, selector, extent, schema_mode).await;
         let settled = watch.attribute(source.as_ref(), settled).await?;
         let watch = Arc::new(watch);
@@ -89,13 +91,16 @@ impl Table {
     }
 }
 
-/// What the pass reads under: the open's source, watch and mode, and the
-/// caller's arrangement and token.
+/// What the pass reads under: the open's source, watch and mode, the
+/// caller's arrangement and token, and the ledger its readers draw a line
+/// held past its chunk from — one without limit, a query's mapping pass
+/// being handed no allowance to carve one from.
 struct ColdPass<'a> {
     source: &'a dyn ByteRangeSource,
     watch: &'a SourceWatch,
     mode: &'a CacheMode,
     scan: ScanOptions,
+    ledger: Ledger,
     cancel: &'a CancellationToken,
 }
 
@@ -162,6 +167,7 @@ impl ColdPass<'_> {
         let stop = map_forward(
             source,
             &self.scan,
+            &self.ledger,
             self.cancel,
             mode,
             watch,
@@ -232,6 +238,7 @@ impl ColdPass<'_> {
             let read = reread_rows(
                 self.source,
                 &self.scan,
+                &self.ledger,
                 self.cancel,
                 self.mode.path(),
                 metadata,

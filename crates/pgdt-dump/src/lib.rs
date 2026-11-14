@@ -37,7 +37,7 @@ pub mod internal {
     pub use crate::map::{Builder, RowFold, derived_diagnostics};
     pub use crate::preamble::scan_preamble;
     pub use crate::scan::{
-        ChunkCarry, ChunkPass, CopyScannerExt, FieldFold, LineMapping, Passes, PieceEndings,
-        RowEnding, StreamedLine, announce_read_loop,
+        ChunkCarry, ChunkPass, CopyScannerExt, FieldFold, GivenUp, LineMapping, Passes,
+        PieceEndings, RowEnding, StreamedLine, announce_read_loop, draw_absorbing,
     };
 }

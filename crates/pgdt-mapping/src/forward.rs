@@ -13,7 +13,7 @@ use pgdt_dump::internal::Builder;
 use pgdt_dump::internal::announce_read_loop;
 use pgdt_dump::internal::derived_diagnostics;
 use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ScanOptions};
-use pgdt_io::{ByteRangeSource, Extent, internal::memory_budget_display};
+use pgdt_io::{ByteRangeSource, Extent, Ledger, internal::memory_budget_display};
 use pgdt_model::{DumpIndex, PostgresInvalidValues, Span, SpanBody, timescaledb};
 use tokio_util::sync::CancellationToken;
 
@@ -197,10 +197,16 @@ pub enum Pass<'a> {
 /// gathers nothing. A block gathering statistics is observed row by row on
 /// this loop, or piece by piece where the leader takes it, every observer
 /// charging the account [`Pass::Parse`] carries.
+///
+/// **Each reader draws what its carry holds past its chunk from `ledger`**,
+/// the run's (`docs/design/decisions.md`, "D157"): this loop's own, which
+/// returns its draw before the leader hands a region to workers that read
+/// past it, and each worker's ([`scan_region`]).
 #[allow(clippy::too_many_arguments)]
 pub async fn map_forward(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
+    ledger: &Ledger,
     cancel: &CancellationToken,
     cache: &CacheMode,
     watch: &SourceWatch,
@@ -263,6 +269,8 @@ pub async fn map_forward(
     // so a map saved after it carries the tail the saved extent states.
     let mut file_end = extent.exact();
     let mut throttle = SaveThrottle::new();
+    // This loop's draws: one reader, so never waiting on a line of its own.
+    let mut holder = ledger.holder();
     // Whether the open `COPY` block is one `target_settled` would count — see
     // the `CopyEnd` arm and the `CopyStart` arm's closed region, its readers.
     let mut open_block_targets = false;
@@ -283,7 +291,8 @@ pub async fn map_forward(
         // A row the open block streams hands its fields to its census and
         // its observer.
         let mut fold = builder.row_fold();
-        let read = chunked.next_chunk_folding(source, fold.as_mut().map(|f| f as _)).await;
+        let fold = fold.as_mut().map(|f| f as _);
+        let read = chunked.next_chunk_folding(source, fold, Some(&mut holder)).await;
         let mut chunk = match read {
             Ok(chunk) => chunk,
             // The check point above, reached through the read rather than
@@ -400,9 +409,15 @@ pub async fn map_forward(
                     let outcome = match records {
                         true => RegionOutcome { scan: RegionScan::Declined, shortfall: None },
                         false => {
+                            // The line this loop drew for lies before the
+                            // block and is scanned: kept while it waits on
+                            // the region, it is the earliest, which no
+                            // worker's draw could pass.
+                            holder.release();
                             scan_region(
                                 source,
                                 scan_options,
+                                ledger,
                                 cancel,
                                 &header.qualified_name(),
                                 header_offset,

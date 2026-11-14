@@ -19,10 +19,10 @@
 use std::ops::Range;
 
 use pgdt_core::{Error, Result};
-use pgdt_dump::internal::ChunkCarry;
+use pgdt_dump::internal::{ChunkCarry, draw_absorbing};
 use pgdt_dump::{CopyEnd, ScanOptions};
 use pgdt_io::{
-    ByteRangeSource, Extent, PartitionRead, Partitioning, WaitPolicy,
+    ByteRangeSource, Extent, Ledger, PartitionRead, Partitioning, WaitPolicy,
     internal::{cut, worker_count},
 };
 use pgdt_model::LongestLine;
@@ -212,10 +212,17 @@ pub(crate) fn report_shortfall(flag: &mut bool, shortfall: Option<Shortfall>) {
 /// decoder: such a tail is left serial until it is worth more than one reader
 /// costs. Erring towards the serial scanner is the direction this bound is
 /// wanted in — the alternative admits readers the budget never granted.
+///
+/// **Each worker draws what its carry holds past its chunk from `ledger`**,
+/// the run's, waiting in file order behind an earlier piece's line and
+/// giving its own up to one, so the leftmost line always progresses and no
+/// window deadlocks (`docs/design/decisions.md`, "D157"); every piece of a
+/// window is polled while any waits.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn scan_region(
     source: &dyn ByteRangeSource,
     options: &ScanOptions,
+    ledger: &Ledger,
     cancel: &CancellationToken,
     table: &str,
     header_offset: u64,
@@ -258,6 +265,7 @@ pub(crate) async fn scan_region(
     let scanned = run_region(
         source,
         options,
+        ledger,
         cancel,
         table,
         &advice,
@@ -329,7 +337,8 @@ fn shortfall(
 /// at its peak is the worker count times what the source said one costs — the
 /// per-worker term `Parallelism::memory_bytes` was solved against to reach
 /// that count — while no line outgrows its chunk, a worker's carried line
-/// growing up to `max_line_bytes` uncharged where one does. **On a boundaried source, wide in the source's partitions, not
+/// drawing on the run's ledger where one does (`docs/design/decisions.md`,
+/// "D157"). **On a boundaried source, wide in the source's partitions, not
 /// in its charge** (`Partitioning::window_end`, and
 /// `docs/design/decisions.md`, "D8"): the charge covers a block unit, a chunk
 /// and a decoder, so sizing the window by it would offer `cut` more boundaries
@@ -339,6 +348,7 @@ fn shortfall(
 async fn run_region(
     source: &dyn ByteRangeSource,
     options: &ScanOptions,
+    ledger: &Ledger,
     cancel: &CancellationToken,
     table: &str,
     advice: &Partitioning,
@@ -377,6 +387,7 @@ async fn run_region(
                 scan_partition(
                     source,
                     options,
+                    ledger,
                     advice.partition_read(),
                     entry,
                     range,
@@ -498,6 +509,7 @@ async fn run_region(
 async fn scan_partition(
     source: &dyn ByteRangeSource,
     options: &ScanOptions,
+    ledger: &Ledger,
     read: PartitionRead,
     entry: PieceEntry,
     range: Range<u64>,
@@ -509,6 +521,7 @@ async fn scan_partition(
     let mut out = Vec::new();
     let mut entry = entry;
     let mut carry = ChunkCarry::new(options.read.chunk_size_bytes);
+    let mut holder = ledger.holder();
     let mut fold = census.as_ref().map(CensusPlan::fold);
     let mut at = range.start;
     let mut want = match read {
@@ -519,7 +532,9 @@ async fn scan_partition(
     while at < size {
         let end = (at + want).min(size);
         let len = usize::try_from(end - at).unwrap_or(usize::MAX);
-        let bytes = source.read_range(at, len).await?;
+        let mut bytes = source.read_range(at, len).await?;
+        // Drawn in this half, which can wait: the blocking half absorbs it.
+        draw_absorbing(&mut carry, &mut holder, source, at, &mut bytes).await?;
         let eof = end >= size;
         // The observer, the carry and its fold go to the blocking pool with
         // the bytes and come back with the scan, one read of the piece at a

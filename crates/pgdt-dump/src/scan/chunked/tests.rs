@@ -295,6 +295,8 @@ struct InMemory {
     file: Bytes,
     open: bool,
     reached: std::sync::atomic::AtomicBool,
+    /// The bytes every read so far answered.
+    read: std::sync::atomic::AtomicUsize,
 }
 
 impl ByteRangeSource for InMemory {
@@ -304,6 +306,7 @@ impl ByteRangeSource for InMemory {
         len: usize,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Bytes>> + Send + '_>> {
         let at = offset as usize;
+        self.read.fetch_add(len, std::sync::atomic::Ordering::SeqCst);
         Box::pin(async move { Ok(self.file.slice(at..at + len)) })
     }
     fn read_at_most(
@@ -350,6 +353,7 @@ async fn a_scan_finds_an_open_end_where_a_read_answers_short() {
                 file: Bytes::from_static(file),
                 open,
                 reached: std::sync::atomic::AtomicBool::new(false),
+                read: std::sync::atomic::AtomicUsize::new(0),
             };
             let options = ScanOptions { read: options(chunk_size), ..ScanOptions::default() };
             let mut events = Vec::new();
@@ -447,6 +451,8 @@ struct Streamed {
     events: Result<Vec<String>>,
     streamed: usize,
     allocated: usize,
+    /// How many times the carry gave up what it held, where it was made to.
+    given_up: usize,
 }
 
 /// A fold recording each streamed row's start and fields as it was handed
@@ -498,7 +504,21 @@ fn stream(file: &[u8], read: ReadOptions, stream: bool) -> Streamed {
 
 /// [`stream`], its fold holding field `holds` whole.
 fn stream_holding(file: &[u8], read: ReadOptions, stream: bool, holds: Option<usize>) -> Streamed {
-    let mut out = Streamed { events: Ok(Vec::new()), streamed: 0, allocated: 0 };
+    stream_giving_up(file, read, stream, holds, false)
+}
+
+/// [`stream_holding`], its carry made — where `give_up` — to give up what it
+/// holds past its chunk before every chunk it absorbs and take it back read
+/// again from `file` a chunk at a time, as a reader a ledger asks does
+/// ([`draw_absorbing`]).
+fn stream_giving_up(
+    file: &[u8],
+    read: ReadOptions,
+    stream: bool,
+    holds: Option<usize>,
+    give_up: bool,
+) -> Streamed {
+    let mut out = Streamed { events: Ok(Vec::new()), streamed: 0, allocated: 0, given_up: 0 };
     let mut events = Vec::new();
     let mut fold = Recorder { holds, ..Recorder::default() };
     let mut chunked = ChunkedScanner::new(CopyScanner::new(), file.len() as u64, read);
@@ -506,6 +526,15 @@ fn stream_holding(file: &[u8], read: ReadOptions, stream: bool, holds: Option<us
     let ran: Result<()> = (|| loop {
         let want = read.chunk_size_bytes.min(file.len() - read_pos);
         let bytes = Bytes::copy_from_slice(&file[read_pos..read_pos + want]);
+        if give_up && chunked.carry.charge_absorbing(&bytes) > 0 {
+            let given = chunked.carry.give_up();
+            let range = given.range(read_pos as u64);
+            let (start, end) = (range.start as usize, range.end as usize);
+            for again in file[start..end].chunks(read.chunk_size_bytes) {
+                chunked.carry.restore(again);
+            }
+            out.given_up += 1;
+        }
         let mut chunk = chunked.feed(bytes, Some(&mut fold));
         read_pos += want;
         while let Some(event) = chunk.next_event()? {
@@ -653,4 +682,130 @@ fn a_line_after_a_streamed_block_is_held() {
     assert_eq!(streamed.events.unwrap(), held.events.unwrap());
     assert_eq!(streamed.streamed, 1, "the row alone");
     assert!(streamed.allocated > 1 << 12, "the last line held, {}", streamed.allocated);
+}
+
+/// **What a carry will hold past its chunk is the line it carries
+/// completed, or joined whole**, and nothing where that fits a chunk or
+/// nothing is carried.
+#[test]
+fn a_carry_charges_what_it_will_hold_past_its_chunk() {
+    let carry = carrying(b"abcdef");
+    assert_eq!(carry.charge_absorbing(b"gh\nij"), 9, "completed by the prefix");
+    assert_eq!(carry.charge_absorbing(b"ghij"), 10, "joined whole");
+    assert_eq!(carrying(b"ab").charge_absorbing(b"c\nde"), 0, "no longer than its chunk");
+    assert_eq!(ChunkCarry::new(4).charge_absorbing(b"abcdefgh"), 0, "nothing carried");
+}
+
+/// **A carry that gives up what it holds and takes it back reads as one that
+/// never gave it up**: the line it carries, and the field a streamed row's
+/// fold holds whole, its CR held back included, dropped before every chunk
+/// that grows either past its chunk and read again from where they lie —
+/// whatever the row's ending and wherever the chunk boundaries fall.
+#[test]
+fn a_carry_given_up_and_taken_back_reads_as_one_never_given_up() {
+    for (block, long) in
+        [("\n", "\n"), ("\r\n", "\r\n"), ("\n", "\r\n"), ("\r\n", "\n"), ("\n", "\r\rx\n")]
+    {
+        let file = streamable(200, block, long);
+        for chunk_size in [1usize, 2, 3, 5, 13, 64, 199] {
+            let read = options(chunk_size);
+            for (stream, holds) in [(false, None), (true, Some(1)), (true, Some(2))] {
+                let context =
+                    format!("{block:?} block, {long:?} row, chunk {chunk_size}, {stream}");
+                let kept = stream_giving_up(&file, read, stream, holds, false);
+                let given = stream_giving_up(&file, read, stream, holds, true);
+                match (&kept.events, &given.events) {
+                    (Ok(kept), Ok(got)) => assert_eq!(got, kept, "{context}"),
+                    (Err(kept), Err(got)) => {
+                        assert_eq!(format!("{got:?}"), format!("{kept:?}"), "{context}");
+                    }
+                    (kept, got) => panic!("{context}: kept {kept:?}, given up {got:?}"),
+                }
+                assert_eq!(kept.given_up, 0);
+                assert!(given.given_up > 0, "{context}: nothing given up");
+            }
+        }
+    }
+}
+
+/// **A held line waits behind an earlier one, and gives its own up to it**:
+/// on a ledger with no room, a read loop's line past its chunk waits while an
+/// earlier line holds, its chunk dropped and read again once admitted; and
+/// asked for its room by an earlier line, it drops the line, waits behind
+/// that line and reads the line again from its start — its events those of a
+/// loop drawing on no ledger, its source read past the file's length.
+#[test]
+fn a_held_line_waits_behind_an_earlier_one_and_gives_its_own_up() {
+    use pgdt_io::{Admission, Allowance, Arrangement, ArrangementRequest};
+    use std::future::Future;
+    use std::task::{Context, Waker};
+
+    let mut file = b"SET x = 1;\nCOPY public.t (a) FROM stdin;\n".to_vec();
+    file.extend_from_slice("x".repeat(300).as_bytes());
+    file.extend_from_slice(b"\n1\n\\.\n");
+    let chunk_size = 16;
+    let reference = drive(&file, chunk_size).events;
+    let source = InMemory {
+        file: Bytes::from(file.clone()),
+        open: false,
+        reached: std::sync::atomic::AtomicBool::new(false),
+        read: std::sync::atomic::AtomicUsize::new(0),
+    };
+    // An allowance whose margin leaves nothing: a ledger of no room, which
+    // admits the earliest line alone.
+    let request = ArrangementRequest::recommended(1, None);
+    let ledger = Arrangement::resolve(&Allowance::Stated(256 << 20), request).ledger().clone();
+    assert_eq!(ledger.capacity(), Some(0));
+    let (mut earlier, mut reader) = (ledger.holder(), ledger.holder());
+    let mut cx = Context::from_waker(Waker::noop());
+    let drawn = std::pin::pin!(earlier.draw(0, 1)).as_mut().poll(&mut cx);
+    assert_eq!(drawn, Poll::Ready(Admission::Held), "the earliest line alone");
+
+    let mut chunked =
+        ChunkedScanner::new(CopyScanner::new(), file.len() as u64, options(chunk_size));
+    let (mut events, mut waited, mut gave_up) = (Vec::new(), false, false);
+    while !chunked.at_end() {
+        // Once the reader holds its line, an earlier one asks for room,
+        // handing its holder back once admitted.
+        let mut asking = (waited && !gave_up && reader.held() > 0).then(|| {
+            let mut asker = ledger.holder();
+            let mut draw = Box::pin(async move { (asker.draw(0, 1).await, asker) });
+            assert!(draw.as_mut().poll(&mut cx).is_pending(), "the reader holds the room");
+            draw
+        });
+        let mut next = std::pin::pin!(chunked.next_chunk_folding(&source, None, Some(&mut reader)));
+        let mut chunk = loop {
+            match next.as_mut().poll(&mut cx) {
+                Poll::Ready(chunk) => break chunk.unwrap(),
+                // The reader gave its line up and waits behind the earlier
+                // one, which is admitted now and done with its line.
+                Poll::Pending if asking.is_some() => {
+                    let Poll::Ready((admitted, asker)) =
+                        asking.take().unwrap().as_mut().poll(&mut cx)
+                    else {
+                        panic!("the earlier line waits on the reader that gave its own up");
+                    };
+                    assert_eq!(admitted, Admission::Held);
+                    gave_up = true;
+                    drop(asker);
+                }
+                // The reader waits behind the earlier line until it is done.
+                Poll::Pending => {
+                    assert!(!waited, "it waits behind the earlier line once");
+                    waited = true;
+                    earlier.release();
+                }
+            }
+        };
+        while let Some(event) = chunk.next_event().unwrap() {
+            events.push(format!("{event:?}"));
+        }
+        assert!(asking.is_none(), "the reader drew without giving its line up");
+    }
+    assert!(waited && gave_up, "waited {waited}, gave up {gave_up}");
+    assert_eq!(events, reference);
+    let read = source.read.load(std::sync::atomic::Ordering::SeqCst);
+    // The chunk dropped while it waited, and the line past its chunk.
+    let again = file.len() + 2 * chunk_size;
+    assert!(read > again, "the line read again: {read} bytes of {}", file.len());
 }

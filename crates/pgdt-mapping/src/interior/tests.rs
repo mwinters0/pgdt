@@ -6,7 +6,7 @@ use pgdt_dump::internal::ChunkCarry;
 use pgdt_dump::{CopyScanner, Event};
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_fixtures::{edge_cases, fixture};
-use pgdt_io::{ByteRangeSource, PartitionRead};
+use pgdt_io::{ByteRangeSource, Ledger, PartitionRead};
 use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_model::internal::{FieldCount, Kept};
 use pgdt_model::{BlockCensus, UnrepresentableTier};
@@ -375,6 +375,7 @@ async fn a_scheduled_region_answers_what_the_serial_scanner_answers() {
                 let got = scan_region(
                     &source,
                     &options,
+                    &Ledger::unlimited(),
                     &CancellationToken::new(),
                     "public.t",
                     block.header_offset,
@@ -478,6 +479,7 @@ async fn no_read_a_worker_makes_exceeds_the_chunk_size() {
             let got = scan_region(
                 &source,
                 &options,
+                &Ledger::unlimited(),
                 &CancellationToken::new(),
                 "public.t",
                 block.header_offset,
@@ -539,6 +541,7 @@ async fn no_read_a_worker_makes_exceeds_the_stated_unit() {
             let got = scan_region(
                 &source,
                 &options,
+                &Ledger::unlimited(),
                 &CancellationToken::new(),
                 "public.t",
                 block.header_offset,
@@ -592,6 +595,7 @@ async fn a_region_too_small_to_cut_is_left_to_the_serial_scanner() {
     let got = scan_region(
         &source,
         &serial,
+        &Ledger::unlimited(),
         &CancellationToken::new(),
         "public.t",
         block.header_offset,
@@ -612,6 +616,7 @@ async fn a_region_too_small_to_cut_is_left_to_the_serial_scanner() {
     let got = scan_region(
         &source,
         &shipped,
+        &Ledger::unlimited(),
         &CancellationToken::new(),
         "public.t",
         block.header_offset,
@@ -638,6 +643,7 @@ async fn a_cancelled_region_closes_nothing_and_raises_nothing() {
     let got = scan_region(
         &source,
         &options,
+        &Ledger::unlimited(),
         &cancelled(),
         "public.t",
         block.header_offset,
@@ -673,6 +679,7 @@ async fn a_budget_affording_fewer_readers_than_asked_for_answers_a_shortfall() {
     let got = scan_region(
         &source,
         &options,
+        &Ledger::unlimited(),
         &CancellationToken::new(),
         "public.t",
         block.header_offset,
@@ -713,6 +720,7 @@ async fn an_arrangement_that_delivers_what_was_asked_answers_no_shortfall() {
     let got = scan_region(
         &source,
         &serial,
+        &Ledger::unlimited(),
         &CancellationToken::new(),
         "public.t",
         block.header_offset,
@@ -737,6 +745,7 @@ async fn an_arrangement_that_delivers_what_was_asked_answers_no_shortfall() {
     let got = scan_region(
         &source,
         &shipped,
+        &Ledger::unlimited(),
         &CancellationToken::new(),
         "public.t",
         block.header_offset,
@@ -770,6 +779,7 @@ async fn a_block_the_file_ends_inside_is_unterminated() {
     let err = scan_region(
         &source,
         &options,
+        &Ledger::unlimited(),
         &CancellationToken::new(),
         "public.t",
         0,
@@ -805,6 +815,7 @@ async fn a_row_longer_than_a_tail_read_is_still_one_row() {
         let got = scan_region(
             &source,
             &options,
+            &Ledger::unlimited(),
             &CancellationToken::new(),
             "public.t",
             block.header_offset,
@@ -857,6 +868,7 @@ async fn a_worker_reads_a_line_longer_than_a_read_once() {
     let (scans, _) = scan_partition(
         &source,
         &options,
+        &Ledger::unlimited(),
         PartitionRead::Chunked,
         PieceEntry::RowStart,
         data_offset..data_offset + 16,
@@ -890,6 +902,7 @@ async fn a_piece_inside_a_line_reads_its_own_range_alone() {
     let (scans, _) = scan_partition(
         &source,
         &options,
+        &Ledger::unlimited(),
         PartitionRead::Chunked,
         PieceEntry::Resync,
         start..limit,
@@ -918,6 +931,7 @@ async fn a_worker_refuses_a_line_past_the_limit_at_its_start() {
     let refused = scan_partition(
         &source,
         &options,
+        &Ledger::unlimited(),
         PartitionRead::Chunked,
         PieceEntry::RowStart,
         data_offset..data_offset + 16,
@@ -966,6 +980,7 @@ async fn a_split_block_refuses_the_row_a_serial_scan_refuses() {
                 let got = scan_region(
                     &source,
                     &options,
+                    &Ledger::unlimited(),
                     &CancellationToken::new(),
                     "public.t",
                     0,

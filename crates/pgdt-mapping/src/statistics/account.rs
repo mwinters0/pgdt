@@ -4,6 +4,7 @@
 use std::sync::{Arc, Mutex};
 
 use pgdt_core::internal as instrument;
+use pgdt_io::Ledger;
 
 /// The growth an observer holds uncharged before it updates the pass's
 /// [`StatisticsAccount`], which it does, once past it, before it observes
@@ -37,13 +38,29 @@ pub(crate) const STATISTICS_ACCOUNT_CHARGE_STEP: u64 = 64 << 10;
 /// "D85"): where [`Self::allowance`] is stated and the terms pass it, the
 /// observer whose update saw that declines, bar the close `finish` makes, so
 /// what the account sums is what the margin is left against.
-#[derive(Debug, Default)]
+///
+/// **And it is the statistics' draw on the run's ledger**: every update
+/// draws the account's total there, in place of the last
+/// ([`Ledger::draw_statistics`]), inside the lock that moved it, so the
+/// ledger's held lines are admitted from what the statistics leave
+/// (`docs/design/decisions.md`, "D157"). Its first update replaces the
+/// `held` the arrangement opened the draw at, so a pass is carved around
+/// exactly what its account loads first.
+#[derive(Debug)]
 pub struct StatisticsAccount {
     state: Mutex<AccountState>,
     /// The bytes every statistic alive may hold between them
     /// ([`pgdt_io::Arrangement::statistics_allowance`]); `None` bounds
     /// nothing and declines nothing.
     allowance: Option<u64>,
+    /// The run's ledger, which the account's total is drawn from.
+    ledger: Ledger,
+}
+
+impl Default for StatisticsAccount {
+    fn default() -> Self {
+        Self::bounded_by(None)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -73,9 +90,17 @@ pub(crate) enum Term {
 
 impl StatisticsAccount {
     /// An account bounded by `allowance` — `None` bounding nothing, which is
-    /// [`Self::default`] and every caller that states no allowance.
+    /// [`Self::default`] and every caller that states no allowance — drawing
+    /// on a ledger without limit.
     pub(crate) fn bounded_by(allowance: Option<u64>) -> Self {
-        Self { state: Mutex::default(), allowance }
+        Self::charging(allowance, Ledger::unlimited())
+    }
+
+    /// An account bounded by `allowance`, drawing its total from `ledger`:
+    /// both an arrangement's ([`pgdt_io::Arrangement::statistics_allowance`],
+    /// [`pgdt_io::Arrangement::ledger`]).
+    pub(crate) fn charging(allowance: Option<u64>, ledger: Ledger) -> Self {
+        Self { state: Mutex::default(), allowance, ledger }
     }
 
     /// The bytes every statistic alive may hold between them, where one was
@@ -113,6 +138,7 @@ impl StatisticsAccount {
         state.peak = state.peak.max(total);
         let tolerance = open * STATISTICS_ACCOUNT_CHARGE_STEP;
         instrument::statistics_account_updated(total, state.announced, tolerance);
+        self.ledger.draw_statistics(total);
         self.allowance.is_some_and(|allowance| total > allowance)
     }
 
@@ -306,3 +332,6 @@ pub struct StatisticsHeld {
     /// The largest the sum of the terms reached, read at an update.
     pub peak: u64,
 }
+
+#[cfg(test)]
+mod tests;

@@ -4,7 +4,8 @@ use std::num::NonZeroU64;
 use pgdt_dump::cache::{CacheMode, colocated_path};
 use pgdt_fixtures::{all_fixtures, refused_field, statistics_fixture};
 use pgdt_io::{
-    Allowance, ArrangementRequest, DEFAULT_MEMORY_BUDGET, Jobs, LocalFileSource, Parallelism,
+    Allowance, ArrangementRequest, DEFAULT_MEMORY_BUDGET, Jobs, Ledger, LocalFileSource,
+    Parallelism,
 };
 use pgdt_model::internal::{ColumnStatisticsExt, ColumnStatisticsParts};
 use pgdt_model::{ColumnStatistics, GroupSizing};
@@ -48,6 +49,7 @@ async fn gathered_at(
     let mut reader = Rereads {
         source,
         scan_options: &options,
+        ledger: &Ledger::unlimited(),
         cancel: &cancel,
         invalid: PostgresInvalidValues::Default,
         cache_path: None,
