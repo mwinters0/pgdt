@@ -312,9 +312,9 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     // The replay, carved now the pass is done: the map it extended is
     // gone, and what stays resident beside the replay's readers is the
     // settled table's statistics, which it and its plan keep
-    // (`docs/design/decisions.md`, "D85"), and the longest line its
-    // blocks hold, carved at its query's factor before the readers so it
-    // is admitted without waiting on them (D157).
+    // (`docs/design/decisions.md`, "D85"), and the longest line it will
+    // hold, carved at its query's factor before the readers so it is
+    // admitted without waiting on them (D157, D160).
     let line_charge = settled.line_charge(read.options(), &query_options).map_err(&report)?;
     let held = statistics_held(&settled);
     let replay = stated.resolve_replay(settled.source().as_ref(), held, line_charge);

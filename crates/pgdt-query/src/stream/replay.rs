@@ -52,10 +52,11 @@ use crate::prune::SortedStop;
 /// bound the state requires stops at its first row past it, as under a static
 /// filter's.
 ///
-/// **A row nothing here reads a field of is streamed** once it outgrows its
-/// chunk ([`reads_no_field`]): counted and held to its block's width, its
-/// bytes never held, so a replay reading no field holds no line at any
-/// length (`docs/design/decisions.md`, "D138").
+/// **A row nothing planned here reads a field of is streamed** once it
+/// outgrows its chunk ([`reads_no_field`]): counted and held to its block's
+/// width, its bytes never held and kept whatever `dynamic` reads, so a
+/// replay whose plan reads no field holds no line at any length, as its
+/// line charge assumes (`docs/design/decisions.md`, "D138", "D160").
 ///
 /// **A line held past its chunk term draws on `ledger`** before its chunk is
 /// absorbed (`docs/design/decisions.md`, "D158"), charged its bytes and what
@@ -265,11 +266,12 @@ pub(super) fn replay<'a>(
                     batcher.holds_drawn_line();
                 }
                 // Whether the line this chunk leaves for the next may be
-                // streamed, under the dynamic state just read.
+                // streamed: said again each chunk, a block entered inside
+                // its data having no header to say it at.
                 if let Some(opened) = active.as_ref()
                     && chunk.scanner().in_copy_block()
                 {
-                    chunk.stream_rows(reads_no_field(opened, stop, dynamic.as_ref()));
+                    chunk.stream_rows(reads_no_field(opened, stop));
                 }
                 // The carried line first, being earlier in the file: a row of
                 // the carry pass lies whole in it and in no read chunk.
@@ -304,7 +306,7 @@ pub(super) fn replay<'a>(
                             )?;
                             *shared.comparison_notes.lock().unwrap() = notes;
                             *shared.resolved_schema.lock().unwrap() = resolved;
-                            chunk.stream_rows(reads_no_field(&opened, stop, dynamic.as_ref()));
+                            chunk.stream_rows(reads_no_field(&opened, stop));
                             active = Some(opened);
                         }
                         Event::Row(row) => {
@@ -561,22 +563,16 @@ pub(super) fn replay<'a>(
 }
 
 /// Whether a row of `active`'s block may be streamed — counted, once a
-/// whole chunk passes inside it, without its bytes being held: nothing the replay asks
-/// of it reads a field — not its batch, its filter or its block's sorted
-/// `stop`, nor `dynamic` under the state it last read. A state that moves to
-/// one reading a field while a row streams leaves that row kept and unstopped,
-/// which a dynamic filter's contract allows, a row it keeps never being wrong
+/// whole chunk passes inside it, without its bytes being held: nothing the
+/// plan asks of it reads a field — not its batch, its filter or its block's
+/// sorted `stop`. **A dynamic filter is not asked**: its state arrives after
+/// the line charge was carved (`docs/design/decisions.md`, "D160"), so a row
+/// it would read a field of is streamed and kept unread and unstopped, which
+/// its contract allows, a row it keeps never being wrong
 /// (`docs/design/decisions.md`, "D138").
-fn reads_no_field(
-    active: &Active,
-    stop: Option<&SortedStop>,
-    dynamic: Option<&DynamicRead>,
-) -> bool {
+fn reads_no_field(active: &Active, stop: Option<&SortedStop>) -> bool {
     let (_, _, batcher, filter, _) = active;
-    !batcher.decodes_fields()
-        && !filter.reads_fields()
-        && stop.is_none()
-        && dynamic.is_none_or(|dynamic| !dynamic.reads_fields() && dynamic.stop().is_none())
+    !batcher.decodes_fields() && !filter.reads_fields() && stop.is_none()
 }
 
 /// Add `unread` to the entry of `early_stops` for the block at

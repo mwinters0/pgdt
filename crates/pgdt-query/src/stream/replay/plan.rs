@@ -191,15 +191,33 @@ pub(in crate::stream) fn charged(factor: Option<Factor>, held: u64) -> u64 {
 /// read `chunk` bytes at a time, under the factor `blocks` — `matches`
 /// planned for its query — fold to: what that line draws once it outgrows its
 /// chunk, its length as I71 measures it held whole, and nothing where every
-/// block's longest line fits its chunk, which no reader draws for
+/// such line fits its chunk, which no reader draws for
 /// (`docs/design/decisions.md`, "D160").
+///
+/// **Only a block whose rows the read holds is charged**: not one whose every
+/// run of groups the static filter prunes, the read reaching none of its
+/// rows, nor one whose batch, static filter and sorted stop read no field
+/// ([`PlannedBlock::reads_fields`]), whose long rows the replay streams
+/// whatever a dynamic filter later reads (`docs/design/decisions.md`,
+/// "D138").
 pub(in crate::stream) fn line_charge(
     blocks: &BTreeMap<u64, PlannedBlock>,
     matches: &[CopyBlock],
+    query_options: &QueryOptions,
+    metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
     chunk: usize,
 ) -> u64 {
-    let Some(longest) = matches.iter().filter_map(|block| block.longest_line).map(|l| l.len).max()
-    else {
+    let Pruned { kept, stops, .. } =
+        prune_blocks(matches, blocks, query_options, metadata, database);
+    let holds = |block: &&CopyBlock| {
+        let at = &block.header_offset;
+        let reached = kept.get(at).is_none_or(|runs| !runs.iter().all(Range::is_empty));
+        let reads = blocks.get(at).is_none_or(PlannedBlock::reads_fields) || stops.contains_key(at);
+        reached && reads
+    };
+    let longest = matches.iter().filter(holds).filter_map(|block| block.longest_line);
+    let Some(longest) = longest.map(|l| l.len).max() else {
         return 0;
     };
     match longest > chunk as u64 {
@@ -478,6 +496,14 @@ pub(in crate::stream) struct PlannedBlock {
 }
 
 impl PlannedBlock {
+    /// Whether a row of the block has a field read: its batch decoding a
+    /// column or its filter reading a term. A block reading none, and
+    /// holding no sorted stop, streams a row that outgrows its chunk
+    /// (`reads_no_field`), so its lines are charged nothing ([`line_charge`]).
+    pub(in crate::stream) fn reads_fields(&self) -> bool {
+        self.field_targets.iter().any(Option::is_some) || self.filter.reads_fields()
+    }
+
     /// The decode factor of each column the block's batch reads
     /// ([`column_factor`]), and the key factor of each of its filter's terms
     /// ([`ResolvedExpr::key_factors`]).

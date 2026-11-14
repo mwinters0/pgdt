@@ -398,10 +398,12 @@ impl Table {
 
     /// **The charge of the longest line a query of this table under
     /// `options` will hold**, each piece read with `read`: the longest line
-    /// its blocks hold, as the map records it ([`CopyBlock::longest_line`]),
-    /// and what the query's batch decodes beside it, its one factor — or
-    /// nothing where that line fits its chunk, no reader holding it past its
-    /// chunk term. What a caller hands
+    /// of the blocks whose rows it holds, as the map records it
+    /// ([`CopyBlock::longest_line`]) — never a block whose every row group
+    /// its filter prunes, nor one whose batch and filter read no field, its
+    /// long rows streamed — and what the query's batch decodes beside it, its
+    /// one factor; or nothing where that line fits its chunk, no reader
+    /// holding it past its chunk term. What a caller hands
     /// [`ArrangementRequest::line_charge`](pgdt_io::ArrangementRequest::line_charge)
     /// before resolving the arrangement it plans under ([`Self::plan`]), so
     /// that line is admitted without waiting on the readers carved beside it

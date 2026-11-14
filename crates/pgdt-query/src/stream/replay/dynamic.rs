@@ -70,7 +70,9 @@ pub enum RowEvaluation {
     /// Each row is left to the filter's consumer.
     #[default]
     Off,
-    /// Each row the state rejects is dropped before a column of it decodes.
+    /// Each row the state rejects is dropped before a column of it decodes,
+    /// bar a row a plan reading no field streams past its chunk, kept unread
+    /// (`docs/design/decisions.md`, "D160").
     On,
 }
 

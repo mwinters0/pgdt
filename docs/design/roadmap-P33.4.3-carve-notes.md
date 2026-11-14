@@ -41,9 +41,8 @@ chunk now lowers where the ceiling binds.
 ## Negative results
 
 - **The charge is per block, not per row group**: the map records a block's
-  longest line, so a read whose pruning skips the group holding it is still
-  charged for it, and so is one whose batch and filters read no field, a
-  dynamic filter planned after the arrangement being free to read one (D160).
+  longest line, so a read whose pruning skips the group holding it, keeping
+  another, is still charged for it (D160).
 - **The charge plans the table twice**: `Table::line_charge` resolves every
   block for the factor before the arrangement, and `Table::plan` again after
   it. Both read no byte; neither is on a row's path.

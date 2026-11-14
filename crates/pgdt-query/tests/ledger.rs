@@ -22,7 +22,8 @@ use pgdt_io::{
     Admission, Allowance, Arrangement, ArrangementRequest, ByteRangeSource, Extent, Jobs,
     LocalFileSource, WorkerMemory,
 };
-use pgdt_query::{QueryOptions, ScanExtent, Table, TablePartitions};
+use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_query::{Expr, Predicate, PredicateOp, QueryOptions, ScanExtent, Table, TablePartitions};
 use tokio_util::sync::CancellationToken;
 
 mod common;
@@ -244,6 +245,40 @@ async fn a_read_over_mapped_blocks_carves_its_longest_line() {
         assert_eq!(rows, 3, "{declared}");
         assert_eq!(earlier.held(), rest, "{declared}: nothing was asked of the rest");
     }
+}
+
+/// `column <op> value`, `op` the comparing variant's constructor.
+fn term(column: &str, op: fn(String) -> PredicateOp, value: &str) -> Expr {
+    Expr::Term(Predicate { column: column.into(), op: op(value.into()) })
+}
+
+/// **The charge counts only lines the read can hold**
+/// (`docs/design/decisions.md`, "D160"): a block whose every row group its
+/// static filter prunes is charged nothing, the read reaching none of its
+/// rows, and so is one whose batch and static filter read no field, the
+/// replay streaming its long rows; a filter keeping the long row's group, or
+/// one reading a field of a projection reading none, charges it.
+#[tokio::test]
+async fn a_charge_counts_only_lines_the_read_can_hold() {
+    let text = "x".repeat(16 << 10);
+    let (source, line) = long_row("text", "short", &text);
+    let dump = common::mapped(source, &StatisticsRequest::DATA).await;
+    let table = dump.table(&selector("public.t")).unwrap().unwrap();
+    let every = QueryOptions::default();
+    let charge = 2 * line;
+    assert_eq!(table.line_charge(reads(CHUNK), &every).unwrap(), charge);
+    let filtered = |filter| QueryOptions { filter, ..every.clone() };
+    let pruned = filtered(term("a", PredicateOp::Gt, "5"));
+    assert_eq!(table.line_charge(reads(CHUNK), &pruned).unwrap(), 0, "its one group is pruned");
+    let kept = filtered(term("a", PredicateOp::Ge, "2"));
+    assert_eq!(table.line_charge(reads(CHUNK), &kept).unwrap(), charge, "its group is kept");
+    let unread = QueryOptions { use_statistics: false, ..pruned };
+    assert_eq!(table.line_charge(reads(CHUNK), &unread).unwrap(), charge, "nothing is pruned");
+
+    let counted = QueryOptions { projection: Some(Vec::new()), ..every.clone() };
+    assert_eq!(table.line_charge(reads(CHUNK), &counted).unwrap(), 0, "no field is read");
+    let tested = QueryOptions { filter: term("a", PredicateOp::Eq, "2"), ..counted };
+    assert_eq!(table.line_charge(reads(CHUNK), &tested).unwrap(), line, "its filter reads `a`");
 }
 
 /// The tables of the `types` fixture whose lines a four-byte chunk holds

@@ -818,17 +818,19 @@ async fn a_row_the_state_rejects_is_dropped_before_it_decodes() {
     assert_eq!(read_both(&dump, &index, Some(on_v)).await, Err(refused));
 }
 
-/// **A row a state reading a field evaluates is held, though nothing is
-/// projected**: `public.t`'s twenty rows, each many of the replay's chunks
-/// long, are counted with no column read, and under `id > 10`, its rows
-/// evaluated, the ten it rejects are dropped as a held row is, rather than
-/// streamed past the state and kept.
+/// **A row a plan reading no field streams is kept whatever the state
+/// reads** (`docs/design/decisions.md`, "D160"): `public.t`'s twenty rows,
+/// each odd one many of the replay's chunks long, are counted with no column
+/// read, and under `id > 10`, its rows evaluated, the five short rows it
+/// rejects are dropped, and the five long ones streamed past the state and
+/// kept, its charge carving nothing for them.
 #[tokio::test]
-async fn a_row_the_state_reads_is_held_though_no_column_is() {
+async fn a_row_a_plan_reading_no_field_streams_is_kept_whatever_the_state_reads() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("long.sql");
     let long = "x".repeat(4096);
-    let rows: String = (1..=20).map(|id| format!("{id}\t{long}\n")).collect();
+    let value = |id: u32| if id % 2 == 1 { long.as_str() } else { "x" };
+    let rows: String = (1..=20).map(|id| format!("{id}\t{}\n", value(id))).collect();
     std::fs::write(
         &path,
         format!(
@@ -842,10 +844,11 @@ async fn a_row_the_state_reads_is_held_though_no_column_is() {
     let table = opened(&path).await.table(&name.into()).unwrap().unwrap();
     let options = QueryOptions { projection: Some(Vec::new()), ..QueryOptions::default() };
     let read = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    assert_eq!(table.line_charge(read, &options).unwrap(), 0);
     let plan = Arc::new(table.plan(read, options, &arranged(1)).unwrap());
 
     for (dynamic, rows, dropped) in
-        [(None, 20, 0), (Some(Moving::constant(term("id", PredicateOp::Gt, "10"))), 10, 10)]
+        [(None, 20, 0), (Some(Moving::constant(term("id", PredicateOp::Gt, "10"))), 15, 5)]
     {
         let mut stream = match dynamic {
             Some(filter) => plan.under(filter, RowEvaluation::On).stream(0, 64),

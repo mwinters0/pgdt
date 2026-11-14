@@ -261,7 +261,7 @@ impl TableProvider for PgDumpTable {
         };
         let refused = |err| self.dump.speller().external(err);
         let read = settings.read_options();
-        // The longest line its blocks hold at its query's factor, carved
+        // The longest line it will hold at its query's factor, carved
         // inside the draw before its readers, its ledger the scan's own
         // (`docs/design/decisions.md`, "D157").
         let line_charge = self.table.line_charge(read, &query_options).map_err(refused)?;

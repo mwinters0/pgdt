@@ -50,14 +50,14 @@ the room, a back-fill billed twice; an uncarved estimate's room unmargined, past
 `ledger/tests.rs`.
 
 ### D160 A read over mapped blocks carves its longest line at its query's factor, then plans under that arrangement
-`Table::line_charge` answers the longest line the read's blocks hold, held whole at its query's one factor, or zero
-where it fits its chunk; `pgdt query` and each provider scan hand it to `ArrangementRequest::line_charge` (D157), and
-`Table::plan` takes that arrangement whole; a live scan's charge is every later draw's `held`. Why: the line fits a room
-its readers leave and no later scan's ledger lends it; a line within its chunk draws nothing; a count and a ledger meet
-only as carved together (D83). Rejected: only the groups pruning keeps, or zero where nothing reads a field, which a
-block-level record cannot place and a dynamic filter arriving after planning moves; a ledger in `QueryOptions`; one
-ledger per session, gaining only `KD38`'s slack. Code: `Table::line_charge`, `ScanBudget::draw`. Evidence:
-`tests/ledger.rs`, `budget.rs`.
+`Table::line_charge` answers the longest line of the blocks the read holds rows of, at its query's factor, zero where
+it fits its chunk; `pgdt query` and each provider scan carve it (`ArrangementRequest::line_charge`, D157), and
+`Table::plan` takes that arrangement whole; a live scan's charge is each later draw's `held`. A block pruned whole, or
+whose plan reads no field, is passed over, its long rows streamed whatever a dynamic filter reads (D138). Why: the
+line fits beside its readers, lent by no later scan's ledger; a count and a ledger meet only as carved together (D83).
+Rejected: a kept run's own longest, unbounded by a block's record; asking a dynamic filter, arriving after the draw
+(D95); a ledger in `QueryOptions`; one per session, for `KD38`'s slack. Code: `line_charge`,
+`ScanBudget::draw`. Evidence: `tests/ledger.rs`, `budget.rs`.
 
 ### D4 A budget is solved against a source's cost, never divided by it
 `WorkerMemory` carries a per-worker term and a shared pool term (`affords`, `at`): the block pool's retention list is
