@@ -38,14 +38,14 @@ gathering pass handed its parallelism and statistics allowance apart (`GatherOpt
 Code: `arrangement.rs`. Evidence: `reserve`.
 
 ### D157 A run's held lines draw from one ledger its arrangement carves, waiting in file order
-`Arrangement::resolve` carves one `Ledger` where an allowance is found: the margin's ceiling less the budget and what
-others drew, a read's longest line off the ceiling, not the cap; none found, no limit. Statistics draw first, opened
-at `held`, never waiting on a line. A line waits behind every earlier waiter; the earliest that cannot be admitted, or
-statistics passing the room, ask later holders to give up, latest first, as each next draws. Why: the leftmost line
-progresses, a suspended holder keeps its buffer, statistics never hang on a line. The earliest is admitted past
-capacity where no other line holds, and never asked: refusing is the floor's. Rejected: dropping a waiter's buffer;
-giving up on every wait; the bound reserved per worker; the cap, lending the margin; a fixed split; first come. Code:
-`ledger.rs`. Evidence: `ledger/tests.rs`.
+`Arrangement::resolve` carves one `Ledger` under a found allowance: the margin's ceiling less the budget and what others
+drew, a read's longest line off the ceiling; else no limit. Statistics draw first, opened at `held`. A line waits behind
+earlier waiters; the earliest unadmitted, or statistics past the room, ask later holders to give up, latest first. Why:
+the leftmost line progresses, a suspended holder keeps its buffer, statistics never hang on a line. The earliest is
+admitted past the room where no other line holds, never asked: refusing is the floor's. Rejected: dropping a waiter's
+buffer; giving up on every wait; a bound per worker; the cap, lending the margin; a fixed split; first come; `held` off
+the room, a back-fill billed twice; an uncarved estimate's room unmargined, past halving. Code: `ledger.rs`. Evidence:
+`ledger/tests.rs`.
 
 ### D4 A budget is solved against a source's cost, never divided by it
 `WorkerMemory` carries a per-worker term and a shared pool term (`affords`, `at`): the block pool's retention list is

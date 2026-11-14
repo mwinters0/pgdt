@@ -34,15 +34,24 @@ bounds the count off that ceiling alone (`Parallelism::within_shared`'s
   count and never one reader's budget, where `held` does. Placing the
   earliest line under the cap at one reader is 33.5's.
 - **An uncarved estimate's room can hold less than the line**: its readers
-  are fitted to the halved cap less the line, not to the ceiling. Filed
-  under STATUS's "Decisions worth another look".
+  are fitted to the halved cap less the line, not to the ceiling, so the
+  line fits beside them under that cap and the ledger admits it as the
+  earliest alone. Only `pgdt query`'s replay meets it, gathering nothing,
+  the provider carving its estimate (D157).
 
 ## What was weighed
 
 - **Taking `held` off the room** instead of opening the draw at it: every
   parse's statistics allowance would fall by its cache's statistics, which
-  the account counts against it already (D85). Filed under STATUS's
-  "Decisions worth another look", with what a replay's lines lend.
+  the account counts against it already (D85), and a back-fill moving them
+  from loaded to retained would bill them twice. A replay's lines get the
+  same room either way, its settled statistics being resident (D157).
+- **An uncarved estimate's room carved from the halved cap**: every flagless
+  pass could hold the whole half plus `MEMORY_UNPOOLED_BOUND`, where the
+  margin keeps one whose count `--jobs` bounds at four fifths of it, so two
+  runs at once could pass `MemAvailable` (RT8). **Solving its count against
+  the ceiling only where a line is charged**: a one-byte line would cost a
+  fifth of the estimate and `MEMORY_UNPOOLED_BOUND` in readers.
 - **Statistics asking the earliest line too**: it is admitted again alone,
   so the ask buys a re-read and no room.
 - **Waking waiters when the statistics rise**: nothing can be admitted that

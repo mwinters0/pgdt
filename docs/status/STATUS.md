@@ -162,30 +162,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **33.4.4 opens the statistics' draw at what the arrangement was carved
-  around (`held`), so a query's replay lends its lines the room less its
-  settled table's statistics, not the whole room.** The room is the margin's
-  ceiling less the budget, which `held` was carved inside; in a parse `held`
-  is the cache's statistics, which the account charges as `Term::Loaded`
-  against the same statistics allowance (D85), so its first charge replaces
-  the opening draw. Made that way because taking `held` off the room instead
-  would cut every parse's statistics allowance by statistics the account
-  already counts, while leaving it in the room undrawn lets a replay's lines
-  lend bytes its table's statistics hold. Reconsidering takes `held` off the
-  room and the account's `Loaded` term off its draw, before 33.4.1 wires the
-  account (`arrangement.rs`, `Arrangement::resolve`; the 2026-11-14 history
-  entry, "a query's replay, gathering none, lends its lines the whole room").
-- **Under an uncarved estimate the ledger's room need not hold a read's
-  longest line.** Half of `MemAvailable`, which `pgdt` leaves uncarved,
-  fits its readers to the halved cap less the line, not to the margin's
-  ceiling, while the room is what that ceiling leaves them, as 33.4.4's row
-  says; where the readers fill the halved cap the room falls short of the
-  line, which is then admitted only as the earliest line alone. Made that
-  way because solving the count against the ceiling would move every
-  uncarved estimate, line or none, where D11 has `pgdt` cap a source at
-  half of `MemAvailable`, untuned, with no margin. Reconsidering bounds that count by the ceiling less the
-  line wherever a line is charged, or carves its room from the halved cap,
-  before 33.4.3 hands `pgdt query` its charge (`arrangement.rs`,
-  `Arrangement::resolve`; `arrangement/tests.rs`,
-  `a_line_charge_is_carved_into_the_ledger_off_the_ceiling`).

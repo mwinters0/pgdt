@@ -108,9 +108,10 @@ pub struct ArrangementRequest {
     /// being its margin.
     pub carve_estimate: bool,
     /// **The charge of the longest line a read over mapped blocks will
-    /// meet**, carved into the ledger before its readers so that line is
-    /// admitted without waiting: it comes off the margin's ceiling the count
-    /// is solved against, and off what statistics may hold, never off the cap
+    /// meet**, carved before its readers so that line is admitted without
+    /// waiting on them: it comes off the margin's ceiling the count is solved
+    /// against, or an uncarved estimate's cap ([`Arrangement::resolve`]), and
+    /// off what statistics may hold, never off a carved cap
     /// (`docs/design/decisions.md`, "D157"). Zero for a pass that meets its
     /// lines unknown — a mapping pass — whose ledger is what its readers
     /// leave.
@@ -190,13 +191,18 @@ impl Arrangement {
     /// wherever an allowance is found, an estimate's included, less what
     /// others drew: one room, which a gathering pass's statistics and its
     /// held lines share, statistics first. What is `held` opens the
-    /// statistics' draw on it, being statistics a cache hands the pass or
-    /// what is resident beside it, which a pass's statistics account then
-    /// charges in its place. The `line_charge` comes off the ceiling the count
-    /// is solved against, so the room holds it, and what statistics may hold
-    /// is what the room leaves past it. With nothing found, a ledger without
-    /// limit, nothing having been stated to carve
-    /// (`docs/design/decisions.md`, "D157").
+    /// statistics' draw on it: a mapping pass's is the statistics its cache
+    /// hands it, which its account's total then replaces, one figure however
+    /// a back-fill moves them from loaded to retained; a replay's settled
+    /// statistics, and whatever else is resident beside a pass, stay drawn
+    /// for the run. Under a carved allowance the `line_charge` comes off the
+    /// ceiling the count is solved against, so the room holds it past what is
+    /// `held`; under an uncarved estimate it comes off the cap the count is
+    /// fitted to, which leaves that line room beside the readers, and the
+    /// ledger, its room still the margin's, places it as the earliest line
+    /// alone. What statistics may hold is what the room leaves past the line.
+    /// With nothing found, a ledger without limit, nothing having been stated
+    /// to carve (`docs/design/decisions.md`, "D157").
     pub fn resolve(allowance: &Allowance, request: ArrangementRequest) -> Self {
         let ArrangementRequest { jobs, worker_memory, drawn, held, carve_estimate, line_charge } =
             request;
