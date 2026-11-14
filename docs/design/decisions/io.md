@@ -43,9 +43,8 @@ line carved off the readers' cap first; an estimate's cap less the budget; with 
 behind every earlier waiting line, and the earliest that cannot be admitted asks later holders to give theirs up,
 latest first, each when it next draws. Why: the leftmost line always progresses, and a suspended holder keeps its
 buffer. The earliest is admitted past capacity where nothing else is drawn: refusing is the floor's. Rejected: the
-ledger dropping a suspended holder's buffer; giving up on every wait; the bound reserved per worker; carving it under
-the margin's ceiling, which the floor's `at(1)` against the cap contradicts. Code: `ledger.rs`. Evidence:
-`ledger/tests.rs`.
+ledger dropping a suspended holder's buffer; giving up on every wait; the bound reserved per worker. Code:
+`ledger.rs`. Evidence: `ledger/tests.rs`.
 
 ### D4 A budget is solved against a source's cost, never divided by it
 `WorkerMemory` carries a per-worker term and a shared pool term (`affords`, `at`): the block pool's retention list is

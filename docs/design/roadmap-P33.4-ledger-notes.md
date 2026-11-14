@@ -47,5 +47,7 @@ mapping passes' read loops and the replay's — so it landed as the first, and
 - **Only lines holding something are asked to give up**, and one asked
   already counts toward what the earliest needs, so a second waiter's ask
   does not empty the file behind it.
-- **The capacity is the cap's, not the margin's** — the call STATUS's
-  "Decisions worth another look" holds.
+- **The capacity is the cap's, not the margin's**, which 33.4.4 moves under
+  the margin's ceiling, the cap left to the floor
+  ([`2026-11-14.md`](../status/history/2026-11-14.md), "The ledger lends under
+  the margin's ceiling; the cap is the floor's").
