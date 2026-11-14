@@ -151,6 +151,15 @@ fn each_refusal_names_the_flag_its_remedy_is() {
             &["`--schema-mode typed`"],
         ),
         (
+            pgdt_core::Error::LineOutgrowsMemory {
+                offset: 4096,
+                needs: 1 << 30,
+                holds: 64 << 20,
+                allowance: 512 << 20,
+            },
+            &["`--memory`"],
+        ),
+        (
             pgdt_core::Error::PartitionThroughRoot {
                 table: "public.t_1".into(),
                 root: "public.t".into(),

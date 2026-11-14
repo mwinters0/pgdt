@@ -247,6 +247,44 @@ async fn a_read_over_mapped_blocks_carves_its_longest_line() {
     }
 }
 
+/// **A read whose longest line one reader cannot hold is refused before it
+/// reads a byte** (`docs/design/decisions.md`, "D161"): at a floor of its
+/// charge the plan reads every row, the line admitted alone though the
+/// ledger has no room; a byte under it, the plan is refused, naming that
+/// line's start, the bytes it needs and the allowance — whatever the
+/// worker count, and never for a read holding no field of it.
+#[tokio::test]
+async fn a_read_whose_longest_line_passes_the_floor_is_refused_before_it_reads() {
+    let text = "x".repeat(16 << 10);
+    let (source, line) = long_row("text", "short", &text);
+    let table = settled(Arc::clone(&source), "public.t", CHUNK, &arranged(1)).await;
+    let every = QueryOptions::default();
+    let charge = table.line_charge(reads(CHUNK), &every).unwrap();
+    assert_eq!(charge, 2 * line);
+
+    let at = table.plan(reads(CHUNK), every.clone(), &pgdt_fixtures::floored(charge)).unwrap();
+    let batches: Vec<_> = at.stream(0, 8192).map(Result::unwrap).collect().await;
+    assert_eq!(joined(&batches).num_rows(), 3, "at the floor, admitted alone");
+
+    let under = pgdt_fixtures::floored(charge - 1);
+    let refused = table.plan(reads(CHUNK), every.clone(), &under).map(|_| ()).unwrap_err();
+    let pgdt_core::Error::LineOutgrowsMemory { offset, needs, holds, allowance } = refused else {
+        panic!("not refused for memory: {refused}");
+    };
+    let before = "CREATE TABLE public.t (\n    a integer,\n    b text\n);\n\n\
+                  COPY public.t (a, b) FROM stdin;\n1\tshort\n";
+    assert_eq!(offset, before.len() as u64, "the long line's start");
+    assert_eq!((needs, holds, allowance), (charge, charge - 1, 1 << 30));
+
+    // A streamed row draws at most two chunks, once, before its carry
+    // streams it (`ChunkCarry::charge_absorbing`).
+    let counted = QueryOptions { projection: Some(Vec::new()), ..every };
+    let floor = pgdt_fixtures::floored(2 * CHUNK as u64);
+    let streamed = table.plan(reads(CHUNK), counted, &floor).unwrap();
+    let batches: Vec<_> = streamed.stream(0, 8192).map(Result::unwrap).collect().await;
+    assert_eq!(batches.iter().map(RecordBatch::num_rows).sum::<usize>(), 3, "no field held");
+}
+
 /// `column <op> value`, `op` the comparing variant's constructor.
 fn term(column: &str, op: fn(String) -> PredicateOp, value: &str) -> Expr {
     Expr::Term(Predicate { column: column.into(), op: op(value.into()) })

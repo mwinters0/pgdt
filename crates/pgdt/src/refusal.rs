@@ -60,6 +60,7 @@ pub(crate) fn about_the_source(err: &pgdt_core::Error) -> bool {
         | Lib::UnterminatedCopyBlock { .. }
         | Lib::UnterminatedLargeObjectRegion { .. }
         | Lib::LineTooLong { .. }
+        | Lib::LineOutgrowsMemory { .. }
         | Lib::ScanCancelled { .. }
         | Lib::InvalidUtf8 { .. }
         | Lib::ColumnCountMismatch { .. }
@@ -125,6 +126,7 @@ pub(crate) fn spelling(err: &pgdt_core::Error) -> Option<String> {
             "`--unrepresentable null`; `--unrepresentable text`".to_string()
         }
         Lib::TestNeedsDeclaredType { .. } => "`--schema-mode typed`".to_string(),
+        Lib::LineOutgrowsMemory { .. } => "`--memory`".to_string(),
         Lib::PartitionThroughRoot { inheritance_only: true, .. } => {
             "`--inheritance descendants`".to_string()
         }

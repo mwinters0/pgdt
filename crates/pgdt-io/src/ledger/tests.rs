@@ -37,6 +37,11 @@ impl Woken {
     }
 }
 
+/// A ledger of `capacity` bytes whose floor refuses no line.
+fn limited(capacity: u64) -> Ledger {
+    Ledger::limited(capacity, Floor { holds: u64::MAX, allowance: u64::MAX })
+}
+
 /// `holder`'s draw of `charge` for the line at `start`, met without waiting.
 fn drawn_now(holder: &mut Holder, start: u64, charge: u64) -> Admission {
     let woken = Woken::new();
@@ -63,7 +68,7 @@ fn an_unlimited_ledger_meets_every_draw() {
 /// another line or a dropped holder returns it.
 #[test]
 fn a_draw_is_the_line_s_whole_charge_and_returned_on_release() {
-    let ledger = Ledger::limited(100);
+    let ledger = limited(100);
     let mut a = ledger.holder();
     assert_eq!(drawn_now(&mut a, 0, 40), Admission::Held);
     assert_eq!(drawn_now(&mut a, 0, 60), Admission::Held);
@@ -83,7 +88,7 @@ fn a_draw_is_the_line_s_whole_charge_and_returned_on_release() {
 /// before it returns its draw.
 #[test]
 fn a_draw_past_what_is_left_waits_until_a_line_returns_its_draw() {
-    let ledger = Ledger::limited(100);
+    let ledger = limited(100);
     let (mut a, mut b) = (ledger.holder(), ledger.holder());
     assert_eq!(drawn_now(&mut a, 0, 70), Admission::Held);
 
@@ -102,7 +107,7 @@ fn a_draw_past_what_is_left_waits_until_a_line_returns_its_draw() {
 /// admitted once that one is.
 #[test]
 fn the_earliest_waiting_line_is_admitted_first() {
-    let ledger = Ledger::limited(100);
+    let ledger = limited(100);
     let (mut first, mut late, mut early) = (ledger.holder(), ledger.holder(), ledger.holder());
     assert_eq!(drawn_now(&mut first, 0, 90), Admission::Held);
 
@@ -126,7 +131,7 @@ fn the_earliest_waiting_line_is_admitted_first() {
 /// fits: waiting holds back only the lines after the one waiting.
 #[test]
 fn a_line_before_every_waiter_is_admitted_where_it_fits() {
-    let ledger = Ledger::limited(100);
+    let ledger = limited(100);
     let (mut first, mut late, mut early) = (ledger.holder(), ledger.holder(), ledger.holder());
     assert_eq!(drawn_now(&mut first, 0, 80), Admission::Held);
     let woken = Woken::new();
@@ -142,7 +147,7 @@ fn a_line_before_every_waiter_is_admitted_where_it_fits() {
 /// past what it needs, is asked. One that gave up draws again behind it.
 #[test]
 fn later_holders_give_up_latest_first_until_the_earliest_fits() {
-    let ledger = Ledger::limited(100);
+    let ledger = limited(100);
     let mut holders: Vec<Holder> = (0..4).map(|_| ledger.holder()).collect();
     let [h0, h200, h300, h400] = &mut holders[..] else { unreachable!() };
     assert_eq!(drawn_now(h0, 0, 10), Admission::Held);
@@ -177,7 +182,7 @@ fn later_holders_give_up_latest_first_until_the_earliest_fits() {
 /// waiter asked keeps what it holds until then.
 #[test]
 fn a_waiting_later_holder_is_woken_to_give_up() {
-    let ledger = Ledger::limited(100);
+    let ledger = limited(100);
     let (mut first, mut late, mut early) = (ledger.holder(), ledger.holder(), ledger.holder());
     assert_eq!(drawn_now(&mut first, 0, 50), Admission::Held);
     assert_eq!(drawn_now(&mut late, 300, 40), Admission::Held);
@@ -200,7 +205,7 @@ fn a_waiting_later_holder_is_woken_to_give_up() {
 /// line waiting behind it is woken.
 #[test]
 fn a_dropped_waiter_stops_waiting_and_keeps_what_it_held() {
-    let ledger = Ledger::limited(100);
+    let ledger = limited(100);
     let (mut first, mut early, mut late) = (ledger.holder(), ledger.holder(), ledger.holder());
     assert_eq!(drawn_now(&mut first, 0, 60), Admission::Held);
     assert_eq!(drawn_now(&mut early, 100, 20), Admission::Held);
@@ -224,7 +229,7 @@ fn a_dropped_waiter_stops_waiting_and_keeps_what_it_held() {
 /// drawn is asked back first.
 #[test]
 fn the_earliest_line_is_admitted_past_the_capacity_alone() {
-    let ledger = Ledger::limited(10);
+    let ledger = limited(10);
     let mut alone = ledger.holder();
     assert_eq!(drawn_now(&mut alone, 0, 50), Admission::Held);
     alone.release();
@@ -239,12 +244,40 @@ fn the_earliest_line_is_admitted_past_the_capacity_alone() {
     assert_eq!(ledger.drawn(), 50);
 }
 
+/// **A charge past the floor is refused at once, wherever its line lies**:
+/// the earliest line alone, or a later one behind a waiter, never waits for
+/// room no line can give up. What the line held is returned, and a line
+/// waiting behind it is woken; a charge at the floor is admitted alone.
+#[test]
+fn a_charge_past_the_floor_is_refused_and_returns_what_it_held() {
+    let floor = Floor { holds: 40, allowance: 1000 };
+    let ledger = Ledger::limited(10, floor);
+    assert_eq!(ledger.floor(), Some(floor));
+    let mut alone = ledger.holder();
+    assert_eq!(drawn_now(&mut alone, 0, 40), Admission::Held, "at the floor, admitted alone");
+    assert_eq!(drawn_now(&mut alone, 0, 41), Admission::Refused(floor));
+    assert_eq!((ledger.drawn(), alone.held()), (0, 0), "what it held is returned");
+
+    let (mut first, mut later) = (ledger.holder(), ledger.holder());
+    assert_eq!(drawn_now(&mut first, 0, 30), Admission::Held);
+    let woken = Woken::new();
+    let mut waiting = pin!(later.draw(100, 20));
+    assert_eq!(woken.poll(waiting.as_mut()), Poll::Pending);
+    let mut past = ledger.holder();
+    assert_eq!(drawn_now(&mut past, 200, 50), Admission::Refused(floor), "a later line too");
+    assert_eq!(drawn_now(&mut first, 0, 41), Admission::Refused(floor));
+    assert_eq!(woken.times(), 1, "the line behind it is woken");
+    assert_eq!(woken.poll(waiting), Poll::Ready(Admission::Held));
+    assert_eq!(ledger.drawn(), 20);
+    assert_eq!(Ledger::unlimited().floor(), None);
+}
+
 /// **The statistics' draw is admitted at once, past the capacity too**, and
 /// lines are admitted from what it leaves: a line it leaves no room for
 /// waits, and is woken and admitted once the draw falls.
 #[test]
 fn statistics_draw_first_and_lines_from_what_they_leave() {
-    let ledger = Ledger::limited(100);
+    let ledger = limited(100);
     ledger.draw_statistics(60);
     let (mut a, mut b) = (ledger.holder(), ledger.holder());
     assert_eq!(drawn_now(&mut a, 0, 30), Admission::Held);
@@ -266,7 +299,7 @@ fn statistics_draw_first_and_lines_from_what_they_leave() {
 /// never the earliest line, which would be admitted again alone.
 #[test]
 fn statistics_passing_the_capacity_ask_the_latest_holders_but_never_the_earliest() {
-    let ledger = Ledger::limited(100);
+    let ledger = limited(100);
     let mut holders: Vec<Holder> = (0..3).map(|_| ledger.holder()).collect();
     let [h0, h100, h200] = &mut holders[..] else { unreachable!() };
     for (holder, start) in [(&mut *h0, 0), (&mut *h100, 100), (&mut *h200, 200)] {
@@ -292,7 +325,7 @@ fn statistics_passing_the_capacity_ask_the_latest_holders_but_never_the_earliest
 /// on them would never end.
 #[test]
 fn the_earliest_line_never_waits_on_statistics() {
-    let ledger = Ledger::limited(100);
+    let ledger = limited(100);
     ledger.draw_statistics(150);
     let (mut first, mut second) = (ledger.holder(), ledger.holder());
     assert_eq!(drawn_now(&mut first, 0, 50), Admission::Held);
@@ -311,7 +344,7 @@ fn the_earliest_line_never_waits_on_statistics() {
 /// from zero where it gave up, and nothing is left drawn.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_readers_all_finish() {
-    let ledger = Ledger::limited(100);
+    let ledger = limited(100);
     let readers = (0..8u64).map(|reader| {
         let mut holder = ledger.holder();
         tokio::spawn(async move {
@@ -322,6 +355,7 @@ async fn concurrent_readers_all_finish() {
                     match holder.draw(start, charge).await {
                         Admission::Held => charge += 10,
                         Admission::GiveUp => charge = 10,
+                        Admission::Refused(floor) => panic!("refused under {floor:?}"),
                     }
                     tokio::task::yield_now().await;
                 }

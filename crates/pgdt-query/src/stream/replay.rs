@@ -410,13 +410,20 @@ pub(super) fn replay<'a>(
                                         };
                                         yield batch;
                                         // The row's line, still held, is
-                                        // drawn for again.
+                                        // drawn for again; held once, it
+                                        // is under the floor.
                                         if let Some((start, charge)) = drawn
                                             .filter(|&(start, _)| start == row.offset)
                                         {
-                                            while holder.draw(start, charge).await
-                                                == Admission::GiveUp
-                                            {}
+                                            loop {
+                                                match holder.draw(start, charge).await {
+                                                    Admission::Held => break,
+                                                    Admission::GiveUp => {}
+                                                    Admission::Refused(floor) => {
+                                                        Err(floor.refusal(start, charge))?;
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                     batcher.push_row(

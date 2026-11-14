@@ -430,8 +430,10 @@ impl Table {
     /// the read hears of TimescaleDB's catalog — a hypertable's root's own
     /// rows and absent chunks, or a read unchecked for compression
     /// (`docs/design/decisions.md`, "D135"). Refuses what a query's
-    /// plan refuses, before a byte is read, and a source the dump's watch
-    /// cannot check while it is read (`docs/design/decisions.md`, "D21").
+    /// plan refuses, before a byte is read, a source the dump's watch
+    /// cannot check while it is read (`docs/design/decisions.md`, "D21"),
+    /// and a read whose longest line passes `arrangement`'s floor, one
+    /// reader being unable to hold it (`docs/design/decisions.md`, "D161").
     pub fn plan(
         &self,
         read: ReadOptions,

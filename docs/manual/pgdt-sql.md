@@ -270,7 +270,9 @@ half of what is free. A `--memory-limit` given to DataFusion's own operators
 comes off it, as does what each attached dump's cache holds in memory and
 the longest line each running query keeps room for, so the scans never count
 on memory already spoken for. `SET pgdump.memory` states
-the allowance instead ([below](#scan-settings)).
+the allowance instead ([below](#scan-settings)). A query whose longest line
+one reader could not hold under that allowance is refused before it reads,
+naming where the line starts and the bytes it needs.
 
 ## Scan settings
 

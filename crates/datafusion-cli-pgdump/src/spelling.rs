@@ -94,6 +94,8 @@ fn library(grammar: Grammar, refused: &pgdt_core::Error) -> Option<String> {
         Lib::TestNeedsDeclaredType { .. } => {
             ("`--source` without `:strings`", "`'pgdump.schema_mode' 'typed'`".to_string())
         }
+        // A session's setting, whichever grammar registered the dump.
+        Lib::LineOutgrowsMemory { .. } => return Some("`SET pgdump.memory`".to_string()),
         Lib::PartitionThroughRoot { inheritance_only: true, .. } => {
             ("`:inheritance=descendants`", "`'pgdump.inheritance' 'descendants'`".to_string())
         }

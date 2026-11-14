@@ -751,11 +751,15 @@ fn a_held_line_waits_behind_an_earlier_one_and_gives_its_own_up() {
         reached: std::sync::atomic::AtomicBool::new(false),
         read: std::sync::atomic::AtomicUsize::new(0),
     };
-    // An allowance whose margin leaves nothing: a ledger of no room, which
-    // admits the earliest line alone.
-    let request = ArrangementRequest::recommended(1, None);
-    let ledger = Arrangement::resolve(&Allowance::Stated(256 << 20), request).ledger().clone();
+    // An allowance whose room other scans drew whole: a ledger of no room,
+    // which admits the earliest line alone, under a floor refusing none here.
+    let (allowance, request) =
+        (Allowance::Stated(1 << 30), ArrangementRequest::recommended(1, None));
+    let drawn = Arrangement::resolve(&allowance, request).ledger().capacity().unwrap();
+    let ledger = Arrangement::resolve(&allowance, ArrangementRequest { drawn, ..request });
+    let ledger = ledger.ledger().clone();
     assert_eq!(ledger.capacity(), Some(0));
+    assert!(ledger.floor().unwrap().holds > file.len() as u64);
     let (mut earlier, mut reader) = (ledger.holder(), ledger.holder());
     let mut cx = Context::from_waker(Waker::noop());
     let drawn = std::pin::pin!(earlier.draw(0, 1)).as_mut().poll(&mut cx);

@@ -205,8 +205,11 @@ fn a_memory_allowance_too_small_declines_the_block_and_only_a_larger_one_rereads
     // nothing whatever the budget: every block declines, whatever its width.
     // 300 MiB is well inside that band — the line itself is 320 MiB, and where
     // it falls is pinned by `pgdt-io`'s own unit test — so nothing
-    // here rests on which way `(a / 100) * 80` rounds.
-    let tight = ["--memory", "314572800"];
+    // here rests on which way `(a / 100) * 80` rounds. It leaves one reader
+    // nothing for a line past its chunk either, which is refused for memory
+    // (`docs/design/decisions.md`, "D161"), so a chunk holds the fixture's
+    // longest line.
+    let tight = ["--memory", "314572800", "--chunk-size", "2097152"];
     let stderr = parse(&tight);
     assert!(stderr.contains("statistics_bytes=0 (stated)"), "{stderr}");
     assert!(stderr.contains("statistics declined"), "{stderr}");

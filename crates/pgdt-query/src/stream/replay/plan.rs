@@ -208,6 +208,21 @@ pub(in crate::stream) fn line_charge(
     database: Option<&str>,
     chunk: usize,
 ) -> u64 {
+    held_line(blocks, matches, query_options, metadata, database, chunk)
+        .map_or(0, |(_, charge)| charge)
+}
+
+/// **[`line_charge`]'s line**: where it starts, and its charge, or `None`
+/// where that charge is nothing — what a plan holds against its ledger's
+/// floor before it reads a byte (`docs/design/decisions.md`, "D161").
+pub(in crate::stream) fn held_line(
+    blocks: &BTreeMap<u64, PlannedBlock>,
+    matches: &[CopyBlock],
+    query_options: &QueryOptions,
+    metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
+    chunk: usize,
+) -> Option<(u64, u64)> {
     let Pruned { kept, stops, .. } =
         prune_blocks(matches, blocks, query_options, metadata, database);
     let holds = |block: &&CopyBlock| {
@@ -216,14 +231,11 @@ pub(in crate::stream) fn line_charge(
         let reads = blocks.get(at).is_none_or(PlannedBlock::reads_fields) || stops.contains_key(at);
         reached && reads
     };
+    // The first of the longest, as a block's own record keeps its first.
     let longest = matches.iter().filter(holds).filter_map(|block| block.longest_line);
-    let Some(longest) = longest.map(|l| l.len).max() else {
-        return 0;
-    };
-    match longest > chunk as u64 {
-        true => charged(query_factor(blocks), longest),
-        false => 0,
-    }
+    let longest = longest.reduce(|first, line| if line.len > first.len { line } else { first })?;
+    (longest.len > chunk as u64)
+        .then(|| (longest.offset, charged(query_factor(blocks), longest.len)))
 }
 
 /// What every plan of `matches`, the blocks a read of `table` in `database`

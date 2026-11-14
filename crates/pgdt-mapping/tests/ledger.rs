@@ -46,6 +46,20 @@ fn no_room(jobs: usize) -> Arrangement {
     arrangement
 }
 
+/// One reader stated under a gibibyte other scans drew enough of: **a ledger
+/// refusing a line past `holds` bytes** with no room to lend, as
+/// `pgdt_fixtures::floored` is, which this crate's tests cannot reach.
+fn floored(holds: u64) -> Arrangement {
+    let allowance = Allowance::Stated(1 << 30);
+    let stated =
+        ArrangementRequest { jobs: Jobs::Stated(1), ..ArrangementRequest::recommended(1, None) };
+    let alone = Arrangement::resolve(&allowance, stated).ledger().floor().unwrap().holds;
+    let drawn = alone - holds;
+    let arrangement = Arrangement::resolve(&allowance, ArrangementRequest { drawn, ..stated });
+    assert_eq!(arrangement.ledger().floor().map(|floor| floor.holds), Some(holds));
+    arrangement
+}
+
 /// The blocks a cacheless data-level `map_file` of `dump` maps to under
 /// `arrangement`, in `chunk`-byte reads, or the error it fails with.
 async fn outcome(
@@ -105,4 +119,43 @@ async fn a_parse_waiting_on_its_ledger_maps_what_one_reader_does() {
             }
         }
     }
+}
+
+/// **A parse holding a field one reader cannot hold is refused for memory**
+/// (`docs/design/decisions.md`, "D161"): a zero-padded `bigint` a data-level
+/// parse collects whole, its reads far shorter, is read under a floor of its
+/// length and refused under one far below it, naming where it starts, what
+/// it needs and the allowance — while a metadata-level parse, streaming the
+/// row, reads it under that floor.
+#[tokio::test]
+async fn a_parse_holding_a_field_past_its_floor_is_refused_for_memory() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("long.sql");
+    let long = format!("{}1", "0".repeat(4 << 10));
+    let before = "CREATE TABLE public.t (\n    a bigint\n);\n\nCOPY public.t (a) FROM stdin;\n1\n";
+    std::fs::write(&dump, format!("{before}{long}\n2\n\\.\n\n")).unwrap();
+    let (chunk, default) = (64, PostgresInvalidValues::Default);
+
+    let read = outcome(&dump, chunk, &floored(8 << 10), default).await.unwrap();
+    assert_eq!(read.iter().map(|block| block.row_count).sum::<u64>(), 3);
+
+    let floor = 1 << 10;
+    let read = ReadOptions { chunk_size_bytes: chunk, ..ReadOptions::default() };
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
+    let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
+    let (data, cancel) = (&StatisticsRequest::DATA, CancellationToken::new());
+    let arrangement = floored(floor);
+    let refused = map_file(opened, read, &arrangement, default, data, &cancel).await.unwrap_err();
+    let pgdt_core::Error::LineOutgrowsMemory { offset, needs, holds, allowance } = refused else {
+        panic!("not refused for memory: {refused}");
+    };
+    assert_eq!(offset, before.len() as u64, "where the field starts");
+    assert!(needs > floor && needs <= long.len() as u64 + 1, "{needs}");
+    assert_eq!((holds, allowance), (floor, 1 << 30));
+
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
+    let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
+    let metadata = &StatisticsRequest::METADATA;
+    let run = map_file(opened, read, &arrangement, default, metadata, &cancel).await.unwrap();
+    assert_eq!(run.index.blocks().map(|block| block.row_count).sum::<u64>(), 3);
 }

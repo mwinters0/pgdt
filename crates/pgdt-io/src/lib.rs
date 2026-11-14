@@ -23,7 +23,7 @@ mod source;
 mod test_support;
 
 pub use arrangement::{Allowance, Arrangement, ArrangementRequest, Jobs};
-pub use ledger::{Admission, Holder, Ledger};
+pub use ledger::{Admission, Floor, Holder, Ledger};
 pub use memory::{DEFAULT_MEMORY_BUDGET, MemoryLimit, available_memory, discover_memory_limit};
 pub use parallelism::{Parallelism, WorkerMemory};
 pub use partition::{PartitionBoundaries, PartitionRead, Partitioning, RetainedUnit};

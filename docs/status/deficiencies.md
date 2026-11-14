@@ -24,7 +24,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD169 -->
+rather than being deleted. <!-- deficiency-watermark: KD170 -->
 **`KD1`–`KD167` are allocated, and nothing at or below `KD167` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -590,3 +590,9 @@ than reading as a phase nobody has sliced.
   (`TilingBroken`, an error). `pg_dump` never writes such a file. **(c)
   unowned**; promoted by such a file met in use. Detail:
   `crates/pgdt-dump/src/preamble.rs`.
+
+- **KD170** — a row a pass streams is drawn for once, before its carry knows
+  it streams, up to two read chunks, so under an allowance whose floor is
+  below that a pass holding none of the row is refused for memory. **(c)
+  unowned**; promoted by a run refused so. Detail:
+  `crates/pgdt-dump/src/scan/chunked.rs`.

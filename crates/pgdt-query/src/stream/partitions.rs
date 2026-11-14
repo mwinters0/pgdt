@@ -21,7 +21,7 @@ use super::merge;
 use super::note::PlanNote;
 use super::replay::dynamic::{Cut, DynamicBlock, DynamicFilter, DynamicRead, RowEvaluation};
 use super::replay::partition::cut_blocks;
-use super::replay::plan::{PlannedReplay, ReplayPlan, plan_replay};
+use super::replay::plan::{PlannedReplay, ReplayPlan, held_line, plan_replay};
 use super::replay::replay;
 use super::replay::segment::Segment;
 use super::resume::{ResumeToken, query_fingerprint};
@@ -105,7 +105,9 @@ impl TablePartitions {
     /// source's own advice allow, each drawing on its ledger. A request
     /// [`QueryOptions::validate`] refuses is refused here, and so is a source
     /// `watch` cannot check during a read, where the replay's reads are
-    /// planned ([`SourceWatch::require_checkable`]).
+    /// planned ([`SourceWatch::require_checkable`]), and a read whose longest
+    /// line passes its ledger's floor, one reader being unable to hold it
+    /// (`docs/design/decisions.md`, "D161").
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         source: Arc<dyn ByteRangeSource>,
@@ -129,6 +131,16 @@ impl TablePartitions {
             query_options,
             arrangement.parallelism(),
         )?;
+        if let Some(floor) = arrangement.ledger().floor() {
+            let database = plan.database.as_deref();
+            let chunk = plan.read.chunk_size_bytes;
+            let metadata = plan.metadata.as_deref();
+            let held =
+                held_line(&plan.blocks, blocks, &plan.query_options, metadata, database, chunk);
+            if let Some((offset, charge)) = held {
+                floor.check(offset, charge)?;
+            }
+        }
         let resolved = plan.schema.clone();
         let reading = plan.query_options.statistics_view();
         let orders = partition_orders(

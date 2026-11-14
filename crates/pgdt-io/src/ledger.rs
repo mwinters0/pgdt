@@ -21,8 +21,14 @@
 //! the room asks the holders of lines to give theirs up, the latest first, as
 //! the earliest waiting line does; the earliest line is never asked.
 //!
+//! **A line one reader could not hold is refused** ([`Admission::Refused`]):
+//! a draw whose charge passes the ledger's [`Floor`] — what the allowance
+//! leaves one reader, whatever the worker count — fails at once, wherever
+//! the line lies in the file, since no wait and no line giving its room up
+//! would admit it (`docs/design/decisions.md`, "D161").
+//!
 //! **A ledger without limit** ([`Ledger::unlimited`]) meets every draw at once:
-//! an allowance nobody stated carves nothing to wait on.
+//! an allowance nobody stated carves nothing to wait on, and refuses nothing.
 
 use std::collections::BTreeMap;
 use std::future::poll_fn;
@@ -43,7 +49,42 @@ pub struct Ledger {
 #[derive(Debug)]
 struct Shared {
     capacity: u64,
+    floor: Floor,
     state: Mutex<State>,
+}
+
+/// **The most one line may hold**: what the allowance leaves one reader,
+/// whatever the worker count — the floor a pass's readers are parked down to
+/// before its earliest line is refused — and the allowance that was carved
+/// from, which a refusal names (`docs/design/decisions.md`, "D161").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Floor {
+    /// The bytes one line may hold at most.
+    pub holds: u64,
+    /// The resident allowance the floor was carved from, in bytes.
+    pub allowance: u64,
+}
+
+impl Floor {
+    /// The refusal of a line drawing `needs` bytes held from `offset`, which
+    /// passes this floor.
+    pub fn refusal(&self, offset: u64, needs: u64) -> pgdt_core::Error {
+        pgdt_core::Error::LineOutgrowsMemory {
+            offset,
+            needs,
+            holds: self.holds,
+            allowance: self.allowance,
+        }
+    }
+
+    /// The refusal of a line drawing `needs` bytes held from `offset`, where
+    /// they pass this floor.
+    pub fn check(&self, offset: u64, needs: u64) -> pgdt_core::Result<()> {
+        match needs > self.holds {
+            true => Err(self.refusal(offset, needs)),
+            false => Ok(()),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -82,6 +123,10 @@ pub enum Admission {
     /// The line gave up what it held, an earlier one needing it: its reader
     /// drops the line and re-reads it from its start, drawing anew.
     GiveUp,
+    /// The charge passes the ledger's [`Floor`], so no wait would admit it:
+    /// its reader fails with [`Floor::refusal`], and what the line held is
+    /// returned.
+    Refused(Floor),
 }
 
 impl Ledger {
@@ -90,16 +135,22 @@ impl Ledger {
         Self { shared: None }
     }
 
-    /// A ledger of `capacity` bytes, which only
+    /// A ledger of `capacity` bytes, refusing a line past `floor`, which only
     /// [`Arrangement::resolve`](crate::Arrangement::resolve) carves.
-    pub(crate) fn limited(capacity: u64) -> Self {
+    pub(crate) fn limited(capacity: u64, floor: Floor) -> Self {
         let state = Mutex::new(State::default());
-        Self { shared: Some(Arc::new(Shared { capacity, state })) }
+        Self { shared: Some(Arc::new(Shared { capacity, floor, state })) }
     }
 
     /// The bytes it may lend, or `None` without limit.
     pub fn capacity(&self) -> Option<u64> {
         self.shared.as_ref().map(|shared| shared.capacity)
+    }
+
+    /// The most one line may hold, or `None` without limit: what a read over
+    /// mapped blocks holds its longest line against before it reads a byte.
+    pub fn floor(&self) -> Option<Floor> {
+        self.shared.as_ref().map(|shared| shared.floor)
     }
 
     /// What its lines and its statistics hold now: zero without limit, which
@@ -176,11 +227,11 @@ impl Holder {
     /// met at once.
     ///
     /// **The earliest line is admitted past the capacity where no other line
-    /// holds**, whatever the statistics' draw holds, so a line the ledger
-    /// cannot hold is read as it was before a ledger charged it, and never
-    /// waits on statistics, which give nothing up: refusing one for memory
-    /// is the floor's, which parks readers first
-    /// (`docs/design/decisions.md`, "D157").
+    /// holds**, whatever the statistics' draw holds, and never waits on
+    /// statistics, which give nothing up (`docs/design/decisions.md`,
+    /// "D157"). **A charge past the ledger's [`Floor`] is refused** at once,
+    /// wherever its line lies, what it held returned
+    /// (`docs/design/decisions.md`, "D161").
     ///
     /// Dropped while it waits, the line keeps what it held and waits for
     /// nothing.
@@ -199,6 +250,7 @@ impl Holder {
         match admission {
             Admission::Held => self.held = self.held.max(charge),
             Admission::GiveUp => (self.line, self.held) = (None, 0),
+            Admission::Refused(_) => self.release(),
         }
         admission
     }
@@ -253,6 +305,7 @@ impl Wait<'_> {
         let mut woken = Vec::new();
         let poll = self.shared.lock().poll_draw(
             self.shared.capacity,
+            self.shared.floor,
             self.key,
             charge,
             cx.waker(),
@@ -294,6 +347,7 @@ impl State {
     fn poll_draw(
         &mut self,
         capacity: u64,
+        floor: Floor,
         key: Key,
         charge: u64,
         waker: &Waker,
@@ -310,6 +364,13 @@ impl State {
         if charge <= line.held {
             (line.wants, line.waker) = (None, None);
             return Poll::Ready(Admission::Held);
+        }
+        if charge > floor.holds {
+            // Never admitted, however long it waited: what it holds is its
+            // holder's to return, and a later line may have waited on it.
+            (line.wants, line.waker) = (None, None);
+            self.wake_waiters(woken);
+            return Poll::Ready(Admission::Refused(floor));
         }
         let held = line.held;
         let others = self.drawn - held;

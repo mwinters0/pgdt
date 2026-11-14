@@ -30,6 +30,22 @@ pub fn arranged(jobs: usize) -> Arrangement {
     Arrangement::resolve(&Allowance::NoneFound, request)
 }
 
+/// One reader stated under a gibibyte other scans drew enough of: **a ledger
+/// refusing a line past `holds` bytes** — its floor
+/// (`docs/design/decisions.md`, "D161") — with no room to lend, so every
+/// line it admits is the earliest, alone. `holds` is at most what the
+/// gibibyte leaves one reader with nothing drawn.
+pub fn floored(holds: u64) -> Arrangement {
+    let allowance = Allowance::Stated(1 << 30);
+    let stated =
+        ArrangementRequest { jobs: Jobs::Stated(1), ..ArrangementRequest::recommended(1, None) };
+    let alone = Arrangement::resolve(&allowance, stated).ledger().floor().unwrap().holds;
+    let drawn = alone - holds;
+    let arrangement = Arrangement::resolve(&allowance, ArrangementRequest { drawn, ..stated });
+    assert_eq!(arrangement.ledger().floor().map(|floor| floor.holds), Some(holds));
+    arrangement
+}
+
 /// `parallelism` stated under no allowance, at the budget it states, a ledger
 /// without limit: what a test plans a replay's cut under
 /// (`pgdt_query::Table::plan`), stating the count and budget the cut is

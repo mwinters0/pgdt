@@ -336,7 +336,9 @@ fn held_alone(bytes: u64) -> u64 {
 /// ([`ChunkCarry::give_up`]), waits to be admitted again — holding nothing, no
 /// later line can ask it — and reads those bytes again from the source, a
 /// chunk at a time, before it absorbs `chunk`; a re-read costs time, never
-/// an answer.
+/// an answer. **A draw past the ledger's floor fails the read**
+/// ([`Error::LineOutgrowsMemory`]), naming where what it holds begins
+/// (`docs/design/decisions.md`, "D161").
 pub async fn draw_absorbing(
     carry: &mut ChunkCarry,
     drawing: Drawing<'_>,
@@ -353,9 +355,9 @@ pub async fn draw_absorbing(
     let charge = charged(held);
     let start = carry.holding_from(read_pos);
     let len = chunk.len();
-    if admitted(holder, start, charge, chunk).await == Admission::GiveUp {
+    if admitted(holder, start, charge, chunk).await? == Admission::GiveUp {
         let given = carry.give_up();
-        while admitted(holder, start, charge, chunk).await == Admission::GiveUp {}
+        while admitted(holder, start, charge, chunk).await? == Admission::GiveUp {}
         let range = given.range(read_pos);
         let step = carry.line.outgrows().max(1) as u64;
         let mut at = range.start;
@@ -372,15 +374,24 @@ pub async fn draw_absorbing(
 }
 
 /// `holder`'s draw of `charge` for the line at `start`, `chunk` dropped
-/// where it waits.
-async fn admitted(holder: &mut Holder, start: u64, charge: u64, chunk: &mut Bytes) -> Admission {
+/// where it waits, or its refusal where it passes the ledger's floor.
+async fn admitted(
+    holder: &mut Holder,
+    start: u64,
+    charge: u64,
+    chunk: &mut Bytes,
+) -> Result<Admission> {
     let mut draw = std::pin::pin!(holder.draw(start, charge));
-    match futures::poll!(draw.as_mut()) {
+    let admission = match futures::poll!(draw.as_mut()) {
         Poll::Ready(admission) => admission,
         Poll::Pending => {
             *chunk = Bytes::new();
             draw.await
         }
+    };
+    match admission {
+        Admission::Refused(floor) => Err(floor.refusal(start, charge)),
+        admission => Ok(admission),
     }
 }
 
@@ -421,6 +432,17 @@ impl ChunkCarry {
     /// no longer than a chunk, which the reader's own term holds. An upper
     /// bound where `next` starts streaming a row, whose line its fold then
     /// takes in part.
+    ///
+    /// deficiency: KD170 — that bound is drawn, up to the carried line and
+    /// `next`, two read chunks, and a draw past the ledger's floor is refused
+    /// (`docs/design/decisions.md`, "D161"): so under an allowance leaving
+    /// one reader less than two chunks — a stated or discovered one near
+    /// `MEMORY_RESERVE` — a metadata-level parse, a census or a replay reading
+    /// no field is refused for a row it would have streamed holding none of
+    /// it. The charge is exact where the carry knows, before absorbing
+    /// `next`, that the row streams: its block streams rows, `next` holds no
+    /// newline, and the file goes on past it. **(c) unowned**; promoted by a
+    /// run refused so.
     pub fn charge_absorbing(&self, next: &[u8]) -> u64 {
         let held = match self.streamed {
             Some(_) if self.field.is_empty() => return 0,

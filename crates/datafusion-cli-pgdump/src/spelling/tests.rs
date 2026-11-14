@@ -175,6 +175,16 @@ fn each_refusal_is_spelled_in_its_registration_s_grammar() {
             Some("`'pgdump.schema_mode' 'typed'`"),
         ),
         (
+            lib(pgdt_core::Error::LineOutgrowsMemory {
+                offset: 4096,
+                needs: 1 << 30,
+                holds: 64 << 20,
+                allowance: 512 << 20,
+            }),
+            Some("`SET pgdump.memory`"),
+            Some("`SET pgdump.memory`"),
+        ),
+        (
             lib(pgdt_core::Error::AmbiguousTable {
                 name: "t".into(),
                 candidates: vec!["a.t".into(), "b.t".into()],

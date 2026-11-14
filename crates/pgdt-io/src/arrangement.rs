@@ -5,9 +5,10 @@
 use std::path::Path;
 
 use crate::ByteRangeSource;
-use crate::ledger::Ledger;
+use crate::ledger::{Floor, Ledger};
 use crate::memory::{
-    DEFAULT_MEMORY_BUDGET, MemoryLimit, available_memory_in, discover_memory_limit_in, margin_room,
+    DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE, MemoryLimit, available_memory_in,
+    discover_memory_limit_in, margin_allowance, margin_room,
 };
 use crate::parallelism::{Parallelism, WorkerMemory};
 
@@ -204,6 +205,12 @@ impl Arrangement {
     /// alone. What statistics may hold is what the room leaves past the line.
     /// With nothing found, a ledger without limit, nothing having been stated
     /// to carve (`docs/design/decisions.md`, "D157").
+    ///
+    /// **Its [`Floor`] is what the allowance leaves one reader**, at any
+    /// count: the cap, or the margin's ceiling where that is higher, less
+    /// what others drew and one reader's budget — never less than the room,
+    /// so no line the ledger lends room for is refused
+    /// (`docs/design/decisions.md`, "D161").
     pub fn resolve(allowance: &Allowance, request: ArrangementRequest) -> Self {
         let ArrangementRequest { jobs, worker_memory, drawn, held, carve_estimate, line_charge } =
             request;
@@ -239,13 +246,15 @@ impl Arrangement {
             Jobs::Stated(_) => None,
             Jobs::Recommended(jobs) => Some(jobs),
         };
-        let ledger = match room {
-            Some(room) => {
-                let ledger = Ledger::limited(room);
+        let uncarved = matches!(allowance, Allowance::HalfAvailable(_)) && !carve_estimate;
+        let ledger = match (room, allowance.bytes()) {
+            (Some(room), Some(bytes)) => {
+                let holds = one_reader_leaves(bytes, uncarved, worker_memory, drawn).max(room);
+                let ledger = Ledger::limited(room, Floor { holds, allowance: bytes });
                 ledger.draw_statistics(held);
                 ledger
             }
-            None => Ledger::unlimited(),
+            _ => Ledger::unlimited(),
         };
         Self {
             parallelism,
@@ -304,6 +313,29 @@ pub fn arrangement_of(parallelism: Parallelism) -> Arrangement {
         statistics_allowance: None,
         ledger: Ledger::unlimited(),
     }
+}
+
+/// **What `allowance` bytes leave one reader for its line**, whatever the
+/// count it was resolved at (`docs/design/decisions.md`, "D161"): the cap —
+/// the allowance less [`MEMORY_RESERVE`], or the whole of an `uncarved`
+/// estimate — or the margin's ceiling where that is higher, as the ledger
+/// lends under it below their crossing, less what others drew and the budget
+/// one reader of a source recommending `memory` is carved
+/// ([`Parallelism::fit`]). What is held beside the arrangements — a cache's
+/// statistics, a session's pool — does not come off it, as it does not off
+/// the cap.
+fn one_reader_leaves(
+    allowance: u64,
+    uncarved: bool,
+    memory: Option<WorkerMemory>,
+    drawn: u64,
+) -> u64 {
+    let cap = match uncarved {
+        true => allowance,
+        false => allowance.saturating_sub(MEMORY_RESERVE),
+    };
+    let (_, one) = Parallelism::fit(1, memory, cap.saturating_sub(drawn), None);
+    cap.max(margin_allowance(allowance)).saturating_sub(drawn).saturating_sub(one)
 }
 
 /// The arrangement under an estimate rather than an allowance: `cap` bounds

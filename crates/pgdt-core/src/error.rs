@@ -49,6 +49,18 @@ pub enum Error {
     UnterminatedLargeObjectRegion { start_offset: u64 },
     #[error("line at offset {offset} exceeds the {limit}-byte line limit")]
     LineTooLong { offset: u64, limit: usize },
+    /// **A line one reader could not hold**: its charge passes what the
+    /// allowance leaves one reader, whatever the worker count, so no wait
+    /// and no other line giving its room up would admit it
+    /// (`pgdt_io::Floor`, `docs/design/decisions.md`, "D161"). Raised by a
+    /// reader's draw on its run's ledger, `offset` where what it holds of
+    /// the line begins — the line, or the field of a streamed row it holds
+    /// whole — and by a read over mapped blocks before it reads a byte,
+    /// `offset` the start of the longest line its blocks hold.
+    #[error(
+        "the line at offset {offset} needs {needs} byte(s) held, and one reader is left {holds} of an allowance of {allowance} resident byte(s) — read it under a larger allowance"
+    )]
+    LineOutgrowsMemory { offset: u64, needs: u64, holds: u64, allowance: u64 },
     #[error("scan cancelled at byte {scanned_through}")]
     ScanCancelled { scanned_through: u64 },
     #[error("value is not valid UTF-8 (valid up to byte {valid_up_to})")]
