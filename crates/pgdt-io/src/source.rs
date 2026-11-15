@@ -241,6 +241,20 @@ pub trait ByteRangeSource: Send + Sync {
     /// **Advisory, and it defaults to doing nothing** — which is
     /// [`WaitPolicy::NeverWait`]'s behaviour.
     fn hint_wait_policy(&self, _policy: WaitPolicy) {}
+    /// **One of the readers announced through
+    /// [`ByteRangeSource::hint_parallelism`] parks (`true`), or a parked one
+    /// resumes (`false`)**: a parked reader holds no read of this source until
+    /// it resumes, so the source gives back what it keeps for that reader, and
+    /// takes it again as the reader resumes. Called in pairs, through
+    /// [`ParkedReader`], whose drop is the resume.
+    ///
+    /// **Advisory, and it defaults to doing nothing**, which is right for a
+    /// source whose pools no reader count sizes — a plain file's chunk pool,
+    /// a reader's chunk being the read it dropped. A compressed source gives
+    /// back the parked reader's share of its retained blocks at once, and
+    /// moves nothing else: the budget announced, and with it which arm a read
+    /// takes, stand (`docs/design/decisions.md`, "D162").
+    fn hint_parked(&self, _parked: bool) {}
     /// The caller's ask that reading stop, announced beside the other hints
     /// for a source whose own wait needs it.
     ///
@@ -434,6 +448,40 @@ pub enum WaitPolicy {
     /// a one-slot pool blocks forever. The promise binds the loop and nothing
     /// else ([`ByteRangeSource::hint_wait_policy`]).
     MayWait,
+}
+
+/// **One reader of a source parked** for as long as this lives: made by
+/// [`ParkedReader::park`], which announces the park
+/// ([`ByteRangeSource::hint_parked`]), and dropped as the reader resumes,
+/// which announces that — so a reader leaving its pass by an error or a
+/// cancellation resumes too, and a source never keeps a park nobody holds.
+///
+/// **Parking is the reader's to keep**: it holds no read of the source while
+/// this lives, the promise that lets the source give back what it kept for
+/// it (`docs/design/decisions.md`, "D162").
+#[must_use = "a reader is parked only while this lives"]
+pub struct ParkedReader<'a> {
+    source: &'a dyn ByteRangeSource,
+}
+
+impl<'a> ParkedReader<'a> {
+    /// Park one reader of `source` until this is dropped.
+    pub fn park(source: &'a dyn ByteRangeSource) -> Self {
+        source.hint_parked(true);
+        Self { source }
+    }
+}
+
+impl Drop for ParkedReader<'_> {
+    fn drop(&mut self) {
+        self.source.hint_parked(false);
+    }
+}
+
+impl std::fmt::Debug for ParkedReader<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ParkedReader").finish_non_exhaustive()
+    }
 }
 
 /// Bytes requested per read from the source, unless a caller says otherwise.

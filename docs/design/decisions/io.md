@@ -68,6 +68,15 @@ what `--jobs 1` reads; `held` off it, a session's pool grant refusing every long
 crossover a line the ledger lends; refusing only the earliest, a later line waiting on room no line gives. Code:
 `one_reader_leaves`, `ledger.rs`. Evidence: `ledger/tests.rs`, `tests/ledger.rs`.
 
+### D162 A parked reader's pool share is given back as it parks; the budget and the arm stand
+A reader parks holding no read (`ParkedReader`, `hint_parked`), and its source sizes its pools for the readers still
+reading: a compressed source's block-pool depth is theirs, its retained blocks drained to one below it at the park, and
+any pool's free buffers over a lowered limit dropped then. Why: a ledger lending a parked reader's term needs its bytes
+gone now, not at the next decode. Rejected: re-announcing a smaller `Parallelism`, which moves the budget `block_path`
+and the cut read mid-run; a chunk pool shrinking per reader, its depth flat in the count (`KD24`); a count the pass
+sets, which concurrent parkers overwrite. Code: `DecodeBudget::hint_parked`, `BlockCache::give_back`. Evidence:
+`blocks/tests.rs`, `pool/tests.rs`.
+
 ### D4 A budget is solved against a source's cost, never divided by it
 `WorkerMemory` carries a per-worker term and a shared pool term (`affords`, `at`): the block pool's retention list is
 flat below `POOL_DEPTH` and a unit per reader above, which no scalar expresses. `BufferPool` is bounded in bytes,

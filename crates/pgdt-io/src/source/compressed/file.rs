@@ -392,6 +392,10 @@ impl ByteRangeSource for CompressedFileSource {
         self.budget.hint_parallelism(parallelism);
     }
 
+    fn hint_parked(&self, parked: bool) {
+        self.budget.hint_parked(parked);
+    }
+
     /// **The permission reaches the chunk pool only.** A chunk buffer is taken
     /// by one `read_range` and returned when its bytes are dropped, so a loop
     /// releasing each chunk before its next read holds one of them — which is

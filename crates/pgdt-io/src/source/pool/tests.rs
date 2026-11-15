@@ -230,3 +230,29 @@ fn a_charge_outlives_the_policy_that_took_it_and_survives_a_refused_release() {
     assert_eq!(pool.charged(), 0);
     assert_eq!(pool.free_len(), 0, "a buffer above the ceiling is still dropped");
 }
+
+/// **A lowered limit is given back at once**: the free buffers over the new
+/// slot count are dropped as it is stated, not left for acquisitions to
+/// drain, and a raised one keeps buffers again as they come back
+/// (`docs/design/decisions.md`, "D162").
+#[test]
+fn a_lowered_limit_drops_the_free_buffers_over_it_at_once() {
+    let chunk = 1 << 20;
+    let pool = BufferPool::default();
+    pool.hint(chunk);
+    pool.set_limits(64 << 20, POOL_DEPTH);
+    for _ in 0..POOL_DEPTH {
+        pool.give(vec![0u8; chunk]);
+    }
+    assert_eq!(pool.free_len(), POOL_DEPTH);
+
+    pool.set_limits(2 * chunk, POOL_DEPTH);
+    assert_eq!(pool.free_len(), 2, "two slots now, and nothing acquired since");
+
+    pool.set_limits(64 << 20, POOL_DEPTH);
+    assert_eq!(pool.free_len(), 2, "a raised limit allocates nothing ahead");
+    for _ in 0..POOL_DEPTH {
+        pool.give(vec![0u8; chunk]);
+    }
+    assert_eq!(pool.free_len(), POOL_DEPTH, "and keeps what comes back up to it");
+}

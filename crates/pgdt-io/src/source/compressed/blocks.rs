@@ -399,6 +399,20 @@ impl BlockCache {
     /// would find no room and discard the very buffer this take is about to
     /// reuse.
     pub(super) fn slot(&self) -> PooledBuffer {
+        self.give_back();
+        self.pool.obtain(self.unit)
+    }
+
+    /// Drop least-recently-used blocks down to one below the slot count —
+    /// the drain a decode makes before it takes its slot, made **at once**
+    /// where a reader parks, so the block it last decoded and its share of
+    /// the list are returned when it parks rather than at the next decode
+    /// (`docs/design/decisions.md`, "D162").
+    ///
+    /// What a reader still views stays alive until its view drops, as with
+    /// any eviction; what is left is `slots − 1` retained blocks beside the
+    /// one each reader still reading holds.
+    pub(super) fn give_back(&self) {
         let keep = self.pool.slots().saturating_sub(1);
         let evicted = {
             let mut retention = self.retention.lock().unwrap_or_else(|e| e.into_inner());
@@ -408,7 +422,6 @@ impl BlockCache {
             evicted
         };
         drop(evicted);
-        self.pool.obtain(self.unit)
     }
 }
 
@@ -458,6 +471,10 @@ pub(crate) struct DecodeBudget {
     /// are dropped, and wants the replay path's depth instead
     /// (`LocalFileSource::hint_parallelism`).
     jobs: AtomicUsize,
+    /// How many of those readers are parked now
+    /// ([`DecodeBudget::hint_parked`]): the block pool's depth is that of the
+    /// readers still reading.
+    parked: AtomicUsize,
 }
 
 impl DecodeBudget {
@@ -476,6 +493,7 @@ impl DecodeBudget {
             decode_bytes,
             budget: AtomicUsize::new(DEFAULT_MEMORY_BUDGET as usize),
             jobs: AtomicUsize::new(1),
+            parked: AtomicUsize::new(0),
         };
         budget.apportion();
         budget
@@ -494,9 +512,14 @@ impl DecodeBudget {
     /// composed incrementally, so [`DecodeBudget::hint_read_size`] and
     /// [`DecodeBudget::hint_parallelism`] may arrive in either order and a source
     /// that is never told either still holds a coherent split.
+    ///
+    /// **The block pool's depth counts the readers still reading**: a parked
+    /// one's share of the retention list is no longer kept for it
+    /// ([`DecodeBudget::hint_parked`]).
     fn apportion(&self) {
         let budget = self.budget.load(Ordering::Relaxed);
         let jobs = self.jobs.load(Ordering::Relaxed).max(1);
+        let reading = jobs.saturating_sub(self.parked.load(Ordering::Relaxed)).max(1);
         self.pool.set_limits(budget, POOL_DEPTH);
         if let Some(blocks) = &self.blocks {
             // One retained block per concurrent reader, and never fewer than
@@ -517,9 +540,12 @@ impl DecodeBudget {
             // stated budget. **(c) unowned**; closing it means telling the
             // pool the *delivered* count, or [`BufferPool::slots`] reserving
             // for the decodes in flight — either reworks a pool's sizing rule.
+            // A reader parking there gives back no retention either: its
+            // depth comes off the announced count, under which the budget
+            // still binds.
             blocks
                 .pool
-                .set_limits(budget.saturating_sub(self.pool.held_bytes()), POOL_DEPTH.max(jobs));
+                .set_limits(budget.saturating_sub(self.pool.held_bytes()), POOL_DEPTH.max(reading));
         }
     }
 
@@ -630,6 +656,33 @@ impl DecodeBudget {
         self.budget.store(budget_bytes(parallelism), Ordering::Relaxed);
         self.jobs.store(parallelism.jobs(), Ordering::Relaxed);
         self.apportion();
+    }
+
+    /// **A reader parks, or a parked one resumes**
+    /// ([`ByteRangeSource::hint_parked`](crate::ByteRangeSource::hint_parked)).
+    /// Parking takes it off the block pool's depth and drops the retained
+    /// blocks over what the readers still reading keep, the block it last
+    /// decoded among them ([`BlockCache::give_back`]); resuming puts the
+    /// depth back, and the list regrows as decodes land.
+    ///
+    /// **Only the pools move**: the stated budget is untouched, so which arm
+    /// a read takes ([`DecodeBudget::block_path`]) and how a range is cut are
+    /// what they were, a parked reader resuming into the arrangement it was
+    /// carved in (`docs/design/decisions.md`, "D162"). The chunk pool keeps
+    /// its depth, which no reader count sizes; a parked reader's chunk is the
+    /// read it dropped.
+    pub(super) fn hint_parked(&self, parked: bool) {
+        match parked {
+            true => self.parked.fetch_add(1, Ordering::Relaxed),
+            false => self
+                .parked
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| Some(n.saturating_sub(1)))
+                .unwrap_or(0),
+        };
+        self.apportion();
+        if parked && let Some(blocks) = &self.blocks {
+            blocks.give_back();
+        }
     }
 }
 

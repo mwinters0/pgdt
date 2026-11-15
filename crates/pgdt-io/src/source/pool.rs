@@ -148,8 +148,8 @@ pub(crate) struct BufferPool {
 #[derive(Debug, Default)]
 struct PoolState {
     /// Buffers nobody is using. A release adds one only while fewer than
-    /// [`BufferPool::free_slots`] are here, and nothing trims them, so a
-    /// lowered limit leaves the list over it until acquisitions drain it.
+    /// [`BufferPool::free_slots`] are here, and a lowered limit drops the
+    /// ones over it at once ([`BufferPool::set_limits`]).
     free: Vec<Vec<u8>>,
     /// Buffers handed to a [`WaitPolicy::MayWait`] loop and not yet
     /// returned — the term a waiting acquisition is bounded by, and the only
@@ -284,9 +284,23 @@ impl BufferPool {
     /// A raised ceiling wakes every waiter, since one of them may now fit
     /// under it — the only other thing that can release a waiting acquisition
     /// is a charged buffer coming back.
+    ///
+    /// **A lowered one is given back at once**: the free buffers over
+    /// [`BufferPool::free_slots`] are dropped now rather than left for
+    /// acquisitions to drain, so a reader that parks returns its share when
+    /// it parks (`docs/design/decisions.md`, "D162"). A buffer a holder has
+    /// out is its holder's until it comes back, and is kept then only under
+    /// the new ceiling.
     pub(super) fn set_limits(&self, budget: usize, depth: usize) {
         self.budget.store(budget, Ordering::Relaxed);
         self.depth.store(depth.max(1), Ordering::Relaxed);
+        let slots = self.free_slots();
+        let over = {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            let keep = slots.min(state.free.len());
+            state.free.split_off(keep)
+        };
+        drop(over);
         self.returned.notify_all();
     }
 
@@ -310,8 +324,8 @@ impl BufferPool {
 
     /// The most this pool can hold at once, in bytes: its slot count at its
     /// own slot size, counting the free list and whatever a reserving holder
-    /// retains **together** — once acquisitions have drained a free list a
-    /// lowered limit left over it ([`PoolState::free`]).
+    /// retains **together** — the retained list once its holder has evicted
+    /// down to a lowered limit ([`BlockCache::give_back`](crate::source::compressed::blocks::BlockCache::give_back)).
     ///
     /// **It is a true bound only because [`BufferPool::keeps`] refuses
     /// anything above a slot and [`BufferPool::reserve`] takes the retained

@@ -681,6 +681,9 @@ struct Hints {
     wait: Option<WaitPolicy>,
     cancel: Option<CancellationToken>,
     in_flight: Option<bool>,
+    /// The readers parked now, each announced to the indexed source as one
+    /// park.
+    parked: usize,
 }
 
 impl Hints {
@@ -700,6 +703,7 @@ impl Hints {
         if let Some(binds) = self.in_flight {
             done.hint_in_flight_identity(binds);
         }
+        (0..self.parked).for_each(|_| done.hint_parked(true));
     }
 }
 
@@ -799,6 +803,19 @@ impl ByteRangeSource for FirstPass {
     fn hint_wait_policy(&self, policy: WaitPolicy) {
         self.pool.set_policy(policy);
         self.hint(|hints| hints.wait = Some(policy), |done| done.hint_wait_policy(policy));
+    }
+
+    /// **The pass's own pool keeps its depth**, which no reader count sizes;
+    /// the count is kept for the indexed source, whose block pool's depth
+    /// follows it.
+    fn hint_parked(&self, parked: bool) {
+        self.hint(
+            |hints| match parked {
+                true => hints.parked += 1,
+                false => hints.parked = hints.parked.saturating_sub(1),
+            },
+            |done| done.hint_parked(parked),
+        );
     }
 
     fn hint_cancellation(&self, cancel: CancellationToken) {

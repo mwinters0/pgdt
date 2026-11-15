@@ -85,3 +85,24 @@ fn a_source_that_does_not_advise_recommends_the_serial_path() {
     let (_file, source) = source_of(b"0123456789abcdef");
     assert_eq!(source.default_workers(), 1);
 }
+
+/// **A parked reader resumes as its guard drops**, however it leaves —
+/// each park announced once and each resume once, so a source keeps no
+/// park nobody holds (`docs/design/decisions.md`, "D162").
+#[test]
+fn a_parked_reader_resumes_as_its_guard_drops() {
+    let source = ParkCounting::default();
+    let first = ParkedReader::park(&source);
+    let second = ParkedReader::park(&source);
+    assert_eq!(source.parked(), 2);
+    drop(first);
+    assert_eq!(source.parked(), 1);
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _parked = ParkedReader::park(&source);
+        panic!("a reader failing while parked");
+    }));
+    assert!(unwound.is_err());
+    assert_eq!(source.parked(), 1, "the failed reader resumed as it unwound");
+    drop(second);
+    assert_eq!(source.parked(), 0);
+}

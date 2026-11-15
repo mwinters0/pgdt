@@ -1,5 +1,6 @@
 //! Fixtures more than one module's tests build: a file to read, a source
-//! that implements nothing it need not, an `.xz` file and its seek table, a
+//! that implements nothing it need not, one counting its parked readers, an
+//! `.xz` file and its seek table, a
 //! gzip and a BGZF file, a gzip file's index and its windows, and a fake
 //! filesystem root.
 
@@ -42,6 +43,39 @@ impl ByteRangeSource for BareSource {
     }
     fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
         Box::pin(async { Ok(None) })
+    }
+}
+
+/// A source counting the readers parked on it ([`ByteRangeSource::hint_parked`]),
+/// reading nothing, to pin who announces a park and a resume.
+#[derive(Default)]
+pub(crate) struct ParkCounting {
+    pub(crate) parked: std::sync::atomic::AtomicIsize,
+}
+
+impl ParkCounting {
+    pub(crate) fn parked(&self) -> isize {
+        self.parked.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl ByteRangeSource for ParkCounting {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
+        BareSource.read_range(offset, len)
+    }
+    fn extent(&self) -> Pin<Box<dyn Future<Output = Result<Extent>> + Send + '_>> {
+        Box::pin(async { Ok(Extent::Exact(0)) })
+    }
+    fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn hint_parked(&self, parked: bool) {
+        let step = if parked { 1 } else { -1 };
+        self.parked.fetch_add(step, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

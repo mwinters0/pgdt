@@ -911,3 +911,14 @@ async fn a_fetched_bgzf_file_inflates_ahead_over_one_download() {
         assert_eq!(next, stored, "at {jobs}: the object, once");
     }
 }
+
+/// **A park announced during the pass reaches the indexed source**: the
+/// pass keeps the count of readers parked and replays it at the hand-over,
+/// as it does every hint (`docs/design/decisions.md`, "D162").
+#[test]
+fn the_readers_parked_during_the_pass_are_replayed_on_the_indexed_source() {
+    let hints = Hints { parked: 2, ..Hints::default() };
+    let done = ParkCounting::default();
+    hints.replay(&done);
+    assert_eq!(done.parked(), 2, "each reader parked at the hand-over, once");
+}

@@ -238,3 +238,80 @@ fn a_streaming_fallback_source_advises_one_partition() {
     assert_eq!(decoding.partition_read(), PartitionRead::Whole { unit: 4096 });
     assert_eq!(streaming.partition_read(), PartitionRead::Chunked);
 }
+
+/// What `budget`'s block pool holds now: its retained blocks, and its free
+/// buffers.
+fn held(budget: &DecodeBudget) -> (usize, usize) {
+    let cache = budget.blocks.as_ref().expect("a file with blocks");
+    (cache.retention.lock().unwrap().blocks.len(), cache.pool.free_len())
+}
+
+/// `count` blocks from `first` decoded through `budget`'s block cache, one
+/// after another, none still viewed.
+fn decode_through(budget: &DecodeBudget, first: usize, count: usize) {
+    let cache = budget.blocks.as_ref().expect("a file with blocks");
+    (first..first + count).for_each(|index| drop(decode(cache, index)));
+}
+
+/// **A reader that parks gives back its share of the retained blocks at
+/// once, and takes it again as it resumes** (`docs/design/decisions.md`,
+/// "D162"): above [`POOL_DEPTH`] readers the block pool's depth is the
+/// readers still reading, and the list is drained to one below it as the
+/// reader parks rather than at the next decode. Nothing else moves: the arm
+/// a read takes and the cost of a reader stand.
+#[test]
+fn a_parked_reader_gives_back_its_retained_blocks_and_takes_them_again() {
+    let unit = 4096;
+    let budget = DecodeBudget::over(unit as u64, 0);
+    budget.hint_read_size(1024);
+    budget.hint_parallelism(Parallelism::workers(8, 1 << 20));
+    let cache = budget.blocks.as_ref().expect("a file with blocks");
+    assert_eq!(cache.pool.slots(), 8, "one slot a reader, the budget affording them");
+    let block_path = budget.block_path().is_some();
+    let block_decode_bytes = budget.block_decode_bytes();
+    assert!(block_path);
+
+    decode_through(&budget, 0, 12);
+    assert_eq!(held(&budget), (8, 0), "a full list, the last decode landed in its last slot");
+
+    (0..3).for_each(|_| budget.hint_parked(true));
+    assert_eq!(cache.pool.slots(), 5, "the five readers still reading");
+    let (retained, free) = held(&budget);
+    assert_eq!(retained, 4, "drained to one below the slots as the readers park");
+    assert!(retained + free <= 5, "{retained} retained and {free} free past five slots");
+    assert_eq!(budget.block_path().is_some(), block_path, "the arm a read takes stands");
+    assert_eq!(budget.block_decode_bytes(), block_decode_bytes, "and what a reader costs");
+
+    decode_through(&budget, 12, 6);
+    let (retained, free) = held(&budget);
+    assert!(retained + free <= 5, "decoding while parked keeps to five slots");
+
+    (0..3).for_each(|_| budget.hint_parked(false));
+    assert_eq!(cache.pool.slots(), 8, "resumed, the depth is back");
+    decode_through(&budget, 18, 12);
+    assert_eq!(held(&budget), (8, 0), "and the list regrows as decodes land");
+}
+
+/// **At or below [`POOL_DEPTH`] readers a park keeps the depth and still
+/// drains the list to one below it**, so the block the parked reader last
+/// decoded is not kept for it; a resume past every park is no resume.
+#[test]
+fn a_parked_reader_under_the_pool_depth_gives_back_its_last_block() {
+    let budget = DecodeBudget::over(4096, 0);
+    budget.hint_read_size(1024);
+    budget.hint_parallelism(Parallelism::workers(2, 1 << 20));
+    let cache = budget.blocks.as_ref().expect("a file with blocks");
+    assert_eq!(cache.pool.slots(), POOL_DEPTH);
+
+    decode_through(&budget, 0, 8);
+    assert_eq!(held(&budget), (POOL_DEPTH, 0));
+    budget.hint_parked(true);
+    assert_eq!(cache.pool.slots(), POOL_DEPTH, "the depth is the pool's own, not a reader's");
+    assert_eq!(held(&budget).0, POOL_DEPTH - 1, "the parked reader's block given back");
+
+    budget.hint_parked(false);
+    budget.hint_parked(false);
+    budget.hint_parked(true);
+    assert_eq!(budget.parked.load(Ordering::Relaxed), 1, "an unmatched resume counts nothing");
+    assert_eq!(cache.pool.slots(), POOL_DEPTH);
+}

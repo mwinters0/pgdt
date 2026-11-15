@@ -525,6 +525,10 @@ impl ByteRangeSource for FetchedCompressedSource {
         self.budget.hint_parallelism(parallelism);
     }
 
+    fn hint_parked(&self, parked: bool) {
+        self.budget.hint_parked(parked);
+    }
+
     /// **Ignored: this source never takes a wait**, and the reason is where its
     /// chunk buffer is obtained rather than what the loop promises.
     ///
