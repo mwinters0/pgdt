@@ -162,8 +162,11 @@ impl ByteRangeSource for LocalFileSource {
     // by a charge describing nothing the path holds: the bill grows with the
     // count while what is held is flat at `POOL_DEPTH` chunks, and above a
     // budget of that bill times `jobs` nothing bounds them at all. **(c) unowned.** Closing it means billing the pool's real depth and
-    // recommending what a reader costs; a reading of a parallel plain scan on a real
-    // device is what reopens it.
+    // recommending what a reader costs, which parks plain readers by that cost,
+    // so this source must then give its pool back as one parks (`hint_parked`)
+    // or the ledger lends bytes still resident (`docs/design/decisions.md`,
+    // "D162", "D163"); a reading of a parallel plain scan on a real device is
+    // what reopens it.
     fn partitions(&self, _range: Range<u64>) -> Partitioning {
         let chunk = self.pool.slot_bytes();
         let bytes = chunk.saturating_mul(PLAIN_PARTITION_CHUNKS).min(POOL_MAX_BYTES).max(chunk);

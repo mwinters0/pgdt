@@ -21,6 +21,13 @@ use crate::parallelism::{Parallelism, WorkerMemory};
 /// more than the carve took for those readers: nothing where the source
 /// stated no cost, and nothing for the readers a stated count holds past
 /// what its budget affords (`KD21`).
+///
+/// **Where the source stated no cost, nothing is also all a park could
+/// buy**: such a source, a plain file among them, is budgeted no more at its
+/// count than at one reader, so the floor — what one reader leaves
+/// (`docs/design/decisions.md`, "D161") — already holds beside every reader,
+/// and the chunk a parked plain reader drops goes back to a free list kept
+/// `POOL_DEPTH` deep, freeing nothing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Terms(pub(super) Vec<u64>);
 

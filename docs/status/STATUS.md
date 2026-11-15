@@ -168,17 +168,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A park is credited only the carve's fall, so a plain file's readers never
-  park** (33.5.2, D163). `Terms` gives a parked reader back what the
-  arrangement's budget falls by at one reader fewer (`WorkerMemory::at`); a
-  plain file states no worker memory (`default_worker_memory` is `None`), so
-  its budget is flat in the count, a park credits nothing, and a line alone
-  past the room is admitted past it at once beside readers keeping their
-  chunks — as before 33.5.2, up to the floor. Why: the room was carved below
-  that flat budget, the readers' chunks inside it, and the chunk pool keeps
-  `POOL_DEPTH` buffers whatever parks (`KD24`), so what a plain park frees is
-  not a number the carve states. Reconsidering means crediting a plain
-  reader its partition's term (`Partitioning::worker_memory`), the chunks it
-  does drop, which parks plain readers too and lends the ledger bytes the
-  budget set aside for them.
