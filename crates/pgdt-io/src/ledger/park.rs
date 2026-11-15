@@ -6,8 +6,9 @@
 //! keeps where each reader last stood and which are asked and parked
 //! ([`Readers`]). **The readers asked are those reading later in the file
 //! than the line**, holding no line and waiting on none — a reader whose line
-//! waits reads nothing already — the latest first, and as the line's excess
-//! falls the earliest of them are let go first.
+//! waits reads nothing already, nor does one standing aside at a yield — the
+//! latest first, and as the line's excess falls the earliest of them are let
+//! go first.
 
 use std::collections::BTreeMap;
 use std::task::Waker;
@@ -92,6 +93,14 @@ impl Readers {
     pub(super) fn stand(&mut self, id: u64, at: u64) {
         if let Some(reader) = self.0.get_mut(&id) {
             reader.at = Some(at);
+        }
+    }
+
+    /// The holder `id`'s reader stands nowhere until it next stands: it
+    /// reads nothing meanwhile, so it is asked nothing.
+    pub(super) fn stand_aside(&mut self, id: u64) {
+        if let Some(reader) = self.0.get_mut(&id) {
+            reader.at = None;
         }
     }
 

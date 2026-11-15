@@ -1,14 +1,17 @@
 //! A query's held lines on its run's ledger (`docs/design/decisions.md`,
-//! "D157", "D158", "D159", "D160"): the ledger carved around its longest
-//! line, a line held past its chunk term draws its bytes and its query's
-//! decode beside them, returns the draw before any batch is yielded, and
-//! answers what a ledger without limit answers however its partitions are
-//! driven — its cold mapping pass's census drawing on its own.
+//! "D157", "D158", "D159", "D160", "D163"): the ledger carved around its
+//! longest line, a line held past its chunk term draws its bytes and its
+//! query's decode beside them, returns the draw before any batch is yielded,
+//! parks the later sub-streams where it is alone past the room, and answers
+//! what a ledger without limit answers however its partitions are driven —
+//! its cold mapping pass's census drawing on its own.
 
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::task::{Context, Poll, Waker};
 use std::time::{Duration, SystemTime};
 
 use arrow::array::RecordBatch;
@@ -20,7 +23,7 @@ use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::{
     Admission, Allowance, Arrangement, ArrangementRequest, ByteRangeSource, Extent, Jobs,
-    LocalFileSource, WorkerMemory,
+    LocalFileSource, Parallelism, Partitioning, WaitPolicy, WorkerMemory,
 };
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_query::{Expr, Predicate, PredicateOp, QueryOptions, ScanExtent, Table, TablePartitions};
@@ -414,4 +417,245 @@ async fn a_query_s_partitions_on_a_full_ledger_answer_as_on_an_unlimited_one() {
         }
         assert!(cut, "some table on {version} is read in partitions");
     }
+}
+
+/// What each of a parking source's workers is stated to hold, so a reader
+/// parked gives that back to the ledger.
+const PARKED_TERM: u64 = 64 << 20;
+
+/// `jobs` workers of `source`'s stated cost under a gibibyte whose room
+/// other scans drew whole: every line a reader holds past its chunk passes
+/// the room, so the earliest, alone, parks the readers after it.
+fn parking(source: &dyn ByteRangeSource, jobs: usize) -> Arrangement {
+    let allowance = Allowance::Stated(1 << 30);
+    let stated = ArrangementRequest::of(source, Some(jobs));
+    let room = Arrangement::resolve(&allowance, stated).ledger().capacity().unwrap();
+    let arrangement =
+        Arrangement::resolve(&allowance, ArrangementRequest { drawn: room, ..stated });
+    assert_eq!(arrangement.ledger().capacity(), Some(0));
+    assert_eq!(arrangement.parallelism().jobs(), jobs);
+    arrangement
+}
+
+/// The readers parked on a source, now and at most at once.
+#[derive(Default)]
+struct ParkCount {
+    now: AtomicIsize,
+    most: AtomicIsize,
+}
+
+impl ParkCount {
+    fn hint(&self, parked: bool) {
+        let now = self.now.fetch_add(if parked { 1 } else { -1 }, Ordering::SeqCst);
+        self.most.fetch_max(now + 1, Ordering::SeqCst);
+    }
+}
+
+/// A plain file stating that each of its workers holds [`PARKED_TERM`],
+/// counting the readers parked on it.
+struct Parks {
+    inner: LocalFileSource,
+    parked: ParkCount,
+}
+
+impl ByteRangeSource for Parks {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> Pin<Box<dyn Future<Output = pgdt_core::Result<Bytes>> + Send + '_>> {
+        self.inner.read_range(offset, len)
+    }
+    fn extent(&self) -> Pin<Box<dyn Future<Output = pgdt_core::Result<Extent>> + Send + '_>> {
+        self.inner.extent()
+    }
+    fn modified(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = pgdt_core::Result<Option<SystemTime>>> + Send + '_>> {
+        self.inner.modified()
+    }
+    fn hint_read_size(&self, len: usize) {
+        self.inner.hint_read_size(len);
+    }
+    /// Forwarded, or the plan is never cut and no reader is later than
+    /// another.
+    fn partitions(&self, range: std::ops::Range<u64>) -> Partitioning {
+        self.inner.partitions(range)
+    }
+    fn default_worker_memory(&self) -> Option<WorkerMemory> {
+        Some(WorkerMemory::per_worker(PARKED_TERM))
+    }
+    fn hint_parallelism(&self, parallelism: Parallelism) {
+        self.inner.hint_parallelism(parallelism);
+    }
+    fn hint_wait_policy(&self, policy: WaitPolicy) {
+        self.inner.hint_wait_policy(policy);
+    }
+    fn hint_parked(&self, parked: bool) {
+        self.parked.hint(parked);
+        self.inner.hint_parked(parked);
+    }
+}
+
+/// **A query whose sub-streams park answers what one without limit
+/// answers** (`docs/design/decisions.md`, "D163"): each table of every
+/// major's `types` fixture, settled with no limit and read in four-byte
+/// reads at four workers whose parking gives their terms back to a ledger
+/// with no room — each line held alone past it, the sub-streams after it
+/// parked — answers in file order and driven as `CoalescePartitionsExec`
+/// drives it what it answers without limit, neither stalling though the
+/// merge holds back each partition at a batch it yielded, sub-streams
+/// parking along the way and none left parked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_query_parking_its_sub_streams_answers_as_on_an_unlimited_ledger() {
+    const JOBS: usize = 4;
+    const CHUNK: usize = 4;
+    for version in VERSIONS {
+        let dump = types_fixture(version, "default");
+        let (mut cut, mut parked) = (false, 0);
+        for table in TABLES.iter().filter(|&&table| version >= 14 || table != "public.t_multirange")
+        {
+            let at = format!("{table} on {version}");
+            let source = Arc::new(Parks {
+                inner: LocalFileSource::open(&dump).unwrap(),
+                parked: ParkCount::default(),
+            });
+            let shared = || -> Arc<dyn ByteRangeSource> { Arc::clone(&source) as _ };
+            let settled = settled(shared(), table, CHUNK, &arranged(JOBS)).await;
+            let unlimited = settled.plan(reads(CHUNK), QueryOptions::default(), &arranged(JOBS));
+            let want = in_file_order(&unlimited.unwrap(), 2).await;
+            assert!(want.num_rows() > 0, "{at} holds rows");
+            assert_eq!(
+                source.parked.most.load(Ordering::SeqCst),
+                0,
+                "{at}: nothing parks unlimited"
+            );
+
+            let arrangement = parking(source.as_ref(), JOBS);
+            let ordered =
+                settled.plan(reads(CHUNK), QueryOptions::default(), &arrangement).unwrap();
+            cut |= ordered.len() > 1;
+            let merged = tokio::time::timeout(STALLED, in_file_order(&ordered, 2));
+            let merged = merged.await.unwrap_or_else(|_| panic!("{at}: the merge stalled"));
+            assert_eq!(merged, want, "{at}, in file order");
+            let tasks = settled.plan(reads(CHUNK), QueryOptions::default(), &arrangement).unwrap();
+            let tasks = tokio::time::timeout(STALLED, coalesced(tasks, 2));
+            let tasks = tasks.await.unwrap_or_else(|_| panic!("{at}: the tasks stalled"));
+            assert_eq!(tasks, want, "{at}, a task a partition");
+            assert_eq!(source.parked.now.load(Ordering::SeqCst), 0, "{at}");
+            assert_eq!(arrangement.ledger().parked(), 0, "{at}");
+            parked = parked.max(source.parked.most.load(Ordering::SeqCst));
+        }
+        assert!(cut, "some table on {version} is read in partitions");
+        assert!(parked >= 1, "{version}: no sub-stream parked");
+    }
+}
+
+/// A dump held in memory whose reads from `gate` on wait until it is
+/// opened, stating that each of its workers holds [`PARKED_TERM`] and
+/// counting the readers parked on it.
+struct Gated {
+    bytes: Bytes,
+    gate: u64,
+    open: AtomicBool,
+    parked: ParkCount,
+}
+
+impl ByteRangeSource for Gated {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> Pin<Box<dyn Future<Output = pgdt_core::Result<Bytes>> + Send + '_>> {
+        let at = offset as usize;
+        let bytes = self.bytes.slice(at..at + len);
+        let gated = offset >= self.gate;
+        Box::pin(async move {
+            std::future::poll_fn(|_| match !gated || self.open.load(Ordering::SeqCst) {
+                true => Poll::Ready(()),
+                false => Poll::Pending,
+            })
+            .await;
+            Ok(bytes)
+        })
+    }
+    fn extent(&self) -> Pin<Box<dyn Future<Output = pgdt_core::Result<Extent>> + Send + '_>> {
+        let len = self.bytes.len() as u64;
+        Box::pin(async move { Ok(Extent::Exact(len)) })
+    }
+    fn modified(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = pgdt_core::Result<Option<SystemTime>>> + Send + '_>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn default_worker_memory(&self) -> Option<WorkerMemory> {
+        Some(WorkerMemory::per_worker(PARKED_TERM))
+    }
+    fn hint_parked(&self, parked: bool) {
+        self.parked.hint(parked);
+    }
+}
+
+/// **A sub-stream asked to park emits the rows its batch holds first, and
+/// parks holding no read** (`docs/design/decisions.md`, "D162", "D163"): a
+/// replay holding rows of a batch when a line alone past a ledger with no
+/// room asks it to park yields them, short of its batch size, then parks at
+/// its next read; the line is admitted once it has, and the replay resumes
+/// as the line's draw is returned, answering what it answers without limit.
+#[tokio::test]
+async fn a_sub_stream_asked_to_park_emits_its_batch_first() {
+    let rows: String = (1..=40).map(|row| format!("{row}\n")).collect();
+    let before = "CREATE TABLE public.t (\n    a integer\n);\n\nCOPY public.t (a) FROM stdin;\n";
+    let file = format!("{before}{rows}\\.\n\n");
+    let gate = (before.len() + file[before.len()..].find("20\n").unwrap()) as u64;
+    let source = Arc::new(Gated {
+        bytes: Bytes::from(file),
+        gate,
+        open: AtomicBool::new(true),
+        parked: ParkCount::default(),
+    });
+    let shared = || -> Arc<dyn ByteRangeSource> { Arc::clone(&source) as _ };
+    let table = settled(shared(), "public.t", 4, &arranged(1)).await;
+    let every = QueryOptions::default();
+    let unlimited = table.plan(reads(4), every.clone(), &arranged(1)).unwrap();
+    let want: Vec<_> = unlimited.stream(0, 8192).map(Result::unwrap).collect().await;
+    let want = joined(&want);
+    assert_eq!(want.num_rows(), 40);
+
+    let arrangement = parking(source.as_ref(), 2);
+    let ledger = arrangement.ledger();
+    let plan = table.plan(reads(4), every, &arrangement).unwrap();
+    assert_eq!(plan.len(), 1);
+    source.open.store(false, Ordering::SeqCst);
+    let mut stream = plan.stream(0, 8192);
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(stream.poll_next_unpin(&mut cx).is_pending(), "it waits at the gate");
+
+    let mut line = ledger.holder();
+    let first = {
+        let mut draw = std::pin::pin!(line.draw(0, 1));
+        assert!(draw.as_mut().poll(&mut cx).is_pending(), "the line waits on the park");
+        source.open.store(true, Ordering::SeqCst);
+        let Poll::Ready(Some(first)) = stream.poll_next_unpin(&mut cx) else {
+            panic!("the batch is emitted before the park");
+        };
+        let first = first.unwrap();
+        assert!((1..40).contains(&first.num_rows()), "cut short: {}", first.num_rows());
+        assert_eq!(ledger.parked(), 0, "it parks at its next read");
+        assert!(stream.poll_next_unpin(&mut cx).is_pending(), "parked");
+        assert_eq!((ledger.parked(), source.parked.now.load(Ordering::SeqCst)), (1, 1));
+        assert_eq!(draw.poll(&mut cx), Poll::Ready(Admission::Held));
+        first
+    };
+    line.release();
+    let mut batches = vec![first];
+    loop {
+        match stream.poll_next_unpin(&mut cx) {
+            Poll::Ready(Some(batch)) => batches.push(batch.unwrap()),
+            Poll::Ready(None) => break,
+            Poll::Pending => panic!("the released line let it go"),
+        }
+    }
+    assert_eq!(joined(&batches), want);
+    assert_eq!((ledger.parked(), source.parked.now.load(Ordering::SeqCst)), (0, 0));
 }

@@ -66,6 +66,13 @@ use crate::prune::SortedStop;
 /// nothing, so a caller holding it back stalls no other, and a cut before
 /// the row draws again once the earlier rows are out
 /// (`docs/design/decisions.md`, "D159").
+///
+/// **Its reader parks where the ledger asks it to**, as a parse's does: it
+/// stands where it reads before each read, and one asked emits the batch it
+/// holds rows of, then parks at its next read holding no read, resuming as
+/// the line that asked is admitted or its draw returned; it stands aside
+/// before every yield, so a caller holding it back at a batch stalls no line
+/// (`docs/design/decisions.md`, "D163").
 #[allow(clippy::too_many_arguments)]
 pub(super) fn replay<'a>(
     source: &'a dyn ByteRangeSource,
@@ -251,7 +258,33 @@ pub(super) fn replay<'a>(
                         Skip::Rest => break,
                     }
                 }
+                // A reader asked to park parks holding no read
+                // (`docs/design/decisions.md`, "D162"): the rows its batch
+                // views are emitted first, and it parks at the read after.
+                let parks = match active.as_mut() {
+                    Some((_, _, batcher, _, _)) if !batcher.is_empty() => {
+                        if holder.stand(chunked.read_pos()) {
+                            let begins_at = batcher
+                                .batch_start()
+                                .unwrap_or_else(|| chunked.scanner().position());
+                            let batch = batcher.flush()?;
+                            chunks.invalidate_block_cache();
+                            rows_emitted += batch.num_rows() as u64;
+                            *shared.batch_offset.lock().unwrap() = begins_at;
+                            *shared.position.lock().unwrap() =
+                                snapshot(chunked.scanner(), &active, rows_emitted, fingerprint);
+                            holder.release();
+                            holder.stand_aside();
+                            yield batch;
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    _ => true,
+                };
                 let drawing = Drawing::charged(&mut holder, &charge);
+                let drawing = if parks { drawing.parking() } else { drawing };
                 let mut chunk = chunked.next_chunk_folding(source, None, Some(drawing)).await?;
                 // The line this chunk's carry pass completes, where it was
                 // drawn for past its chunk term, and its charge: its row, the
@@ -408,6 +441,7 @@ pub(super) fn replay<'a>(
                                                 database: database.clone(),
                                             }),
                                         };
+                                        holder.stand_aside();
                                         yield batch;
                                         // The row's line, still held, is
                                         // drawn for again; held once, it
@@ -467,6 +501,7 @@ pub(super) fn replay<'a>(
                                 *shared.position.lock().unwrap() =
                                     snapshot(chunk.scanner(), &active, rows_emitted, fingerprint);
                                 holder.release();
+                                holder.stand_aside();
                                 yield batch;
                             }
                         }
@@ -489,6 +524,7 @@ pub(super) fn replay<'a>(
                         *shared.position.lock().unwrap() =
                             snapshot(chunk.scanner(), &active, rows_emitted, fingerprint);
                         holder.release();
+                        holder.stand_aside();
                         yield batch;
                     }
                     // The line just consumed ended at or past this
@@ -563,6 +599,7 @@ pub(super) fn replay<'a>(
                 *shared.batch_offset.lock().unwrap() = begins_at;
                 *shared.position.lock().unwrap() =
                     snapshot(chunked.scanner(), &active, rows_emitted, fingerprint);
+                holder.stand_aside();
                 yield batch;
             }
         }

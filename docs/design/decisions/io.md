@@ -78,14 +78,14 @@ sets, which concurrent parkers overwrite. Code: `DecodeBudget::hint_parked`, `Bl
 `blocks/tests.rs`, `pool/tests.rs`.
 
 ### D163 A line alone past the room parks the latest readers, and is admitted once they have
-A parse's reader stands where it reads before each read (`Holder::stand`). Where the earliest line holds or waits past
-the room and no other line holds, the readers later than it holding and awaiting no line are asked to park, the latest
-first, as few as cover it by `Terms` — the carve's budget at its count less at that many fewer — and it is admitted once
-they have parked or left; they park holding no read (D162) and resume as the excess falls. Why: the room and what the
-other readers free is the floor (D161). Rejected: admitting it before they park, past the room by their terms; asking a
-reader whose line waits, which reads nothing and would wait on the line; crediting a term the carve did not scale with
-the count (a plain file's, `KD21`'s). Code: `ledger/park.rs`, `draw_absorbing`. Evidence: `ledger/tests.rs`,
-`tests/ledger.rs`.
+A reader stands where it reads before each read, a query's sub-stream standing aside as it yields. Where the earliest
+line, alone, holds or waits past the room, the standing readers after it holding and awaiting no line are asked to park,
+the latest first, as few as cover it by the carve's fall (`Terms`), and it is admitted once they have parked or left;
+they park holding no read (D162), a sub-stream's batch emitted first, resuming as the excess falls. Why: the room
+and what the others free is the floor (D161). Rejected: admitting it before they park; asking a reader whose line
+waits, which waits on it, or one held at a yield, which a merge may not poll; parking a batch's views; crediting a
+term the carve did not scale (`KD21`'s, a plain file's). Code: `ledger/park.rs`, `draw_absorbing`, `replay`.
+Evidence: `ledger/tests.rs`, `tests/ledger.rs`.
 
 ### D4 A budget is solved against a source's cost, never divided by it
 `WorkerMemory` carries a per-worker term and a shared pool term (`affords`, `at`): the block pool's retention list is

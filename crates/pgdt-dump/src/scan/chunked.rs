@@ -856,6 +856,12 @@ impl ChunkedScanner {
         &self.scanner
     }
 
+    /// Where its next chunk is read from: the position a reader stands at
+    /// before that read ([`Holder::stand`]).
+    pub fn read_pos(&self) -> u64 {
+        self.read_pos
+    }
+
     /// Whether the chunk last handed out ran to the end.
     pub fn at_end(&self) -> bool {
         self.end.is_some_and(|end| self.read_pos >= end)

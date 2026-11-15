@@ -73,10 +73,18 @@ use crate::summary::partition_orders;
 /// again from its start (`docs/design/decisions.md`, "D157", "D159"); where an earlier line cannot be admitted it is
 /// asked to give its line up, and hears that only when next polled, so one
 /// left unpolled mid-line keeps its draw and an earlier line waits on it.
-/// **One left unpolled at a batch it yielded holds nothing**: each returns
-/// its draw before it yields, so a caller holding back a stream whose batch
-/// it has, as a merge in file order does ([`Self::in_file_order`]), stalls
-/// no other (`docs/design/decisions.md`, "D159").
+/// Where a line alone passes the room, the sub-streams reading later in the
+/// file are asked to park, each emitting the batch it holds rows of and then
+/// parking at its next read, holding no read, until the line is admitted or
+/// returned; one hears that only when polled, and the line waits on it only
+/// while it reads (`docs/design/decisions.md`, "D163"). **One left unpolled
+/// at a batch it yielded draws nothing and is asked nothing**: each returns
+/// its draw and stands aside before it yields, so a caller holding back a
+/// stream whose batch it has, as a merge in file order does
+/// ([`Self::in_file_order`]), stalls no line (`docs/design/decisions.md`,
+/// "D159"); what it holds there — the read it yielded inside, and its share
+/// of the source's pools — stays beside a line admitted past the room
+/// without its park.
 pub struct TablePartitions {
     source: Arc<dyn ByteRangeSource>,
     watch: Arc<SourceWatch>,

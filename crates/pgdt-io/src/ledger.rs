@@ -330,6 +330,22 @@ impl Holder {
         asked
     }
 
+    /// **Say that its reader reads nothing until it next stands**, as it is
+    /// suspended at a yield: no park is asked of it meanwhile, and a line it
+    /// was asked for waits on it no longer, so a caller holding its stream
+    /// back stalls no line (`docs/design/decisions.md`, "D163"). Nothing
+    /// without limit.
+    pub fn stand_aside(&mut self) {
+        let Some(shared) = &self.ledger.shared else { return };
+        let mut woken = Vec::new();
+        {
+            let mut state = shared.lock();
+            state.readers.stand_aside(self.id);
+            state.rebalance(&shared.limits, &mut woken);
+        }
+        woken.into_iter().for_each(Waker::wake);
+    }
+
     /// **Park its reader until the ledger no longer asks it to**, holding
     /// no read of `source` meanwhile: the park is announced to `source`
     /// ([`ParkedReader`]), so its pools give back the reader's share, and a

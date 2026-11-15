@@ -489,6 +489,29 @@ fn a_line_alone_is_admitted_once_none_is_left_reading_to_ask() {
     assert_eq!(ledger.parked(), 1);
 }
 
+/// **A reader standing aside is asked nothing, and no line waits on it**:
+/// one asked that stands aside, as a stream suspended at a yield does, lets
+/// the line it was asked for be admitted, waking it, and is asked again only
+/// once it next stands.
+#[test]
+fn a_reader_standing_aside_is_asked_nothing() {
+    let ledger = parking(10);
+    let (mut line, mut aside) = (ledger.holder(), ledger.holder());
+    assert!(!aside.stand(200));
+    let woken = Woken::new();
+    {
+        let mut draw = pin!(line.draw(100, 60));
+        assert_eq!(woken.poll(draw.as_mut()), Poll::Pending, "waits on the park");
+        assert!(aside.stand(210), "asked");
+        aside.stand_aside();
+        assert_eq!(woken.times(), 1, "standing aside wakes the line");
+        assert_eq!(woken.poll(draw), Poll::Ready(Admission::Held), "none is left reading");
+    }
+    assert!(aside.stand(220), "asked again once it stands, the line still past the room");
+    line.release();
+    assert!(!aside.stand(230));
+}
+
 /// **A ledger whose readers give nothing back asks none to park**: the
 /// line alone is admitted past the room at once, as one reader's is.
 #[test]
