@@ -32,8 +32,9 @@ nothing left for it to lift.
 
 **A pass that decodes no field of a line streams it**: it finds the line's end
 and counts the row without holding its bytes. That is a metadata-level parse, a
-query's census, a replay whose batch and filters read no field, a piece's resync
-and a segment's row-start search, each then flat in memory at any line length.
+query's census, a replay whose batch, static filter and sorted stop read no
+field, a piece's resync and a segment's row-start search, each then flat in
+memory at any line length.
 **A query is charged for the table it reads, its cache cold or warm**: its
 mapping pass censuses every block it maps (`decisions.md`, "D35"), and a census
 holding its lines would charge a cold query, and refuse it, for a table it never
@@ -70,8 +71,9 @@ over them, `observe_row` that fold fed once, and `FieldCount` saying per column
 whether a head is kept, are model's (`block.rs`), the answer
 the codec's (`unrepresentable.rs`), as `concepts.md`, "What a pass records of a
 block's rows", places the census. A replay decides as a row outgrows its chunk,
-under the dynamic state it last read, which its contract allows
-(`DynamicFilter`).
+from what its plan reads — its batch, static filter and sorted stop — and never
+from a dynamic filter's state, which arrives after the line charge is carved
+(`decisions.md`, "D160").
 
 **A gathering parse streams a line too**, strict or not, **over the types a
 dump's long fields hold**: `text`, `character`, `bytea`, `json`, `jsonb`, the

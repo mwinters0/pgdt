@@ -44,7 +44,3 @@ block is streamed and kept unread whatever the state reads (D138, D160).
   short rows still evaluated and dropped beside the long rows kept.
 - **No count pair**: the replay's per-chunk streaming test lost a term and
   no per-row or per-byte path changed (D108).
-- **The spec's "Where it lives" under "A pass holds a line only where it
-  decodes it"** still says a replay decides "under the dynamic state it last
-  read"; the slice row and the spec's "A held line is charged" state what
-  landed, and the spec is left as written.
