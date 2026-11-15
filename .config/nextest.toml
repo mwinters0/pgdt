@@ -1,0 +1,9 @@
+# The suite's one test group: `crates/pgdt/tests/line_bound.rs`, whose dumps
+# are a gibibyte apiece, runs one test at a time
+# (`docs/design/decisions.md`, "D164").
+[test-groups]
+line-bound = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(pgdt) & binary(line_bound)'
+test-group = 'line-bound'

@@ -154,7 +154,7 @@ plain-format dump, and the chunked read loop every serial pass drives it
 through ([`decisions.md`](decisions.md), "The scanner").
 
 - **pgdt-dump** — `scan.rs`: the state machine; `scan/chunked.rs`: the read
-  loop, its carried line or streamed row and line limit, a streamed row's
+  loop, its carried line or streamed row held to the line bound (D164), a streamed row's
   fields handed to its reader's fold (`FieldFold`), what the carry holds past
   its chunk drawn on the run's ledger and given up to it (D158), and the
   preamble scan over it; the carry is also an interior worker's over its piece;

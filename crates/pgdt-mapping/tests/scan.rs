@@ -446,20 +446,34 @@ fn memchr_lf(bytes: &[u8]) -> usize {
     bytes.iter().position(|&b| b == b'\n').unwrap()
 }
 
+/// **A row past the line bound refuses the scan, naming its table**: one of
+/// 4,097 bytes, its LF included, is indexed under a bound of its length and
+/// refused at its start under one a byte shorter.
 #[tokio::test]
-async fn line_length_limit_is_enforced() {
+async fn a_row_past_the_line_bound_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("longline.sql");
-    let mut content = b"COPY public.t (a) FROM stdin;\n".to_vec();
+    let header = b"COPY public.t (a) FROM stdin;\n";
+    let mut content = header.to_vec();
     content.extend(std::iter::repeat_n(b'x', 4096));
     content.extend_from_slice(b"\n\\.\n");
     std::fs::write(&path, &content).unwrap();
 
     let source = LocalFileSource::open(&path).unwrap();
-    let read = ReadOptions { chunk_size_bytes: 64, max_line_bytes: 512 };
-    let err =
-        build_index(&source, &ScanOptions { read, ..ScanOptions::default() }).await.unwrap_err();
-    assert!(matches!(err, pgdt_core::Error::LineTooLong { .. }), "unexpected error: {err}");
+    let read = |line_bound| ReadOptions { chunk_size_bytes: 64, line_bound };
+    build_index(&source, &ScanOptions { read: read(4097), ..ScanOptions::default() })
+        .await
+        .unwrap();
+    let err = build_index(&source, &ScanOptions { read: read(4096), ..ScanOptions::default() })
+        .await
+        .unwrap_err();
+    match err {
+        pgdt_core::Error::LineTooLong { offset, table, bound: 4096 } => {
+            assert_eq!(offset, header.len() as u64);
+            assert_eq!(table.as_deref(), Some("public.t"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
 }
 
 /// A `BEGIN;`/`COMMIT;`-wrapped large-object region (I12) is recognized at

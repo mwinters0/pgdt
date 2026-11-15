@@ -33,6 +33,13 @@ const COPY_TEXT_NULL_MARKER: &[u8] = b"\\N";
 /// The line that terminates a COPY data block.
 const COPY_BLOCK_TERMINATOR: &[u8] = b"\\.";
 
+/// **The longest line PostgreSQL writes or reads in `COPY`'s text format**,
+/// its terminator included: `MaxAllocSize - 1`, the most a `StringInfo`
+/// holds (`docs/design/postgres-invariants.md`, "I71"). Every read loop
+/// measures a line against it exactly, a line no longer is read whatever the
+/// memory, and one longer is [`Error::LineTooLong`], never a setting.
+pub const LINE_BOUND: usize = 0x3FFF_FFFE;
+
 /// A parsed `COPY <table> [(<columns>)] FROM stdin;` header line.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CopyHeader {

@@ -326,12 +326,6 @@ than reading as a phase nobody has sliced.
   does not. **(c) unowned**; promoted by a hand-written dump holding one.
   Detail: `crates/pgdt-dump/src/ddl/types.rs`.
 
-- **KD93** — a `COPY` line past `max_line_bytes`, 64 MiB by default, is
-  refused though PostgreSQL writes and reads one up to I71's bound, and one up
-  to a read chunk past the limit is read or refused by where the reads fall —
-  the chunk size, `--jobs`, a resume point — not by its length. **(b) owned by
-  `P33`**, struck at 33.6. Detail: `crates/pgdt-dump/src/scan/chunked.rs`.
-
 - **KD96** — a `varchar(n)` or `char(n)` field is read as written, not as
   PostgreSQL stores it (I75): one longer than `n` only by trailing blanks
   keeps them, and a `char(n)` one shorter than `n` is not padded, neither of
@@ -439,7 +433,7 @@ than reading as a phase nobody has sliced.
   reaching a user. Detail: `crates/pgdt-model/src/catalog.rs`.
 
 - **KD134** — a parallel interior region fails on what follows its block — a
-  line of `max_line_bytes` or more, a corrupt unit, a failed fetch — where the
+  line past the line bound, a corrupt unit, a failed fetch — where the
   serial scanner stops at `\.`, so a cold `query` at `--jobs` above one can
   refuse a table it answers serially. **(c) unowned**; promoted by such a
   refusal reaching a user. Detail: `crates/pgdt-mapping/src/interior.rs`.

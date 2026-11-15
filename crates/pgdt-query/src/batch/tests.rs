@@ -267,6 +267,30 @@ fn a_none_source_span_leaves_a_batch_unbounded() {
     assert!(!batcher.should_flush());
 }
 
+/// **A batch holding an offset-bounded column is cut before a row could
+/// carry its offsets past `i32`, whatever the caps say**: under no byte or
+/// span cap, a `bytea` batch flushes once its text reaches
+/// [`OFFSET_CUT_BYTES`], where a row of any line under the bound still fits,
+/// and a stated cap below it stands; a `Utf8View` batch is not cut.
+#[test]
+fn an_offset_bounded_batch_is_cut_before_its_offsets_overflow() {
+    assert!(OFFSET_CUT_BYTES - 1 + (LINE_BOUND - 1) <= i32::MAX as usize);
+    let lifted = QueryOptions { max_bytes: None, max_source_span: None, ..Default::default() };
+    for (data_type, cut) in [(DataType::Binary, true), (DataType::Utf8View, false)] {
+        let mut batcher = one_column_batcher_fed_by(lifted.clone(), vec![Some(0)], data_type);
+        let mut chunks = RetainedChunks::new();
+        let mut split = RowSplit::default();
+        batcher.push_row(0, 0, RawRow::unchecked(b"ab"), &mut split, &mut chunks).unwrap();
+        batcher.bytes_in_batch = OFFSET_CUT_BYTES - 2;
+        assert!(!batcher.should_flush());
+        batcher.push_row(0, 3, RawRow::unchecked(b"ab"), &mut split, &mut chunks).unwrap();
+        assert_eq!(batcher.should_flush(), cut, "{:?}", batcher.schema);
+    }
+    let capped = QueryOptions { max_bytes: Some(4), ..lifted };
+    let batcher = one_column_batcher_fed_by(capped, vec![Some(0)], DataType::Binary);
+    assert_eq!(batcher.options.max_bytes, Some(4));
+}
+
 /// A [`RowBatcher`] over one nullable nested column of `data_type`, read by
 /// `plan`, fed by the row's only field.
 fn nested_batcher(data_type: DataType, plan: NestedPlan) -> RowBatcher {

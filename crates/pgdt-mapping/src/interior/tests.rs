@@ -920,31 +920,46 @@ async fn a_piece_inside_a_line_reads_its_own_range_alone() {
     assert_eq!(reads.iter().map(|&(_, len)| len as u64).sum::<u64>(), limit - start);
 }
 
-/// A line its worker carries past the line limit is refused at the line's
-/// start, as the serial loop refuses it.
+/// **A worker holds a line to the bound exactly, as the serial loop does**:
+/// the long row, its LF included, is read at a bound of its length and
+/// refused at its start a byte under it, a read whole past the bound read in
+/// reads of it, the table left to the region that knows it
+/// ([`Error::in_copy_of`]).
 #[tokio::test]
-async fn a_worker_refuses_a_line_past_the_limit_at_its_start() {
+async fn a_worker_holds_a_line_to_the_bound_exactly() {
     let dir = tempfile::tempdir().unwrap();
     let (file, data_offset, source) = long_line(dir.path());
-    let mut options = scheduled(&source.inner, 2);
-    options.read.max_line_bytes = 64;
-    let refused = scan_partition(
-        &source,
-        &options,
-        &Ledger::unlimited(),
-        PartitionRead::Chunked,
-        PieceEntry::RowStart,
-        data_offset..data_offset + 16,
-        plan(Some(1)),
-        file.len() as u64,
-        None,
-    )
-    .await
-    .map(|_| ());
-    assert!(
-        matches!(refused, Err(Error::LineTooLong { offset, limit: 64 }) if offset == data_offset + 2),
-        "{refused:?}"
-    );
+    let row = (LONG + 1) as u64;
+    let end = data_offset + 2 + row + 2;
+    for read in [PartitionRead::Chunked, PartitionRead::Whole { unit: 1 << 20 }] {
+        for (bound, refused) in [(LONG + 1, false), (LONG, true)] {
+            let mut options = scheduled(&source.inner, 2);
+            options.read.line_bound = bound;
+            source.reads.lock().unwrap().clear();
+            let scanned = scan_partition(
+                &source,
+                &options,
+                &Ledger::unlimited(),
+                read,
+                PieceEntry::RowStart,
+                data_offset..end,
+                plan(Some(1)),
+                file.len() as u64,
+                None,
+            )
+            .await
+            .map(|(scans, _)| scans.iter().map(|scan| scan.rows).sum::<u64>());
+            match (scanned, refused) {
+                (Ok(rows), false) => assert_eq!(rows, 3, "{read:?} at {bound}"),
+                (Err(Error::LineTooLong { offset, table: None, bound: b }), true) if b == bound => {
+                    assert_eq!(offset, data_offset + 2, "{read:?} at {bound}");
+                }
+                (other, _) => panic!("{read:?} at {bound}: {other:?}"),
+            }
+            let reads = source.reads.lock().unwrap();
+            assert!(reads.iter().all(|&(_, len)| len <= bound), "{read:?} at {bound}: {reads:?}");
+        }
+    }
 }
 
 /// **A split block refuses the row a serial scan refuses** (I91): the

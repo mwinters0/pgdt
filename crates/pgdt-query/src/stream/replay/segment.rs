@@ -118,7 +118,7 @@ impl Segment {
 /// **A segment searches only to its own limit**, as a piece of the leader's
 /// split does: a row starting past it is the next segment's, so one holding
 /// none is empty and reads nothing more, the segment before it reading
-/// through the line — and refusing it where it passes the line limit. The
+/// through the line — and refusing it where it passes the line bound. The
 /// search holds one read of `chunk_size` bytes at a time.
 pub(in crate::stream) async fn first_row_start(
     source: &dyn ByteRangeSource,

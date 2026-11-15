@@ -187,7 +187,7 @@ pub(super) fn replay<'a>(
                             source,
                             segment.start,
                             seg_limit.min(seg_end),
-                            read.chunk_size_bytes,
+                            read.chunk(),
                         )
                         .await?
                         .filter(|&start| start <= seg_limit && start < seg_end);
@@ -285,7 +285,10 @@ pub(super) fn replay<'a>(
                 };
                 let drawing = Drawing::charged(&mut holder, &charge);
                 let drawing = if parks { drawing.parking() } else { drawing };
-                let mut chunk = chunked.next_chunk_folding(source, None, Some(drawing)).await?;
+                let mut chunk = chunked
+                    .next_chunk_folding(source, None, Some(drawing))
+                    .await
+                    .map_err(|e| e.in_copy_of(|| block.header.qualified_name()))?;
                 // The line this chunk's carry pass completes, where it was
                 // drawn for past its chunk term, and its charge: its row, the
                 // chunk's first, ends its batch.
@@ -687,7 +690,7 @@ fn activate(
         header.qualified_name(),
         plan.query_options.clone(),
         max_rows,
-        plan.read.chunk_size_bytes,
+        plan.read.chunk(),
         block.field_targets.clone(),
         block.unrepresentable.clone(),
     );

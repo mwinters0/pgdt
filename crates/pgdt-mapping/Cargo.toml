@@ -33,6 +33,7 @@ insta = { workspace = true }
 pgdt-fixtures = { path = "../pgdt-fixtures" }
 # What this crate's tests reach there.
 pgdt-codec = { path = "../pgdt-codec", features = ["test-support"] }
+pgdt-dump = { path = "../pgdt-dump", features = ["test-support"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 

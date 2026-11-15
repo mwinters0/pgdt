@@ -148,35 +148,18 @@ pub(crate) fn parse_chunk_size(text: &str) -> std::result::Result<usize, String>
     }
 }
 
-/// A `--max-line-bytes` value: a byte count, and never zero.
-///
-/// Zero would refuse every line that crosses a read, which is every line of
-/// a file longer than one chunk — a limit nobody means, so it is refused
-/// here rather than reported as a line too long.
-pub(crate) fn parse_max_line_bytes(text: &str) -> std::result::Result<usize, String> {
-    match text.parse::<usize>() {
-        Ok(0) => Err("a line limit of 0 would refuse every line a read splits".to_string()),
-        Ok(n) => Ok(n),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-/// The two read flags every scanning command carries, as given.
+/// The read flag every scanning command carries, as given.
 #[derive(Clone, Copy)]
 pub(crate) struct ReadFlags {
     pub(crate) chunk_size: Option<usize>,
-    pub(crate) max_line_bytes: Option<usize>,
 }
 
 impl ReadFlags {
     /// The [`ReadOptions`] these flags state: the default, with
-    /// `--chunk-size` and `--max-line-bytes` applied where they were given.
+    /// `--chunk-size` applied where it was given.
     pub(crate) fn options(self) -> ReadOptions {
-        let default = ReadOptions::default();
-        ReadOptions {
-            chunk_size_bytes: self.chunk_size.unwrap_or(default.chunk_size_bytes),
-            max_line_bytes: self.max_line_bytes.unwrap_or(default.max_line_bytes),
-        }
+        let read = ReadOptions::default();
+        read.with_chunk_size(self.chunk_size.unwrap_or(read.chunk_size_bytes))
     }
 }
 

@@ -290,16 +290,15 @@ SET pgdump.memory = 4294967296;
 |---|---|
 | `pgdump.memory` | [`--memory`](dump-inspection.md#--jobs-and---memory-the-workers-and-the-allowance): bytes every dump's scans may hold resident between them. Unset, or `0`, the limit found, as above. |
 | `pgdump.chunk_size` | [`--chunk-size`](dump-inspection.md#--chunk-size-you-almost-certainly-do-not-need-it): bytes a scan asks of the dump per read. |
-| `pgdump.max_line_bytes` | [`--max-line-bytes`](dump-inspection.md#--max-line-bytes-a-dump-holding-very-large-values): the longest row a scan holds before refusing the dump. |
 | `pgdump.dynamic_filter_rows` | None, `pgdt query` having no join or sort above it: `true` or `false`, whether a scan drops each row a join's other side, an `ORDER BY … LIMIT`'s rows so far or an ungrouped `MIN`/`MAX` has ruled out before decoding it. Off by default. |
 
-The first three are whole numbers of bytes. **A setting binds the queries
+The first two are whole numbers of bytes. **A setting binds the queries
 planned after it**: a query already running keeps the memory it was given. `SET
 pgdump.memory = 0` returns to the limit found, as `SET
 datafusion.execution.target_partitions = 0` returns to the machine's cores;
-`RESET` does not, reaching only DataFusion's own settings. The other two may
-not be `0`, and neither may `pgdt --memory`, which returns to the limit found
-by being left off. A dump's modes are not settings: `SET pgdump.inheritance`,
+`RESET` does not, reaching only DataFusion's own settings. `pgdump.chunk_size`
+may not be `0`, and neither may `pgdt --memory`, which returns to the limit
+found by being left off. A dump's modes are not settings: `SET pgdump.inheritance`,
 or any other [`STORED AS PGDUMP` option](#create-external-table--stored-as-pgdump-one-table),
 is refused as that statement's option, stated where a dump is attached.
 

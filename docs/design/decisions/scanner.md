@@ -9,7 +9,7 @@ refused. `pgdt-dump`'s `scan` and `pgdt-query`'s batch path.
 `CopyScanner` is a synchronous state machine over a caller-owned buffer, so a chunk is scanned where it lies, only the
 line straddling its edge copied (rejected: a growing buffer, copying every byte twice), and that line frozen for its
 row, a replay's block, then dropped (rejected: reusing its buffer, holding the longest line's bytes all pass). Past
-`max_line_bytes` a line errors, never truncates (`KD93`). Only a line matching the whole `COPY … FROM stdin;` grammar,
+the line bound a line errors, never truncates (D164). Only a line matching the whole `COPY … FROM stdin;` grammar,
 or a bare `BEGIN;` (D33), is structural; inside a block only an exact `\.` line and a row's ending are read (I7, I91).
 Outside one and the large-object region a line is lexed as psql lexes it (I50), one beginning inside a string,
 identifier, comment or dollar-quoted body never structure (I1). Rejected: tracking `$` alone, or quotes too (a `$$` in a
@@ -42,6 +42,15 @@ and reads it again from its start. Why: the charge is exact before the copy, and
 starve the earliest line's (D5). Rejected: drawing before the read (every carried tail charged a chunk); after
 absorbing (a field ending in the chunk grows uncharged); keying a field by its row (a later field keeps the largest
 draw); holding the chunk while waiting. Code: `scan/chunked.rs`. Evidence: `chunked/tests.rs`, `tests/ledger.rs`.
+
+### D164 A line is held to I71's bound, a constant measured before each read is absorbed
+Every read loop holds a line, its terminator included, to `LINE_BOUND` (I71), measured before a read is drawn for or
+absorbed: to the LF ending the line, or the read's end, which nothing shortens, so a line past it is refused at its
+start, never held past it; a read is clamped to the bound, so a line one read holds is within it. A batch holding an
+offset-bounded column flushes at `OFFSET_CUT_BYTES` whatever its caps. Rejected: a setting (a cap below the bound
+refuses a valid line for memory, which `--memory` governs); the check where a chunk's passes end (exact only to a chunk,
+after the row is handed out); a cut tested before every row (code each row runs, for a cut no default batch reaches).
+Code: `ChunkCarry::passes_bound`, `ReadOptions::line_bound`, `OFFSET_CUT_BYTES`. Evidence: both crates' `line_bound.rs`.
 
 ### D25 Parallelize what is CPU-bound
 One core's rate against the device's offer decides each kind of work (decode, extraction, discovery) per source; D2

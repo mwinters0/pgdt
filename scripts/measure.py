@@ -1771,13 +1771,9 @@ INPUTS["koji_xz"] = InputSpec(
     nominal_bytes=250 * MIB,
 )
 
-#: The longest line every `long-line-resident` leg states it reads,
-#: `--max-line-bytes` and `pgdump.max_line_bytes`, and the figure's longest
-#: line: I71's bound, `MaxAllocSize - 1`, terminator included
-#: (`docs/design/postgres-invariants.md`). Stated so that no line of the
-#: figure's is refused by today's limit, and so that a leg reads as a pass
-#: reads once the bound is the constant (`roadmap-P33-line-bound.md`, "The
-#: bound is a constant, and the knobs go").
+#: The figure's longest line: I71's bound, `MaxAllocSize - 1`, terminator
+#: included (`docs/design/postgres-invariants.md`), which every pass reads to
+#: and no leg states (`pgdt_core::LINE_BOUND`).
 LONG_LINE_BOUND = 0x3FFF_FFFE
 
 #: `long-line-resident`'s line lengths, each the token its input is named by
@@ -3476,11 +3472,10 @@ LONG_LINE_SQL = (
 )
 
 #: The untimed builder of `long-line-resident`'s query legs: `PROVIDER_BUILDER`
-#: with the figure's line limit, which the builder's own scan of the cluster
-#: needs.
+#: over the figure's cluster.
 LONG_LINE_BUILDER = (
     f"/pgdt parse --source /dump.sql --cache /dump.sql.pgdt --jobs {SWEEP_JOBS} "
-    f"--max-line-bytes {LONG_LINE_BOUND} {GATHER_STATISTICS} >/dev/null && "
+    f"{GATHER_STATISTICS} >/dev/null && "
 )
 
 
@@ -3489,8 +3484,8 @@ def long_line_invocation(
 ) -> tuple[list[str], list[str]]:
     """The environment and arguments one query leg of `long-line-resident`
     states over the dump at `dump`, at `partitions` as its session's
-    `target_partitions`: the `pgdt` legs' allowance and line limit, each a
-    `SET` ahead of the query in the same process — no allowance for an
+    `target_partitions`: the `pgdt` legs' allowance, a `SET` ahead of the
+    query in the same process — no allowance for an
     instrument leg reading the plan's factor, which no allowance moves
     (`LONG_FACTOR_FAMILY`)."""
     if partitions not in LONG_LINE_JOBS:
@@ -3499,7 +3494,6 @@ def long_line_invocation(
     argv = [
         "--source", f"{DFCLI_CATALOG}={dump}", "--format", "csv", "-q",
         *(("-c", f"SET pgdump.memory = {allowance}") if allowance is not None else ()),
-        "-c", f"SET pgdump.max_line_bytes = {LONG_LINE_BOUND}",
         "-c", LONG_LINE_SQL,
     ]  # fmt: skip
     return env, argv
@@ -3515,7 +3509,7 @@ LONG_LINE_FILTER = "v>{}"
 
 def long_line_filter(jobs: int, allowance: str | None = ALLOWANCE_SLOT) -> str:
     """`pgdt query`'s ordering filter over the cluster at `jobs`, under the
-    figure's allowance and line limit, over the cache the untimed builder
+    figure's allowance, over the cache the untimed builder
     wrote; no allowance for an instrument leg (`long_line_invocation`).
 
     **`pgdt query`'s, not the provider's**: a pushed filter compares as
@@ -3527,8 +3521,7 @@ def long_line_filter(jobs: int, allowance: str | None = ALLOWANCE_SLOT) -> str:
     memory = f"--memory {allowance} " if allowance is not None else ""
     return (
         f"/pgdt query --source /dump.sql --cache /dump.sql.pgdt --table {long_lines.TABLE} "
-        f"--column id --filter '{LONG_LINE_FILTER}' --jobs {jobs} {memory}"
-        f"--max-line-bytes {LONG_LINE_BOUND} >/dev/null"
+        f"--column id --filter '{LONG_LINE_FILTER}' --jobs {jobs} {memory}>/dev/null"
     )
 
 #: What the decode figure's container is given, against the register's 512 MB.
@@ -4769,8 +4762,7 @@ def _script(command: str) -> str:
         )
     if command.startswith(LONG_RSS_FAMILY):
         # `long-line-resident`: one pass at one count under the wrapper, every
-        # leg stating the figure's line limit and its sitting's allowance
-        # (`ALLOWANCE_SLOT`). A query's or filter's builder is outside the
+        # leg stating its sitting's allowance (`ALLOWANCE_SLOT`). A query's or filter's builder is outside the
         # timer and the wrapper, a process of its own, so neither reads its peak.
         name, _, jobs = command.removeprefix(LONG_RSS_FAMILY).rpartition("-")
         if name not in dict(LONG_LINE_PASSES) or not jobs.isdigit():
@@ -4788,8 +4780,7 @@ def _script(command: str) -> str:
         strict = f" {STRICT_FLAG}" if name == "strict" else ""
         return (
             f"time {PEAK_RSS} /pgdt parse --source /dump.sql --cache /tmp/x.pgdt "
-            f"--jobs {jobs} --memory {ALLOWANCE_SLOT} "
-            f"--max-line-bytes {LONG_LINE_BOUND} {GATHER_STATISTICS}{strict} >/dev/null"
+            f"--jobs {jobs} --memory {ALLOWANCE_SLOT} {GATHER_STATISTICS}{strict} >/dev/null"
         )
     if command.startswith(LONG_FACTOR_FAMILY):
         # `long-line-resident`'s instrument legs: the timed legs' query or
@@ -13451,8 +13442,8 @@ def run_long_line_resident(session: Session) -> str:
         "an object of empty keys, each the densest text its term is held for. Every timed leg "
         f"states `--memory {allowance}`, `parallel-peak-rss`'s allowance and the widest leg's "
         "lines held at once at their charge — a parse's its line, a query's or filter's its line "
-        "and its kind's planned factor — and I71's bound as its line limit, "
-        f"`{LONG_LINE_BOUND}`, in a {LONG_LINE_MEMORY} container — "
+        "and its kind's planned factor — every line read to I71's bound, "
+        f"`{LONG_LINE_BOUND}`, which no leg states, in a {LONG_LINE_MEMORY} container — "
         "an apparatus departure from the register's 512 MB, which one held line outgrows. A "
         f"parse states `{GATHER_STATISTICS}`, and the strict one "
         "`--postgres-invalid-values strict` beside it. The query is `pgdt sql`'s "
@@ -17968,7 +17959,8 @@ def cmd_verify_additive(since: str | None) -> int:
 COUNT_PAIR_INPUT = "control"
 #: The long-field rows' inputs: `long-line-resident`'s escaped text and `bytea`
 #: at its shortest length, a 32 MiB line each, past a read chunk and under
-#: today's line limit, so every commit a pair is taken on reads them unflagged.
+#: the 64 MiB line limit the bound replaced, so every commit a pair is taken on
+#: reads them unflagged.
 COUNT_PAIR_LONG_INPUTS: tuple[str, ...] = tuple(
     long_line_input(kind, "32") for kind in ("escaped", "bytea")
 )

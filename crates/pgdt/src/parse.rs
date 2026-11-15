@@ -18,8 +18,7 @@ use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
 
 use crate::args::{
-    IdentityArgs, ModeParser, OverwriteArgs, ReadFlags, cache_mode, parse_chunk_size,
-    parse_max_line_bytes, scan_options,
+    IdentityArgs, ModeParser, OverwriteArgs, ReadFlags, cache_mode, parse_chunk_size, scan_options,
 };
 use crate::info::{print_diagnostics, print_index, print_metadata};
 use crate::interrupt::install_interrupt_guard;
@@ -61,17 +60,6 @@ pub(crate) struct ParseArgs {
     /// `--memory` leaves for read buffers, whichever is fewer.
     #[arg(long, value_name = "BYTES", value_parser = parse_chunk_size)]
     chunk_size: Option<usize>,
-    /// The longest line the scan accepts, in bytes. A longer one stops the
-    /// scan with an error naming its offset rather than being buffered
-    /// without bound; the check is made as each read completes, so a line
-    /// can overrun the limit by up to one read chunk before it is refused.
-    /// The default, 64 MiB, holds any row of ordinary
-    /// values; a dump holding larger ones — a single value of hundreds of
-    /// megabytes — needs a larger limit stated here. A row is held whole
-    /// while it is scanned, so this is also what one row may cost in
-    /// memory.
-    #[arg(long, value_name = "BYTES", value_parser = parse_max_line_bytes)]
-    max_line_bytes: Option<usize>,
     /// How much to record of each table: a level for every table, `data`
     /// (the default) or `metadata`, then comma-separated overrides naming
     /// a table (`schema.table`, or a bare `table` in any schema) or a
@@ -194,7 +182,6 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
         cache,
         preamble_only: preamble_only_flag,
         chunk_size,
-        max_line_bytes,
         statistics_level,
         row_group_size,
         row_group_min_rows,
@@ -204,7 +191,7 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
         overwrite,
         parallel,
     } = args;
-    let read = ReadFlags { chunk_size, max_line_bytes };
+    let read = ReadFlags { chunk_size };
     let statistics = statistics_request(
         statistics_level,
         row_group_size,

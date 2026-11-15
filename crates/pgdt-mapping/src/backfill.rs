@@ -607,7 +607,7 @@ async fn observe_rows(
             // is abandoned either way, so the caller hears the same
             // `None`.
             Err(e) if cancelled_read(&e, cancel) => return Ok(None),
-            Err(e) => return Err(e),
+            Err(e) => return Err(e.in_copy_of(|| block.header.qualified_name())),
         };
         chunk.stream_rows(true);
         while let Some(event) = chunk.next_event()? {

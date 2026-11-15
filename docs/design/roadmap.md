@@ -238,8 +238,8 @@ from it.
 **It governs what a person needs to state, not what exists.** A flag stating
 *intent* — `--statistics-level <levels>`, what to record of which tables and
 columns — is not a
-hardware knob, and neither is a threshold of the input contract such as
-`--max-line-bytes`. An expert override already shipped, `--chunk-size`, may
+hardware knob, and neither is a threshold of the input contract. An expert
+override already shipped, `--chunk-size`, may
 stay; what the rule refuses is a default that is only right once a third knob
 is turned. **P22 reopens exactly this clause** — not the rule's purpose, which
 stands, but whether one number can be right for the four consumers it now fans

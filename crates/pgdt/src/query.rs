@@ -16,7 +16,6 @@ use tracing::Instrument;
 
 use crate::args::{
     IdentityArgs, ModeParser, OverwriteArgs, ReadFlags, cache_mode, parse_chunk_size,
-    parse_max_line_bytes,
 };
 use crate::parallel::{ParallelArgs, Resolved};
 use crate::refusal::{about_the_source, refusal};
@@ -190,10 +189,6 @@ pub(crate) struct QueryArgs {
     /// carries, and with the same measured answer behind its default.
     #[arg(long, value_name = "BYTES", value_parser = parse_chunk_size)]
     chunk_size: Option<usize>,
-    /// The longest line the scan accepts, in bytes — the same limit
-    /// `parse` carries, applied to both of a query's passes over the file.
-    #[arg(long, value_name = "BYTES", value_parser = parse_max_line_bytes)]
-    max_line_bytes: Option<usize>,
     /// Whether to use the statistics `parse` recorded: `all`, the default,
     /// skips each stretch of the table's data whose statistics prove no
     /// row in it satisfies the filter, and says on stderr how much was
@@ -227,13 +222,12 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
         postgres_invalid_values,
         inheritance,
         chunk_size,
-        max_line_bytes,
         statistics,
         identity,
         overwrite,
         parallel,
     } = args;
-    let read = ReadFlags { chunk_size, max_line_bytes };
+    let read = ReadFlags { chunk_size };
     let origin = Origin::resolve(&file)?;
     let mode = cache_mode(&origin, cache.as_deref())
         .with_strict_identity(identity.resolve())

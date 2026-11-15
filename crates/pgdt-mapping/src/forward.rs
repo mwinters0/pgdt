@@ -229,7 +229,7 @@ pub async fn map_forward(
     tracing::info!(
         bytes = %extent,
         resumed_from = index.scanned_through,
-        chunk_size = scan_options.read.chunk_size_bytes,
+        chunk_size = scan_options.read.chunk(),
         jobs = scan_options.parallelism.jobs(),
         memory_bytes = %memory_budget_display(scan_options.parallelism),
         "scan started",

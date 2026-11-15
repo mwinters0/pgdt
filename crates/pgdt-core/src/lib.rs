@@ -12,7 +12,8 @@ mod identifier;
 pub mod instrument;
 
 pub use copy::{
-    CopyHeader, escape_field, is_terminator, parse_copy_header, split_fields, unescape_field,
+    CopyHeader, LINE_BOUND, escape_field, is_terminator, parse_copy_header, split_fields,
+    unescape_field,
 };
 pub use error::{Error, RowEndingRefusal, Unusable};
 

@@ -141,7 +141,7 @@ impl TablePartitions {
         )?;
         if let Some(floor) = arrangement.ledger().floor() {
             let database = plan.database.as_deref();
-            let chunk = plan.read.chunk_size_bytes;
+            let chunk = plan.read.chunk();
             let metadata = plan.metadata.as_deref();
             let held =
                 held_line(&plan.blocks, blocks, &plan.query_options, metadata, database, chunk);

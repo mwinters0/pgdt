@@ -407,15 +407,19 @@ async fn run_region(
         // `try_join_all` would return the first error it *observes*.
         // deficiency: KD134 — every partition of the window is taken through
         // the `?` below, those past the one holding the terminator included,
-        // so a piece failing on what follows the block — a line of
-        // `max_line_bytes` or more, a corrupt unit, a failed fetch — fails
-        // the region where the serial scanner would have stopped at `\.`: a
+        // so a piece failing on what follows the block — a line past the
+        // line bound, named with no table, a corrupt unit, a failed fetch —
+        // fails the region where the serial scanner would have stopped at `\.`: a
         // cold `query` at `--jobs` above one refuses a table it answers
         // serially. The fix is a partition's error raised only where no
         // earlier one held the terminator. **(c) unowned**; promoted by such
         // a refusal reaching a user.
+        // Whether an earlier partition held the terminator, past which a line
+        // is no row of this table's.
+        let mut terminated = false;
         while let Some(partition) = futures::StreamExt::next(&mut dispatched).await {
-            let (partition_scans, piece) = partition?;
+            let (partition_scans, piece) = partition
+                .map_err(|e| if terminated { e } else { e.in_copy_of(|| table.to_owned()) })?;
             // Held here, in file order, so a refusal is raised ahead of any
             // later partition's error.
             for scan in &partition_scans {
@@ -425,6 +429,7 @@ async fn run_region(
                 }
             }
             let terminates = partition_scans.iter().any(|scan| scan.terminator.is_some());
+            terminated |= terminates;
             scans.extend(partition_scans);
             pieces.push((piece, terminates));
         }
@@ -497,8 +502,9 @@ async fn run_region(
 /// **Each read begins where the last ended**, so a piece reads each of its
 /// bytes once: what a read leaves unconsumed — the start of a line it does
 /// not end — is carried into the next ([`scan_read`]), a line longer than a
-/// read growing there read by read under the line limit the serial loop
-/// holds it to. The last read of a piece straddles its limit, the line
+/// read growing there read by read up to the bound the serial loop holds it
+/// to, measured as it does ([`ChunkCarry::passes_bound`]), and each read
+/// within it ([`pgdt_dump::ReadOptions::chunk`]). The last read of a piece straddles its limit, the line
 /// ending at or past it needing bytes past it, which is why a partition's
 /// stated footprint carries a chunk buffer beside whatever the source
 /// retains (`ByteRangeSource::partitions`). Handing back several
@@ -520,19 +526,28 @@ async fn scan_partition(
     let limit = range.end;
     let mut out = Vec::new();
     let mut entry = entry;
-    let mut carry = ChunkCarry::new(options.read.chunk_size_bytes);
+    let (chunk, bound) = (options.read.chunk(), options.read.line_bound());
+    let mut carry = ChunkCarry::new(chunk);
     let mut holder = ledger.holder();
     let mut fold = census.as_ref().map(CensusPlan::fold);
     let mut at = range.start;
     let mut want = match read {
-        PartitionRead::Whole { unit } => range.end.saturating_sub(range.start).min(unit).max(1),
-        PartitionRead::Chunked => (options.read.chunk_size_bytes as u64).max(1),
+        PartitionRead::Whole { unit } => {
+            range.end.saturating_sub(range.start).min(unit).min(bound as u64).max(1)
+        }
+        PartitionRead::Chunked => (chunk as u64).max(1),
     };
 
     while at < size {
         let end = (at + want).min(size);
         let len = usize::try_from(end - at).unwrap_or(usize::MAX);
         let mut bytes = source.read_range(at, len).await?;
+        // The line the read ends or grows held to the bound before anything
+        // is drawn for it, as the serial loop holds it.
+        if carry.passes_bound(&bytes, bound) {
+            let offset = at - carry.carried() as u64;
+            return Err(Error::LineTooLong { offset, table: None, bound });
+        }
         // Drawn in this half, which can wait: the blocking half absorbs it.
         draw_absorbing(&mut carry, Drawing::held(&mut holder).parking(), source, at, &mut bytes)
             .await?;
@@ -566,18 +581,9 @@ async fn scan_partition(
         if scanned.done || eof {
             break;
         }
-        // The limit the serial loop holds a carried line to
-        // (`ReadOptions::max_line_bytes`), measured where a read ends inside
-        // it.
-        if carry.carried() > options.read.max_line_bytes {
-            return Err(Error::LineTooLong {
-                offset: end - carry.carried() as u64,
-                limit: options.read.max_line_bytes,
-            });
-        }
         entry = scanned.next;
         at = end;
-        want = (options.read.chunk_size_bytes as u64).max(1);
+        want = (chunk as u64).max(1);
     }
     Ok((out, piece))
 }

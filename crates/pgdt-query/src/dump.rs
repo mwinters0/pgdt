@@ -417,7 +417,7 @@ impl Table {
         let database = self.name.database.as_deref();
         let table = self.name.qualified_name();
         let metadata = self.metadata.as_deref();
-        table_line_charge(database, &table, &blocks, metadata, options, read.chunk_size_bytes)
+        table_line_charge(database, &table, &blocks, metadata, options, read.chunk())
     }
 
     /// The partitioned replay of this table under `options`, each piece read

@@ -5,17 +5,17 @@ use std::collections::{BTreeMap, BTreeSet};
 /// `docs/design/roadmap.md`, "Two tunables fit pgdt to hardware: memory and
 /// parallelism".
 ///
-/// **Four classes, because the rule is about what a person must *state*,
+/// **Three classes, because the rule is about what a person must *state*,
 /// not about what exists.** `Hardware` is the closed pair the rule names,
 /// and a third one is a decision somebody has to write here first.
-/// `Intent` says what work to do, `Contract` states a property of the
-/// input, and `Expert` is an override already shipped that the rule
-/// tolerates and does not extend.
+/// `Intent` says what work to do, and `Expert` is an override already
+/// shipped that the rule tolerates and does not extend. A property of the
+/// input is no flag: the line bound is PostgreSQL's constant
+/// (`docs/design/decisions.md`, "D164").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FlagClass {
     Hardware,
     Intent,
-    Contract,
     Expert,
 }
 
@@ -51,7 +51,6 @@ const FLAG_CLASSES: &[(&str, FlagClass)] = &[
     ("row-group-size", FlagClass::Intent),
     ("row-group-min-rows", FlagClass::Intent),
     ("row-group-max-rows", FlagClass::Intent),
-    ("max-line-bytes", FlagClass::Contract),
     ("chunk-size", FlagClass::Expert),
 ];
 

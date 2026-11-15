@@ -1,6 +1,6 @@
-//! The `pgdump.` session settings: what `pgdt query` takes as `--memory`,
-//! `--chunk-size` and `--max-line-bytes`, and whether a scan evaluates a
-//! dynamic filter's rows, set with `SET` and read when a scan is planned.
+//! The `pgdump.` session settings: what `pgdt query` takes as `--memory` and
+//! `--chunk-size`, and whether a scan evaluates a dynamic filter's rows, set
+//! with `SET` and read when a scan is planned.
 //!
 //! ```sql
 //! SET pgdump.memory = 4294967296;
@@ -15,7 +15,7 @@ use datafusion::catalog::Session;
 use datafusion::common::config::{ConfigEntry, ConfigExtension, ExtensionOptions};
 use datafusion::common::{Result, plan_err};
 use datafusion::prelude::SessionContext;
-use pgdt_dump::{ReadOptions, SCAN_LINE_DEFAULT_MAX_BYTES};
+use pgdt_dump::ReadOptions;
 use pgdt_io::SCAN_CHUNK_DEFAULT_SIZE_BYTES;
 use pgdt_query::RowEvaluation;
 
@@ -29,9 +29,9 @@ use pgdt_query::RowEvaluation;
 /// ([`ready_session`](crate::ready_session)) nor registered into by this crate
 /// — a provider registered by hand in it — plans under the defaults below.
 ///
-/// **Each but `pgdump.dynamic_filter_rows` is a byte count.** A read chunk or
-/// a line limit of zero is refused, as `pgdt`'s flags refuse one: a read that
-/// asks for nothing forever, a limit refusing every line a read splits.
+/// **Each but `pgdump.dynamic_filter_rows` is a byte count.** A read chunk of
+/// zero is refused, as `pgdt`'s flag refuses one: a read that asks for
+/// nothing forever.
 ///
 /// **`pgdump.memory = 0` un-states the allowance**, returning the session to
 /// its budget's own — the discovered one, where the provider installed the
@@ -44,8 +44,8 @@ use pgdt_query::RowEvaluation;
 /// run in.
 ///
 /// *Rejected: an allowance fixed at startup*, which a REPL user could change
-/// only by restarting; *per-table `OPTIONS`*, a read chunk being the device's
-/// and a line limit wanted by whatever reads that dump, which one `SET` covers;
+/// only by restarting; *per-table `OPTIONS`*, a read chunk being the device's,
+/// which one `SET` covers;
 /// *a sentinel word for "discovered"*, which no DataFusion setting spells; and
 /// *a flag per setting on `pgdt sql`*, another line of upstream's
 /// `main.rs` to carry, where `-c` and `--rc` already run a `SET` at startup.
@@ -59,9 +59,6 @@ pub struct PgDumpSettings {
     /// `pgdump.chunk_size`: bytes asked of the source per read
     /// ([`ReadOptions::chunk_size_bytes`]).
     pub chunk_size: usize,
-    /// `pgdump.max_line_bytes`: the longest line a scan buffers before
-    /// refusing the dump ([`ReadOptions::max_line_bytes`]).
-    pub max_line_bytes: usize,
     /// `pgdump.dynamic_filter_rows`: whether a scan drops each row a join's,
     /// a TopK's or an aggregate's dynamic filter rejects before decoding it,
     /// a boolean ([`RowEvaluation`]). Off by default
@@ -75,7 +72,6 @@ impl Default for PgDumpSettings {
         Self {
             memory: None,
             chunk_size: SCAN_CHUNK_DEFAULT_SIZE_BYTES,
-            max_line_bytes: SCAN_LINE_DEFAULT_MAX_BYTES,
             dynamic_filter_rows: RowEvaluation::default(),
         }
     }
@@ -89,7 +85,7 @@ impl PgDumpSettings {
 
     /// The [`ReadOptions`] a scan planned under these settings reads with.
     pub(crate) fn read_options(&self) -> ReadOptions {
-        ReadOptions { chunk_size_bytes: self.chunk_size, max_line_bytes: self.max_line_bytes }
+        ReadOptions::default().with_chunk_size(self.chunk_size)
     }
 
     /// Give `ctx` these settings at their defaults, unless it already carries
@@ -109,7 +105,7 @@ impl ConfigExtension for PgDumpSettings {
 }
 
 /// Every setting's key, without its `pgdump.`.
-const SETTINGS: [&str; 4] = ["memory", "chunk_size", "max_line_bytes", "dynamic_filter_rows"];
+const SETTINGS: [&str; 3] = ["memory", "chunk_size", "dynamic_filter_rows"];
 
 /// Every key `CREATE EXTERNAL TABLE … STORED AS PGDUMP` takes, without its
 /// `pgdump.`: listed here, below the factory reading them, so `SET` can refuse
@@ -195,10 +191,6 @@ impl ExtensionOptions for PgDumpSettings {
             "chunk_size" => {
                 self.chunk_size = usize_bytes(field, value, "a read of 0 bytes reads nothing")?;
             }
-            "max_line_bytes" => {
-                self.max_line_bytes =
-                    usize_bytes(field, value, "it would refuse every line a read splits")?;
-            }
             "dynamic_filter_rows" => {
                 self.dynamic_filter_rows = match boolean(field, value)? {
                     true => RowEvaluation::On,
@@ -244,11 +236,6 @@ impl ExtensionOptions for PgDumpSettings {
                 "Bytes a pgdump scan asks of the dump per read.",
             ),
             entry(
-                "max_line_bytes",
-                Some(self.max_line_bytes.to_string()),
-                "The longest line, in bytes, a pgdump scan reads before refusing the dump.",
-            ),
-            entry(
                 "dynamic_filter_rows",
                 Some((self.dynamic_filter_rows == RowEvaluation::On).to_string()),
                 "Whether a pgdump scan drops each row a join's, a TopK's or an aggregate's \
@@ -264,8 +251,8 @@ mod tests {
     use super::*;
     use datafusion::common::config::ConfigOptions;
 
-    /// **`SET` reaches each setting by its key, and a zero chunk or line
-    /// limit, a non-number, a boolean spelled otherwise than DataFusion's or
+    /// **`SET` reaches each setting by its key, and a zero chunk, a
+    /// non-number, a boolean spelled otherwise than DataFusion's or
     /// an unknown key is refused**, leaving what was set before; a zero
     /// allowance un-states the one set.
     #[test]
@@ -274,19 +261,17 @@ mod tests {
         options.extensions.insert(PgDumpSettings::default());
         options.set("pgdump.memory", "1073741824").unwrap();
         options.set("pgdump.chunk_size", "65536").unwrap();
-        options.set("pgdump.max_line_bytes", "4096").unwrap();
         options.set("pgdump.dynamic_filter_rows", "TRUE").unwrap();
         let stated = PgDumpSettings {
             memory: Some(1 << 30),
             chunk_size: 65536,
-            max_line_bytes: 4096,
             dynamic_filter_rows: RowEvaluation::On,
         };
         assert_eq!(options.extensions.get::<PgDumpSettings>(), Some(&stated));
 
         for (key, value) in [
             ("pgdump.chunk_size", "0"),
-            ("pgdump.max_line_bytes", "0"),
+            ("pgdump.max_line_bytes", "1073741822"),
             ("pgdump.memory", "4G"),
             ("pgdump.chunk_size", "-1"),
             ("pgdump.dynamic_filter_rows", "1"),
@@ -307,7 +292,6 @@ mod tests {
             [
                 "pgdump.memory=1073741824",
                 "pgdump.chunk_size=65536",
-                "pgdump.max_line_bytes=4096",
                 "pgdump.dynamic_filter_rows=true",
             ]
         );

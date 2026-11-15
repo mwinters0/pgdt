@@ -1,6 +1,6 @@
 //! The chunked read loop: a [`CopyScanner`] driven over a source a chunk at a
-//! time, the one line straddling each chunk boundary carried across it under
-//! the line limit ([`ReadOptions`]). Every serial pass reads through
+//! time, the one line straddling each chunk boundary carried across it up to
+//! the line bound ([`ReadOptions::line_bound`]). Every serial pass reads through
 //! [`ChunkedScanner`] — the preamble scan here ([`scan`]), `pgdt_mapping`'s
 //! forward pass and statistics back-fill, and `pgdt_query`'s replay.
 
@@ -15,7 +15,7 @@ use self::line::CarriedLine;
 pub use self::line::LineMapping;
 use super::{CopyScanner, EndingScan, Event, RowEnding};
 use pgdt_core::internal::delimiters;
-use pgdt_core::{Error, Result};
+use pgdt_core::{Error, LINE_BOUND, Result};
 use pgdt_io::{
     Admission, ByteRangeSource, Extent, Holder, Parallelism, SCAN_CHUNK_DEFAULT_SIZE_BYTES,
     WaitPolicy, internal::memory_budget_display,
@@ -77,7 +77,8 @@ pub enum ChunkPass {
 /// it joins the carry, the in-place pass empty wherever there is a carry to
 /// join — one arriving with none is handed over whole, finds no newline and
 /// consumes nothing, there being no carry yet to base it against. That is the growth
-/// [`ReadOptions::max_line_bytes`] bounds. **Its carry pass is empty too**
+/// [`ReadOptions::line_bound`] bounds ([`passes_bound`](Self::passes_bound)).
+/// **Its carry pass is empty too**
 /// short of the end of the file, since a span holding no newline is one the
 /// scanner can neither consume nor emit anything from; handing it over anyway
 /// would search the carried line again from its first byte at every chunk it
@@ -484,6 +485,19 @@ impl ChunkCarry {
         if held > self.line.outgrows() { held as u64 } else { 0 }
     }
 
+    /// **Whether absorbing `next` carries the line it holds past `bound`**:
+    /// the line, measured to its LF where `next` holds one, or else to
+    /// `next`'s end, which no terminator or later byte shortens — so a line
+    /// is refused exactly where it is longer than `bound`, its terminator
+    /// included, and before it is held past it
+    /// (`docs/design/decisions.md`, "D164"). A line `next` holds whole is no
+    /// longer than `next`, which [`ReadOptions::chunk`] keeps within the
+    /// bound.
+    pub fn passes_bound(&self, next: &[u8], bound: usize) -> bool {
+        let carried = self.carried();
+        carried > 0 && carried + memchr::memchr(b'\n', next).map_or(next.len(), |nl| nl + 1) > bound
+    }
+
     /// Where what it holds of the line it carries starts in the file, its
     /// next chunk being read from `read_pos`: the field of a streamed row its
     /// fold holds whole, or else the line — what a draw for it is keyed by,
@@ -716,9 +730,8 @@ impl<'a> Passes<'a> {
     }
 
     /// Bytes carried over into the next chunk, once both passes have recorded
-    /// what they used. This is what [`ReadOptions::max_line_bytes`] bounds: it
-    /// is a single line's prefix, so a file whose lines fit stays flat here
-    /// however large it is.
+    /// what they used: a single line's prefix, so a file whose lines fit
+    /// stays flat here however large it is.
     pub fn carried(&self) -> usize {
         self.line.len() - *self.line_used + self.tail.len() + self.streaming
     }
@@ -750,7 +763,7 @@ pub struct ChunkedScanner {
     /// Where the scan ends — `None` until a short read finds it.
     end: Option<u64>,
     chunk_size: usize,
-    max_line_bytes: usize,
+    line_bound: usize,
     /// Whether the chunk last handed out still has events to give.
     open: bool,
 }
@@ -758,7 +771,7 @@ pub struct ChunkedScanner {
 impl ChunkedScanner {
     /// Read `scanner` on from its [`position`](CopyScanner::position) to
     /// `end`, which is the true end of what it scans — the file's, or a replay
-    /// segment's block's — in `read`'s chunks under its line limit.
+    /// segment's block's — in `read`'s chunks, its lines held to its bound.
     pub fn new(scanner: CopyScanner, end: u64, read: ReadOptions) -> Self {
         Self::ending(scanner, Some(end), read)
     }
@@ -774,18 +787,20 @@ impl ChunkedScanner {
         Self {
             read_pos: scanner.position(),
             scanner,
-            carry: ChunkCarry::new(read.chunk_size_bytes),
+            carry: ChunkCarry::new(read.chunk()),
             chunk: Bytes::new(),
             end,
-            chunk_size: read.chunk_size_bytes,
-            max_line_bytes: read.max_line_bytes,
+            chunk_size: read.chunk(),
+            line_bound: read.line_bound(),
             open: false,
         }
     }
 
     /// Read the next chunk from `source` — empty where nothing is left to
     /// read, so the last line is still scanned to the end — and hand out its
-    /// events. A read's error is returned as the source gave it.
+    /// events. A read's error is returned as the source gave it, and a line
+    /// the chunk would carry past the bound is refused before it is absorbed
+    /// ([`Error::LineTooLong`]).
     pub async fn next_chunk(&mut self, source: &dyn ByteRangeSource) -> Result<ChunkEvents<'_>> {
         self.next_chunk_folding(source, None, None).await
     }
@@ -793,7 +808,9 @@ impl ChunkedScanner {
     /// [`next_chunk`](Self::next_chunk), handing the fields of a row the
     /// open block streams to `fold`, its reader's ([`FieldFold`]), and
     /// drawing what the carry holds past its chunk through `drawing`, its
-    /// reader's draws on the run's ledger ([`draw_absorbing`]).
+    /// reader's draws on the run's ledger ([`draw_absorbing`]), once the
+    /// line it completes or grows is held to the bound, so a line past it
+    /// draws nothing.
     pub async fn next_chunk_folding(
         &mut self,
         source: &dyn ByteRangeSource,
@@ -813,10 +830,26 @@ impl ChunkedScanner {
                 bytes
             }
         };
+        self.hold_to_bound(&bytes)?;
         if let Some(drawing) = drawing {
             draw_absorbing(&mut self.carry, drawing, source, self.read_pos, &mut bytes).await?;
         }
         Ok(self.feed(bytes, fold))
+    }
+
+    /// Refuse `bytes`, the source's bytes from where the last chunk ended,
+    /// where absorbing them carries the line the scanner stands at past the
+    /// bound ([`ChunkCarry::passes_bound`]): the line's start named, and its
+    /// block's table where the scanner entered the block at its header.
+    pub(super) fn hold_to_bound(&self, bytes: &[u8]) -> Result<()> {
+        if self.carry.passes_bound(bytes, self.line_bound) {
+            return Err(Error::LineTooLong {
+                offset: self.scanner.position(),
+                table: self.scanner.copy_table().map(str::to_owned),
+                bound: self.line_bound,
+            });
+        }
+        Ok(())
     }
 
     /// Hand out the events of `bytes`, the source's bytes from where the last
@@ -846,7 +879,6 @@ impl ChunkedScanner {
             chunk: &self.chunk,
             offset,
             line_start,
-            max_line_bytes: self.max_line_bytes,
             open: &mut self.open,
         }
     }
@@ -908,15 +940,11 @@ pub struct ChunkEvents<'a> {
     offset: u64,
     /// The file offset of the carried line's first byte.
     line_start: u64,
-    max_line_bytes: usize,
     open: &'a mut bool,
 }
 
 impl<'a> ChunkEvents<'a> {
-    /// The chunk's next event, or `None` once it has none left. Where the
-    /// chunk was not the last, the line it leaves for the next is held to
-    /// [`ReadOptions::max_line_bytes`] there: one longer is
-    /// [`Error::LineTooLong`].
+    /// The chunk's next event, or `None` once it has none left.
     #[inline]
     pub fn next_event(&mut self) -> Result<Option<Event<'a>>> {
         loop {
@@ -950,11 +978,9 @@ impl<'a> ChunkEvents<'a> {
     /// handing out the streamed row a carry pass stands for first — or say
     /// both have run out.
     ///
-    /// Fallible, a long line refused where the chunk leaves it: checked by
-    /// `next_chunk` instead, it would move for a loop leaving between chunks
-    /// (the replay's dynamic filter), a semantic change bought for codegen;
-    /// nor does a further attribute or cold continuation split the switch,
-    /// its saving resting on inlining (`docs/design/decisions.md`, "D108").
+    /// Fallible, a streamed row held to its block's width as it is handed
+    /// out; no further attribute or cold continuation splits the switch, its
+    /// saving resting on inlining (`docs/design/decisions.md`, "D108").
     #[cold]
     fn end_pass(&mut self) -> Result<PassEnd<'a>> {
         let used = self.scanner.take_consumed();
@@ -978,12 +1004,6 @@ impl<'a> ChunkEvents<'a> {
                 (self.span, self.span_eof) = (&[], false);
                 self.pass = None;
                 *self.open = false;
-                if !self.passes.eof && self.passes.carried() > self.max_line_bytes {
-                    return Err(Error::LineTooLong {
-                        offset: self.scanner.position(),
-                        limit: self.max_line_bytes,
-                    });
-                }
                 Ok(PassEnd::Done)
             }
             None => Ok(PassEnd::Done),
@@ -1040,42 +1060,59 @@ enum PassEnd<'a> {
     Done,
 }
 
-/// The longest line a scan carries across a chunk boundary unless a caller
-/// says otherwise ([`ReadOptions::max_line_bytes`], which says where a line
-/// is measured). A row a pass reads is held whole before it is emitted, so
-/// this and the chunk size bound what one row may cost in memory; a dump
-/// holding larger values states a larger limit.
-pub const SCAN_LINE_DEFAULT_MAX_BYTES: usize = 64 << 20;
-
-/// **How a chunked read loop reads**: the chunk it asks of the source and the
-/// longest line it carries across a chunk boundary — all [`ChunkedScanner`]
-/// reads, and with a [`Parallelism`] a [`ScanOptions`].
+/// **How a chunked read loop reads**: the chunk it asks of the source — all
+/// [`ChunkedScanner`] reads, and with a [`Parallelism`] a [`ScanOptions`].
+/// The line it carries across a chunk boundary is held to
+/// [`LINE_BOUND`], which no caller states (`docs/design/decisions.md`,
+/// "D164").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadOptions {
-    /// Bytes requested per read from the source. Defaults to
+    /// Bytes requested per read from the source, at most [`LINE_BOUND`]
+    /// ([`chunk`](Self::chunk)). Defaults to
     /// [`SCAN_CHUNK_DEFAULT_SIZE_BYTES`].
     pub chunk_size_bytes: usize,
-    /// Hard cap on a line carried across a chunk boundary. One still
-    /// incomplete at a chunk's end and longer than this is rejected rather
-    /// than buffered without bound; a line whole inside one chunk, or ended
-    /// by the last, is not measured. The scanner cannot emit a row a pass
-    /// reads until it has the whole line, so this is the only thing standing
-    /// between a malformed input and unbounded memory growth; a row it
-    /// streams ([`ChunkCarry`]) holds nothing and is measured alike. Defaults
-    /// to [`SCAN_LINE_DEFAULT_MAX_BYTES`].
-    // deficiency: KD93 — a line PostgreSQL writes and reads, up to I71's
-    // bound, is refused past this limit; and a line is measured only where a
-    // read ends inside it, so one up to a chunk past the limit is read or
-    // refused by where the reads fall — `chunk_size_bytes`, the leader's
-    // split, a resume point — not by its length.
-    pub max_line_bytes: usize,
+    /// The bound a line is held to in place of [`LINE_BOUND`], so a test
+    /// reads at a small one what every read loop reads at the real one: a
+    /// build without `test-support` has no such field and no way to state
+    /// one.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub line_bound: usize,
+}
+
+impl ReadOptions {
+    /// The longest line a read loop reads, its terminator included, and
+    /// refuses one longer as [`Error::LineTooLong`]: [`LINE_BOUND`]
+    /// (`docs/design/postgres-invariants.md`, "I71").
+    pub fn line_bound(&self) -> usize {
+        #[cfg(any(test, feature = "test-support"))]
+        return self.line_bound;
+        #[cfg(not(any(test, feature = "test-support")))]
+        LINE_BOUND
+    }
+
+    /// These options, reading `chunk_size_bytes` a read: how a caller outside
+    /// this crate states a chunk whether or not its build has
+    /// [`line_bound`](Self::line_bound)'s field.
+    pub fn with_chunk_size(mut self, chunk_size_bytes: usize) -> Self {
+        self.chunk_size_bytes = chunk_size_bytes;
+        self
+    }
+
+    /// The chunk a read loop asks for: the one stated, but never longer than
+    /// [`line_bound`](Self::line_bound), so a line a read holds whole is
+    /// within the bound and only a line a read ends inside is measured.
+    pub fn chunk(&self) -> usize {
+        self.chunk_size_bytes.min(self.line_bound())
+    }
 }
 
 impl Default for ReadOptions {
     fn default() -> Self {
         Self {
             chunk_size_bytes: SCAN_CHUNK_DEFAULT_SIZE_BYTES,
-            max_line_bytes: SCAN_LINE_DEFAULT_MAX_BYTES,
+            #[cfg(any(test, feature = "test-support"))]
+            line_bound: LINE_BOUND,
         }
     }
 }
@@ -1088,7 +1125,7 @@ impl Default for ReadOptions {
 /// allowance are one carve (`docs/design/decisions.md`, "D83").
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ScanOptions {
-    /// The chunk and the line limit every read loop of the pass reads with.
+    /// The chunk every read loop of the pass reads with.
     pub read: ReadOptions,
     /// How much concurrency this scan may use, and what it may hold while it
     /// does — [`Parallelism::Serial`] by default, which is the serial code
@@ -1121,7 +1158,7 @@ pub fn announce_read_loop(
     read: ReadOptions,
     parallelism: Parallelism,
 ) {
-    source.hint_read_size(read.chunk_size_bytes);
+    source.hint_read_size(read.chunk());
     source.hint_parallelism(parallelism);
     source.hint_wait_policy(WaitPolicy::NeverWait);
 }
@@ -1151,7 +1188,7 @@ where
     // one name would read as an interrupted-and-resumed run.
     tracing::info!(
         bytes = %extent,
-        chunk_size = read.chunk_size_bytes,
+        chunk_size = read.chunk(),
         jobs = parallelism.jobs(),
         memory_bytes = %memory_budget_display(parallelism),
         "preamble scan started",

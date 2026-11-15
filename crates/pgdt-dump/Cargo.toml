@@ -6,8 +6,9 @@ license.workspace = true
 publish.workspace = true
 
 # What a crate above's tests reach that nothing else may: the cache's encoding,
-# for the tests holding a save to it. `pgdt-query` turns it on in its
-# dev-dependencies.
+# for the tests holding a save to it, and a line bound below `LINE_BOUND`, for
+# the tests reading every path at both of its edges. `pgdt-mapping` and
+# `pgdt-query` turn it on in their dev-dependencies.
 [features]
 test-support = []
 

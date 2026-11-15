@@ -37,14 +37,6 @@ Options:
           costs memory instead: the read path holds four buffers of whatever size you ask for, or
           what `--memory` leaves for read buffers, whichever is fewer
 
-      --max-line-bytes <BYTES>
-          The longest line the scan accepts, in bytes. A longer one stops the scan with an error
-          naming its offset rather than being buffered without bound; the check is made as each read
-          completes, so a line can overrun the limit by up to one read chunk before it is refused.
-          The default, 64 MiB, holds any row of ordinary values; a dump holding larger ones — a
-          single value of hundreds of megabytes — needs a larger limit stated here. A row is held
-          whole while it is scanned, so this is also what one row may cost in memory
-
       --statistics-level <LEVELS>
           How much to record of each table: a level for every table, `data` (the default) or
           `metadata`, then comma-separated overrides naming a table (`schema.table`, or a bare

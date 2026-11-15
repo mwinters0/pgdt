@@ -15,7 +15,7 @@ Code: `ResolvedTerm::truths`, `prune::SortedStop`. Evidence: `tests/pruning.rs`'
 
 ### D76 Gathering never keys a bytewise value; a bound past the cap is a prefix and a successor
 `text`, `character` and `bytea` bound and order by a clipped head (`gather::clip::Clipped`), never an `OrderKey`: a key
-copies the whole value, and a row may run to `--max-line-bytes`. Values agreeing on the head share every byte a stored
+copies the whole value, and a row may run to I71's bound. Values agreeing on the head share every byte a stored
 bound reads, so bounds stay valid and only row order is lost (`Unsorted`); a truncated `max` is stored as a successor.
 Rejected: the byte successor for text, which can end mid-character. Reopens: P26. Evidence: `bounds/tests.rs`'s
 `a_long_texts_stored_bounds_are_on_the_right_side_of_it`.

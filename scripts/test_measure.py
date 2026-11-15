@@ -1825,7 +1825,7 @@ class CountPair(unittest.TestCase):
             ],
         )
         # Each long row reads a `long-line-resident` input of one 32 MiB line
-        # kind, past a chunk and under today's line limit.
+        # kind, past a chunk and under the line limit the bound replaced.
         for name, kind in (("long_escaped_32", "escaped"), ("long_bytea_32", "bytea")):
             spec = measure.INPUTS[name]
             self.assertEqual(spec.generator, "generate_long_lines.py")
@@ -6251,7 +6251,7 @@ class LongLineResident(unittest.TestCase):
                     sum(measure.nominal_size(cfg, name) for name in group), measure.warm_bound(cfg)
                 )
 
-    def test_each_parse_states_its_count_allowance_limit_and_request(self):
+    def test_each_parse_states_its_count_allowance_and_request(self):
         for name in ("parse", "strict"):
             for jobs in measure.LONG_LINE_JOBS:
                 with self.subTest(name=name, jobs=jobs):
@@ -6259,7 +6259,7 @@ class LongLineResident(unittest.TestCase):
                     self.assertTrue(script.startswith(f"time {measure.PEAK_RSS} /pgdt parse "))
                     self.assertIn(f"--jobs {jobs} ", script)
                     self.assertIn(f"--memory {measure.ALLOWANCE_SLOT} ", script)
-                    self.assertIn(f"--max-line-bytes {measure.LONG_LINE_BOUND} ", script)
+                    self.assertNotIn("--max-line-bytes", script)
                     self.assertIn(measure.GATHER_STATISTICS, script)
                     self.assertEqual(
                         "--postgres-invalid-values strict" in script, name == "strict"
@@ -6281,7 +6281,7 @@ class LongLineResident(unittest.TestCase):
                 builder, _, timed = script.partition(" && time ")
                 self.assertIn("/pgdt parse", builder)
                 self.assertIn(f"--jobs {measure.SWEEP_JOBS} ", builder)
-                self.assertIn(f"--max-line-bytes {measure.LONG_LINE_BOUND} ", builder)
+                self.assertNotIn("--max-line-bytes", builder)
                 self.assertNotIn(measure.PEAK_RSS, builder)
                 self.assertTrue(
                     timed.startswith(
@@ -6290,7 +6290,7 @@ class LongLineResident(unittest.TestCase):
                 )
                 self.assertEqual(measure._dfcli_partitions(script), {str(jobs)})
                 self.assertIn(f"SET pgdump.memory = {measure.ALLOWANCE_SLOT}", timed)
-                self.assertIn(f"SET pgdump.max_line_bytes = {measure.LONG_LINE_BOUND}", timed)
+                self.assertNotIn("max_line_bytes", timed)
                 self.assertIn(measure.LONG_LINE_SQL, timed)
                 self.assertTrue(script.endswith(measure.DFCLI_ANSWER))
 
@@ -6306,7 +6306,7 @@ class LongLineResident(unittest.TestCase):
                 self.assertIn(" --column id ", timed)
                 self.assertIn(f"--jobs {jobs} ", timed)
                 self.assertIn(f"--memory {measure.ALLOWANCE_SLOT} ", timed)
-                self.assertIn(f"--max-line-bytes {measure.LONG_LINE_BOUND} ", timed)
+                self.assertNotIn("--max-line-bytes", timed)
         # An ordering term over the long column, which every row passes.
         self.assertEqual(measure.LONG_LINE_FILTER, "v>{}")
 

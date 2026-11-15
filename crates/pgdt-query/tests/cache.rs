@@ -1420,7 +1420,7 @@ const PERSISTED_INDEX: (u32, u64) = (85, 792_325_988_727_546_045);
 /// identity, its size and the calendar are the envelope's, and observed
 /// rather than parsed. So no list of persisted fields is kept to drift from
 /// the types. One fixed setting maps every file: the serial path, the default
-/// chunk and line limit, every table and column at the data level but a column
+/// chunk and the line bound, every table and column at the data level but a column
 /// holding a field PostgreSQL refuses (`common::sweep_request`), no cache. It sees only
 /// what the fixtures exercise, as `golden_order_is_pinned_to_the_format_version`
 /// does; a digest of the preamble alone would see less, the statistics and

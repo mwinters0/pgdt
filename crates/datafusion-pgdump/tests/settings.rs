@@ -152,12 +152,9 @@ async fn a_zero_allowance_returns_to_the_budgets_own() {
     assert!(reset.contains("pgdump"), "{reset}");
 }
 
-/// **`pgdump.chunk_size` sizes the reads a scan makes and
-/// `pgdump.max_line_bytes` bounds the lines it carries across them**, as
-/// `--chunk-size` and `--max-line-bytes` do: a line limit shorter than the
-/// table's rows binds nothing while every row fits one read, refuses the scan
-/// once reads are shorter than a row, and a generous one over those short
-/// reads answers what the defaults do.
+/// **`pgdump.chunk_size` sizes the reads a scan makes**, as `--chunk-size`
+/// does: reads shorter than a row, which carry every row across them, answer
+/// what the defaults do.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_read_settings_reach_the_scan() {
     let dir = tempfile::tempdir().unwrap();
@@ -169,19 +166,14 @@ async fn the_read_settings_reach_the_scan() {
     let query = format!("SELECT * FROM {EVENTS} ORDER BY event_id");
     let expected = printed(&run(&ctx, &query).await.unwrap());
 
-    run(&ctx, "SET pgdump.max_line_bytes = 8").await.unwrap();
-    assert_eq!(printed(&run(&ctx, &query).await.unwrap()), expected);
     run(&ctx, "SET pgdump.chunk_size = 3").await.unwrap();
-    let refused = run(&ctx, &query).await.unwrap_err();
-    assert!(refused.contains("exceeds the 8-byte line limit"), "{refused}");
-    run(&ctx, "SET pgdump.max_line_bytes = 1048576").await.unwrap();
     assert_eq!(printed(&run(&ctx, &query).await.unwrap()), expected);
 }
 
 /// **The settings are the session's, listed by `SHOW ALL`, and a value
 /// `pgdt` would refuse is refused by `SET`**, save the `0` that un-states an
-/// allowance — as is a key that is none of them, a `STORED AS PGDUMP`
-/// option as that statement's. `STORED AS PGDUMP` alone
+/// allowance — as is a key that is none of them, the line limit the bound
+/// replaced among them, a `STORED AS PGDUMP` option as that statement's. `STORED AS PGDUMP` alone
 /// installs them too.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_settings_are_listed_and_checked() {
@@ -193,12 +185,13 @@ async fn the_settings_are_listed_and_checked() {
             .await
             .unwrap(),
     );
-    for line in ["pgdump.chunk_size", "65536", "pgdump.max_line_bytes", "pgdump.memory"] {
+    for line in ["pgdump.chunk_size", "65536", "pgdump.memory"] {
         assert!(listed.contains(line), "{listed}");
     }
+    assert!(!listed.contains("max_line_bytes"), "{listed}");
     for bad in [
         "SET pgdump.chunk_size = 0",
-        "SET pgdump.max_line_bytes = 0",
+        "SET pgdump.max_line_bytes = 1073741822",
         "SET pgdump.memory = '4G'",
         "SET pgdump.jobs = 4",
     ] {

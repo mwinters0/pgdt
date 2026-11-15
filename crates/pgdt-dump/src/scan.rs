@@ -37,8 +37,7 @@ use pgdt_model::LongestLine;
 
 pub use self::chunked::{
     ChunkCarry, ChunkEvents, ChunkPass, ChunkedScanner, Drawing, FieldFold, GivenUp, LineMapping,
-    Passes, ReadOptions, SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions, StreamedLine,
-    announce_read_loop, draw_absorbing, scan,
+    Passes, ReadOptions, ScanOptions, StreamedLine, announce_read_loop, draw_absorbing, scan,
 };
 
 /// The start of a COPY data block.
@@ -511,6 +510,16 @@ impl CopyScanner {
     /// Whether the scanner is currently inside a COPY data block.
     pub fn in_copy_block(&self) -> bool {
         matches!(self.state, State::InCopy { .. })
+    }
+
+    /// The qualified name of the table whose block the scanner is inside,
+    /// where it entered the block at its header — `None` outside a block,
+    /// and inside one it was resumed in, whose reader knows the table.
+    pub fn copy_table(&self) -> Option<&str> {
+        match (&self.state, &self.endings) {
+            (State::InCopy { .. }, Endings::Refused { table, .. }) => Some(table),
+            _ => None,
+        }
     }
 
     /// Data rows consumed so far in the current COPY block, or `None` when

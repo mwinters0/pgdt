@@ -47,8 +47,18 @@ pub enum Error {
     UnterminatedCopyBlock { header_offset: u64 },
     #[error("large-object data region at offset {start_offset} has no terminating `COMMIT;` line")]
     UnterminatedLargeObjectRegion { start_offset: u64 },
-    #[error("line at offset {offset} exceeds the {limit}-byte line limit")]
-    LineTooLong { offset: u64, limit: usize },
+    /// **A line longer than PostgreSQL writes or reads**: past `bound`, its
+    /// terminator included — `LINE_BOUND`, I71's
+    /// (`docs/design/postgres-invariants.md`), in every build but a test's —
+    /// so no `pg_dump` wrote it and no restore reads it. `offset` is the
+    /// line's start, and `table` the `COPY` block it is a row of where its
+    /// reader knows one ([`Error::in_copy_of`]). An invalid dump, never a
+    /// matter of memory.
+    #[error(
+        "the line at offset {offset}{} is longer than {bound} bytes, its terminator included — the longest PostgreSQL writes or reads in one `COPY` line, so this dump does not restore",
+        in_copy(table.as_deref())
+    )]
+    LineTooLong { offset: u64, table: Option<String>, bound: usize },
     /// **A line one reader could not hold**: its charge passes what the
     /// allowance leaves one reader, whatever the worker count, so no wait
     /// and no other line giving its room up would admit it
@@ -538,6 +548,11 @@ fn unlisted_labels(unlisted: usize) -> String {
 
 /// [`Error::LineOutgrowsMemory`]'s clause naming what came off one reader's
 /// share as staying beside the line, where anything did.
+/// [`Error::LineTooLong`]'s table, where its reader knew one.
+fn in_copy(table: Option<&str>) -> String {
+    table.map_or_else(String::new, |table| format!(" (`COPY {table}`)"))
+}
+
 fn held_beside(beside: u64) -> String {
     match beside {
         0 => String::new(),
@@ -574,6 +589,18 @@ impl From<std::io::Error> for Error {
 }
 
 impl Error {
+    /// This error, a [`Error::LineTooLong`] its reader raised knowing no
+    /// table naming `table`, the `COPY` block its line is a row of; any
+    /// other error as it is.
+    pub fn in_copy_of(self, table: impl FnOnce() -> String) -> Self {
+        match self {
+            Error::LineTooLong { offset, table: None, bound } => {
+                Error::LineTooLong { offset, table: Some(table()), bound }
+            }
+            other => other,
+        }
+    }
+
     /// [`Error::File`]: `cause`, met doing `doing` to the file at `path`.
     pub fn file(doing: &'static str, path: impl Into<PathBuf>, cause: std::io::Error) -> Self {
         Error::File { doing, path: path.into(), cause }

@@ -44,7 +44,7 @@ use crate::stream::note::{PlanNote, PlanNoteKind};
 /// (`docs/design/decisions.md`, "D35").
 #[derive(Clone)]
 pub(in crate::stream) struct ReplayPlan {
-    /// The chunk and the line limit every piece of the replay reads with.
+    /// The chunk every piece of the replay reads with.
     pub(in crate::stream) read: ReadOptions,
     pub(in crate::stream) query_options: QueryOptions,
     /// The count and budget the replay was carved, its arrangement's: what
@@ -957,7 +957,7 @@ pub(in crate::stream) fn plan_replay(
         &plan.kept,
         plan.parallelism,
         plan.query_options.max_source_span,
-        plan.read.chunk_size_bytes,
+        plan.read.chunk(),
     );
     // **The span the plan was solved against is the span the batches use**, or
     // the charge bounds nothing (`docs/design/decisions.md`, "D84"). It is

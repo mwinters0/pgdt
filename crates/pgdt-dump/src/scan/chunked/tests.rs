@@ -10,7 +10,8 @@ struct Driven {
 }
 
 /// Feed `file` to a [`ChunkedScanner`] over `scanner` in `read`'s chunks,
-/// as `next_chunk` would read them, handing every event to `on_event`.
+/// as `next_chunk` would read them, each held to the line bound first,
+/// handing every event to `on_event`.
 fn feed_all(
     scanner: CopyScanner,
     file: &[u8],
@@ -20,9 +21,10 @@ fn feed_all(
     let mut chunked = ChunkedScanner::new(scanner, file.len() as u64, read);
     let mut read_pos = 0usize;
     loop {
-        let want = read.chunk_size_bytes.min(file.len() - read_pos);
-        let mut chunk =
-            chunked.feed(Bytes::copy_from_slice(&file[read_pos..read_pos + want]), None);
+        let want = read.chunk().min(file.len() - read_pos);
+        let bytes = Bytes::copy_from_slice(&file[read_pos..read_pos + want]);
+        chunked.hold_to_bound(&bytes)?;
+        let mut chunk = chunked.feed(bytes, None);
         read_pos += want;
         while let Some(event) = chunk.next_event()? {
             on_event(&chunk, event);
@@ -140,26 +142,58 @@ fn a_line_many_chunks_long_is_scanned_once() {
     }
 }
 
-/// **A line carried past the limit is refused where the chunk leaving it
-/// ends**, at the scanner's position — the line's start — and a line as long
-/// that the file's last chunk ends is not measured.
-#[test]
-fn a_carried_line_past_the_limit_is_refused() {
-    let file = long_lines(64);
-    let limit = ReadOptions { max_line_bytes: 16, ..options(40) };
-    let refused = feed_all(CopyScanner::new(), &file, limit, |_, _| {});
-    let row_start = file.windows(2).position(|w| w == b"2\t").unwrap() as u64;
-    match refused {
-        Err(Error::LineTooLong { offset, limit: 16 }) => assert_eq!(offset, row_start),
-        other => panic!("{other:?}"),
-    }
+/// `chunk_size`'s reads, each line held to `bound`.
+fn bounded(chunk_size: usize, bound: usize) -> ReadOptions {
+    ReadOptions { line_bound: bound, ..options(chunk_size) }
+}
 
-    // The comment's first fourteen bytes are carried, under the limit; the last
-    // chunk ends it past the limit.
-    let last_line = b"SELECT 1;\n-- a comment longer than the limit".to_vec();
-    let limit = ReadOptions { max_line_bytes: 16, ..options(24) };
-    feed_all(CopyScanner::new(), &last_line, limit, |_, _| {})
-        .expect("the last chunk's line is not measured");
+/// **A line is refused exactly where it is longer than the bound, its
+/// terminator included** (`docs/design/decisions.md`, "D164"): a row of
+/// exactly the bound is read and one a byte longer refused at its start,
+/// naming its table, whatever the chunk — one past the bound reading in
+/// chunks of it — and a line outside a block alike, naming none; a line the
+/// file's end ends is measured to it.
+#[test]
+fn a_line_is_refused_exactly_past_the_bound() {
+    let row_start = long_lines(1).windows(2).position(|w| w == b"2\t").unwrap() as u64;
+    // `2\t`, the value and its LF: the bound's length at `len = bound - 3`.
+    let bound = 48;
+    for chunk_size in [1usize, 5, 16, 47, 48, 49, 64, 4096] {
+        let read = bounded(chunk_size, bound);
+        // The value after the block is a line too, a byte shorter than the
+        // row, ending the file unterminated.
+        feed_all(CopyScanner::new(), &long_lines(bound - 3), read, |_, _| {})
+            .unwrap_or_else(|e| panic!("chunk {chunk_size}: {e}"));
+        match feed_all(CopyScanner::new(), &long_lines(bound - 2), read, |_, _| {}) {
+            Err(Error::LineTooLong { offset, table, bound: 48 }) => {
+                assert_eq!(offset, row_start, "chunk {chunk_size}");
+                assert_eq!(table.as_deref(), Some("public.t"), "chunk {chunk_size}");
+            }
+            other => panic!("chunk {chunk_size}: {other:?}"),
+        }
+
+        // A comment of dashes after `SELECT 1;`, its LF included or the
+        // file's end ending it.
+        for (dashes, ending) in [(bound - 1, "\n"), (bound, "")] {
+            let comment = |dashes: usize| format!("SELECT 1;\n{}{ending}", "-".repeat(dashes));
+            feed_all(CopyScanner::new(), comment(dashes).as_bytes(), read, |_, _| {})
+                .unwrap_or_else(|e| panic!("chunk {chunk_size}, {ending:?}: {e}"));
+            match feed_all(CopyScanner::new(), comment(dashes + 1).as_bytes(), read, |_, _| {}) {
+                Err(Error::LineTooLong { offset: 10, table: None, bound: 48 }) => {}
+                other => panic!("chunk {chunk_size}, {ending:?}: {other:?}"),
+            }
+        }
+    }
+}
+
+/// **A read is never longer than the bound**, so a line a read holds whole
+/// is within it ([`ReadOptions::chunk`]).
+#[test]
+fn a_chunk_is_never_longer_than_the_bound() {
+    assert_eq!(bounded(4096, 48).chunk(), 48);
+    assert_eq!(bounded(16, 48).chunk(), 16);
+    assert_eq!(ReadOptions::default().line_bound(), LINE_BOUND);
+    assert_eq!(ReadOptions::default().chunk(), SCAN_CHUNK_DEFAULT_SIZE_BYTES);
 }
 
 /// **A row's offset less its span's start indexes the row in the span**, in
@@ -235,7 +269,7 @@ fn a_carry_takes_only_the_prefix_that_completes_its_line() {
 }
 
 /// The degenerate case: a chunk with no newline in it joins the carry
-/// whole, which is the growth `ReadOptions::max_line_bytes` bounds, and
+/// whole, which is the growth `ReadOptions::line_bound` bounds, and
 /// neither pass has anything to scan until the file ends.
 #[test]
 fn a_chunk_with_no_newline_joins_the_carry_whole() {
@@ -524,8 +558,9 @@ fn stream_giving_up(
     let mut chunked = ChunkedScanner::new(CopyScanner::new(), file.len() as u64, read);
     let mut read_pos = 0usize;
     let ran: Result<()> = (|| loop {
-        let want = read.chunk_size_bytes.min(file.len() - read_pos);
+        let want = read.chunk().min(file.len() - read_pos);
         let bytes = Bytes::copy_from_slice(&file[read_pos..read_pos + want]);
+        chunked.hold_to_bound(&bytes)?;
         if give_up && chunked.carry.charge_absorbing(&bytes) > 0 {
             let given = chunked.carry.give_up();
             let range = given.range(read_pos as u64);
@@ -642,18 +677,17 @@ fn a_streamed_row_holds_nothing_at_any_length() {
     }
 }
 
-/// **A streamed row past the limit is refused as a held one is**, at its
-/// start where a chunk leaves it; and one the file ends inside a block in
-/// is the block's refusal, as a held one is.
+/// **A streamed row past the bound is refused as a held one is**, at its
+/// start; and one the file ends inside a block in is the block's refusal,
+/// as a held one is.
 #[test]
 fn a_streamed_row_is_refused_where_a_held_one_is() {
     let file = streamable(200, "\n", "\n");
     let row_start = file.windows(2).position(|w| w == b"2\t").unwrap() as u64;
     for chunk_size in [5usize, 40, 64] {
-        let limit = ReadOptions { max_line_bytes: 100, ..options(chunk_size) };
         for streams in [false, true] {
-            match stream(&file, limit, streams).events {
-                Err(Error::LineTooLong { offset, limit: 100 }) => assert_eq!(offset, row_start),
+            match stream(&file, bounded(chunk_size, 100), streams).events {
+                Err(Error::LineTooLong { offset, .. }) => assert_eq!(offset, row_start),
                 other => panic!("chunk {chunk_size}, streamed {streams}: {other:?}"),
             }
         }

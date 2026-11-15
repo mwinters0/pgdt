@@ -31,12 +31,33 @@ use pgdt_codec::ResolvedSchema;
 use pgdt_codec::internal::{FieldText, UnrepresentableRead, decode_bytea_into, escaped_utf8_error};
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_core::internal::{RawField, RawRow, RowSplit, printout, printout_head, unescaped};
-use pgdt_core::{Error, Result};
+use pgdt_core::{Error, LINE_BOUND, Result};
 use pgdt_model::PostgresInvalidValues;
 
 use self::builder::{append_null, append_walked, is_walked, text_refused};
 use self::chunks::push_utf8view_field;
 use crate::options::QueryOptions;
+
+/// **The most a batch holding an offset-bounded column takes in before a row
+/// and still takes any row**: a row's fields are shorter than its line, at
+/// most [`LINE_BOUND`], so a batch flushed once its text reaches this never
+/// carries an `i32` offset past `i32::MAX` — a decoded value, an element
+/// count or a child's bytes being no more than the text it is read from
+/// (`docs/design/decisions.md`, "D164").
+pub(crate) const OFFSET_CUT_BYTES: usize = i32::MAX as usize + 1 - LINE_BOUND;
+
+/// Whether an Arrow type holds `i32` offsets into a buffer a batch grows
+/// with its rows' values — `bytea`'s `Binary`, an array's `List`, an enum's
+/// dictionary — where Arrow's builders panic past them rather than refuse;
+/// a `Utf8View`'s views are bounded per value and buffer alone.
+fn offset_bounded(data_type: &DataType) -> bool {
+    match data_type {
+        DataType::Binary | DataType::Utf8 | DataType::List(_) | DataType::Map(..) => true,
+        DataType::Struct(fields) => fields.iter().any(|field| offset_bounded(field.data_type())),
+        DataType::Dictionary(_, values) => offset_bounded(values),
+        _ => false,
+    }
+}
 
 /// Accumulates rows from a single `COPY` block into typed `RecordBatch`es,
 /// one [`ColumnBuilder`] per field of the query's
@@ -102,7 +123,9 @@ impl RowBatcher {
     /// `unrepresentable` is parallel to `field_targets`, `None` for each
     /// field that is not tested. A batch is flushed at `max_rows` rows, or
     /// where `options` bounds its bytes or its span first, and around a
-    /// nested value longer than `long_field` ([`Self::cuts_before`]).
+    /// nested value longer than `long_field` ([`Self::cuts_before`]); one
+    /// holding an offset-bounded column at [`OFFSET_CUT_BYTES`] of its text
+    /// at the latest, whatever `options` say.
     pub(crate) fn new(
         resolved: &ResolvedSchema,
         table: String,
@@ -127,6 +150,11 @@ impl RowBatcher {
             .map(|column| new_column_builder(column.data_type(), column.plan()))
             .collect();
         let walks = columns.iter().any(is_walked);
+        let mut options = options;
+        if resolved.columns().iter().any(|column| offset_bounded(column.data_type())) {
+            let cut = options.max_bytes.map_or(OFFSET_CUT_BYTES, |max| max.min(OFFSET_CUT_BYTES));
+            options.max_bytes = Some(cut);
+        }
         let plans =
             resolved.columns().iter().map(|c| (c.data_type().clone(), c.plan().clone())).collect();
         Self {
