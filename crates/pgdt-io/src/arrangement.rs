@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use crate::ByteRangeSource;
-use crate::ledger::{Floor, Ledger};
+use crate::ledger::{Floor, Ledger, Terms};
 use crate::memory::{
     DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE, MemoryLimit, available_memory_in,
     discover_memory_limit_in, margin_allowance, margin_room,
@@ -250,7 +250,8 @@ impl Arrangement {
         let ledger = match (room, allowance.bytes()) {
             (Some(room), Some(bytes)) => {
                 let holds = one_reader_leaves(bytes, uncarved, worker_memory, drawn).max(room);
-                let ledger = Ledger::limited(room, Floor { holds, allowance: bytes });
+                let floor = Floor { holds, allowance: bytes };
+                let ledger = Ledger::limited(room, floor, Terms::of(parallelism, worker_memory));
                 ledger.draw_statistics(held);
                 ledger
             }

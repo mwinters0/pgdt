@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
 
 use super::*;
+use crate::parallelism::{Parallelism, WorkerMemory};
 
 /// A waker counting its wakes, so a test says which waiter a change woke.
 #[derive(Default)]
@@ -39,7 +40,7 @@ impl Woken {
 
 /// A ledger of `capacity` bytes whose floor refuses no line.
 fn limited(capacity: u64) -> Ledger {
-    Ledger::limited(capacity, Floor { holds: u64::MAX, allowance: u64::MAX })
+    Ledger::limited(capacity, Floor { holds: u64::MAX, allowance: u64::MAX }, Terms::default())
 }
 
 /// `holder`'s draw of `charge` for the line at `start`, met without waiting.
@@ -251,7 +252,7 @@ fn the_earliest_line_is_admitted_past_the_capacity_alone() {
 #[test]
 fn a_charge_past_the_floor_is_refused_and_returns_what_it_held() {
     let floor = Floor { holds: 40, allowance: 1000 };
-    let ledger = Ledger::limited(10, floor);
+    let ledger = Ledger::limited(10, floor, Terms::default());
     assert_eq!(ledger.floor(), Some(floor));
     let mut alone = ledger.holder();
     assert_eq!(drawn_now(&mut alone, 0, 40), Admission::Held, "at the floor, admitted alone");
@@ -380,4 +381,159 @@ async fn concurrent_readers_all_finish() {
         .unwrap();
     gathering.await.unwrap();
     assert_eq!(ledger.drawn(), 0);
+}
+
+/// A ledger of `capacity` bytes refusing no line, its three readers each
+/// giving back 100 bytes parked: `[0, 100, 200]` by how many park.
+fn parking(capacity: u64) -> Ledger {
+    let terms = Terms::of(Parallelism::workers(3, 300), Some(WorkerMemory::per_worker(100)));
+    Ledger::limited(capacity, Floor { holds: u64::MAX, allowance: u64::MAX }, terms)
+}
+
+/// **What parking gives back is the carve's fall**: each reader's term
+/// where the budget holds every reader, nothing where the source stated no
+/// cost, and nothing for the readers a stated count holds past what its
+/// budget affords until the count parked falls under it (`KD21`).
+#[test]
+fn parking_gives_back_the_budget_s_fall() {
+    let memory = Some(WorkerMemory::per_worker(100));
+    assert_eq!(Terms::of(Parallelism::workers(3, 300), memory), Terms(vec![0, 100, 200]));
+    assert_eq!(Terms::of(Parallelism::workers(3, 300), None), Terms::default());
+    assert_eq!(Terms::of(Parallelism::workers(4, 200), memory), Terms(vec![0, 0, 0, 100]));
+    let terms = Terms::of(Parallelism::workers(3, 300), memory);
+    assert_eq!((terms.parks_for(0), terms.parks_for(1), terms.parks_for(100)), (0, 1, 1));
+    assert_eq!((terms.parks_for(101), terms.parks_for(500)), (2, 2));
+    assert_eq!(Terms::default().parks_for(500), 0);
+}
+
+/// **A line alone past the room parks the latest reader first**, and is
+/// admitted once what it gives back covers the line; a reader reading
+/// before the line is never asked; the parked reader resumes as the line's
+/// draw is returned, announcing its park and its resume to its source.
+#[test]
+fn a_line_alone_past_the_room_parks_the_latest_reader_until_it_fits() {
+    let ledger = parking(10);
+    let source = crate::test_support::ParkCounting::default();
+    let (mut line, mut before, mut early, mut late) =
+        (ledger.holder(), ledger.holder(), ledger.holder(), ledger.holder());
+    assert!(!before.stand(50) && !early.stand(200) && !late.stand(300));
+
+    let (woken, parked_woken) = (Woken::new(), Woken::new());
+    {
+        let mut draw = pin!(line.draw(100, 60));
+        assert_eq!(woken.poll(draw.as_mut()), Poll::Pending, "waits on the park");
+        assert_eq!((before.stand(60), early.stand(210), late.stand(310)), (false, false, true));
+        let mut parked = pin!(late.park(&source));
+        assert_eq!(parked_woken.poll(parked.as_mut()), Poll::Pending);
+        assert_eq!((ledger.parked(), source.parked()), (1, 1));
+        assert_eq!(woken.times(), 1, "the park wakes the line");
+        assert_eq!(woken.poll(draw), Poll::Ready(Admission::Held));
+        assert_eq!(ledger.drawn(), 60);
+    }
+    assert_eq!((ledger.parked(), source.parked()), (0, 0), "dropped, it resumes");
+    assert!(late.stand(320), "still asked while the line holds");
+    {
+        let mut parked = pin!(late.park(&source));
+        assert_eq!(parked_woken.poll(parked.as_mut()), Poll::Pending);
+        line.release();
+        assert_eq!(parked_woken.times(), 1, "the release resumes it");
+        assert_eq!(parked_woken.poll(parked), Poll::Ready(()));
+    }
+    assert_eq!((ledger.parked(), source.parked()), (0, 0));
+    assert!(!late.stand(330));
+}
+
+/// **A line alone is admitted once no reader is left reading to ask**:
+/// where every reader's parking falls short of it, each later reader is
+/// asked, and the line is admitted once each has parked or left — never
+/// asking a reader whose own line waits, which reads nothing.
+#[test]
+fn a_line_alone_is_admitted_once_none_is_left_reading_to_ask() {
+    let ledger = parking(10);
+    let source = crate::test_support::ParkCounting::default();
+    let (woken, parked_woken) = (Woken::new(), Woken::new());
+    let (mut line, mut leaves, mut parks) = (ledger.holder(), ledger.holder(), ledger.holder());
+    assert!(!leaves.stand(200) && !parks.stand(300));
+    {
+        let mut draw = pin!(line.draw(100, 500));
+        assert_eq!(woken.poll(draw.as_mut()), Poll::Pending);
+        assert!(leaves.stand(210) && parks.stand(310), "each asked, the line passing them both");
+        let mut parked = pin!(parks.park(&source));
+        assert_eq!(parked_woken.poll(parked.as_mut()), Poll::Pending);
+        assert_eq!(woken.poll(draw.as_mut()), Poll::Pending, "one reader still reads");
+        drop(leaves);
+        assert_eq!(woken.poll(draw), Poll::Ready(Admission::Held));
+        assert_eq!(ledger.parked(), 1);
+    }
+    assert!(parks.stand(320), "still asked while the line holds");
+    {
+        let mut parked = pin!(parks.park(&source));
+        assert_eq!(parked_woken.poll(parked.as_mut()), Poll::Pending);
+        line.release();
+        assert_eq!(parked_woken.poll(parked), Poll::Ready(()));
+    }
+
+    let (mut waits, mut reads, mut ahead) = (ledger.holder(), ledger.holder(), ledger.holder());
+    assert_eq!(drawn_now(&mut ahead, 0, 5), Admission::Held);
+    assert!(!reads.stand(400));
+    let waiting = Woken::new();
+    let mut wait = pin!(waits.draw(300, 20));
+    assert_eq!(waiting.poll(wait.as_mut()), Poll::Pending);
+    ahead.release();
+    let mut draw = pin!(line.draw(100, 60));
+    assert_eq!(woken.poll(draw.as_mut()), Poll::Pending);
+    assert!(reads.stand(410), "the reader reading is asked; the one waiting is not");
+    let mut parked = pin!(reads.park(&source));
+    assert_eq!(parked_woken.poll(parked.as_mut()), Poll::Pending);
+    assert_eq!(woken.poll(draw), Poll::Ready(Admission::Held));
+    assert_eq!(ledger.parked(), 1);
+}
+
+/// **A ledger whose readers give nothing back asks none to park**: the
+/// line alone is admitted past the room at once, as one reader's is.
+#[test]
+fn a_line_alone_parks_no_reader_whose_parking_gives_nothing_back() {
+    let ledger = limited(10);
+    let (mut line, mut later) = (ledger.holder(), ledger.holder());
+    assert!(!later.stand(200));
+    assert_eq!(drawn_now(&mut line, 100, 60), Admission::Held);
+    assert!(!later.stand(210));
+    assert_eq!(ledger.parked(), 0);
+}
+
+/// **Parking readers on threads of their own all finish**: each stands
+/// before each line and parks where asked, then grows its line past the
+/// room, re-reading where it gave up, and nothing is left drawn or parked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_parking_readers_all_finish() {
+    let terms = Terms::of(Parallelism::workers(8, 400), Some(WorkerMemory::per_worker(50)));
+    let ledger = Ledger::limited(100, Floor { holds: u64::MAX, allowance: u64::MAX }, terms);
+    let source = Arc::new(crate::test_support::ParkCounting::default());
+    let readers = (0..8u64).map(|reader| {
+        let (mut holder, source) = (ledger.holder(), Arc::clone(&source));
+        tokio::spawn(async move {
+            for line in 0..20u64 {
+                let start = (line * 8 + reader) * 1000;
+                let mut charge = 10;
+                while charge <= 300 {
+                    if holder.stand(start + charge) {
+                        holder.park(source.as_ref()).await;
+                    }
+                    match holder.draw(start, charge).await {
+                        Admission::Held => charge += 30,
+                        Admission::GiveUp => charge = 10,
+                        Admission::Refused(floor) => panic!("refused under {floor:?}"),
+                    }
+                    tokio::task::yield_now().await;
+                }
+                holder.release();
+            }
+        })
+    });
+    let all = futures::future::try_join_all(readers);
+    tokio::time::timeout(std::time::Duration::from_secs(30), all)
+        .await
+        .expect("every reader finishes")
+        .unwrap();
+    assert_eq!((ledger.drawn(), ledger.parked(), source.parked()), (0, 0, 0));
 }

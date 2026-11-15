@@ -542,7 +542,9 @@ impl DecodeBudget {
             // for the decodes in flight — either reworks a pool's sizing rule.
             // A reader parking there gives back no retention either: its
             // depth comes off the announced count, under which the budget
-            // still binds.
+            // still binds — so the ledger credits a park only the budget's
+            // fall (`Terms`), nothing until the readers left reading are
+            // fewer than it affords.
             blocks
                 .pool
                 .set_limits(budget.saturating_sub(self.pool.held_bytes()), POOL_DEPTH.max(reading));

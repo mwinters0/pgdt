@@ -597,7 +597,9 @@ async fn observe_rows(
         let block_observer = observer.as_deref_mut().map(|o| o as &mut dyn BlockObserver);
         let mut fold = RowFold::new(Some(&mut streamed), block_observer, block.data_offset);
         let fold = fold.as_mut().map(|f| f as _);
-        let read = chunked.next_chunk_folding(source, fold, Some(Drawing::held(&mut holder))).await;
+        let read = chunked
+            .next_chunk_folding(source, fold, Some(Drawing::held(&mut holder).parking()))
+            .await;
         let mut chunk = match read {
             Ok(chunk) => chunk,
             // The check above, reached through the read rather than

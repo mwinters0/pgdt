@@ -300,21 +300,32 @@ impl GivenUp {
 /// **A reader's draws on its run's ledger**: its [`Holder`], and what it is
 /// charged for the bytes its carry holds past its chunk — those bytes alone
 /// where it holds no copy of them, as a parse does, or with what a query's
-/// batch decodes beside them (`docs/design/decisions.md`, "D157").
+/// batch decodes beside them (`docs/design/decisions.md`, "D157") — and
+/// whether its reader parks where the ledger asks it to
+/// ([`parking`](Self::parking)).
 pub struct Drawing<'a> {
     holder: &'a mut Holder,
     charge: &'a (dyn Fn(u64) -> u64 + Sync),
+    parks: bool,
 }
 
 impl<'a> Drawing<'a> {
     /// `holder`'s draws, charged the bytes held alone.
     pub fn held(holder: &'a mut Holder) -> Self {
-        Self { holder, charge: &held_alone }
+        Self { holder, charge: &held_alone, parks: false }
     }
 
     /// `holder`'s draws, charged `charge` of the bytes held.
     pub fn charged(holder: &'a mut Holder, charge: &'a (dyn Fn(u64) -> u64 + Sync)) -> Self {
-        Self { holder, charge }
+        Self { holder, charge, parks: false }
+    }
+
+    /// These draws, their reader standing where it reads before each and
+    /// parking where the ledger asks it to ([`Holder::park`]), so a line
+    /// alone past the room is held in what it gives back
+    /// (`docs/design/decisions.md`, "D163").
+    pub fn parking(self) -> Self {
+        Self { parks: true, ..self }
     }
 }
 
@@ -339,6 +350,10 @@ fn held_alone(bytes: u64) -> u64 {
 /// an answer. **A draw past the ledger's floor fails the read**
 /// ([`Error::LineOutgrowsMemory`]), naming where what it holds begins
 /// (`docs/design/decisions.md`, "D161").
+///
+/// **A [`parking`](Drawing::parking) reader asked to park drops `chunk`
+/// first**, parks holding no read, and reads it again as it resumes
+/// (`docs/design/decisions.md`, "D163").
 pub async fn draw_absorbing(
     carry: &mut ChunkCarry,
     drawing: Drawing<'_>,
@@ -346,7 +361,15 @@ pub async fn draw_absorbing(
     read_pos: u64,
     chunk: &mut Bytes,
 ) -> Result<()> {
-    let Drawing { holder, charge: charged } = drawing;
+    let Drawing { holder, charge: charged, parks } = drawing;
+    if parks && holder.stand(read_pos) {
+        let len = chunk.len();
+        *chunk = Bytes::new();
+        holder.park(source).await;
+        if len > 0 {
+            *chunk = source.read_range(read_pos, len).await?;
+        }
+    }
     let held = carry.charge_absorbing(chunk);
     if held == 0 {
         holder.release();

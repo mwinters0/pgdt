@@ -43,8 +43,8 @@ Code: `arrangement.rs`. Evidence: `reserve`.
 `Arrangement::resolve` carves one `Ledger` under a found allowance: the margin's ceiling less the budget and what others
 drew, a read's longest line off the ceiling; else no limit. Statistics draw first, opened at `held`. A line waits behind
 earlier waiters; the earliest unadmitted, or statistics past the room, ask later holders to give up, latest first. Why:
-the leftmost line progresses, a suspended holder keeps its buffer, statistics never hang on a line. The earliest is
-admitted past the room where no other line holds, never asked, up to the floor (D161). Rejected: dropping a waiter's
+the leftmost line progresses, a suspended holder keeps its buffer, statistics never hang on a line. Alone, the earliest
+passes the room, never asked, up to the floor (D161), once later readers park (D163). Rejected: dropping a waiter's
 buffer; giving up on every wait; a bound per worker; the cap, lending the margin; a fixed split; first come; `held` off
 the room, a back-fill billed twice; an uncarved estimate's room unmargined, past halving. Code: `ledger.rs`. Evidence:
 `ledger/tests.rs`.
@@ -76,6 +76,16 @@ gone now, not at the next decode. Rejected: re-announcing a smaller `Parallelism
 and the cut read mid-run; a chunk pool shrinking per reader, its depth flat in the count (`KD24`); a count the pass
 sets, which concurrent parkers overwrite. Code: `DecodeBudget::hint_parked`, `BlockCache::give_back`. Evidence:
 `blocks/tests.rs`, `pool/tests.rs`.
+
+### D163 A line alone past the room parks the latest readers, and is admitted once they have
+A parse's reader stands where it reads before each read (`Holder::stand`). Where the earliest line holds or waits past
+the room and no other line holds, the readers later than it holding and awaiting no line are asked to park, the latest
+first, as few as cover it by `Terms` — the carve's budget at its count less at that many fewer — and it is admitted once
+they have parked or left; they park holding no read (D162) and resume as the excess falls. Why: the room and what the
+other readers free is the floor (D161). Rejected: admitting it before they park, past the room by their terms; asking a
+reader whose line waits, which reads nothing and would wait on the line; crediting a term the carve did not scale with
+the count (a plain file's, `KD21`'s). Code: `ledger/park.rs`, `draw_absorbing`. Evidence: `ledger/tests.rs`,
+`tests/ledger.rs`.
 
 ### D4 A budget is solved against a source's cost, never divided by it
 `WorkerMemory` carries a per-worker term and a shared pool term (`affords`, `at`): the block pool's retention list is

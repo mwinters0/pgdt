@@ -292,7 +292,9 @@ pub async fn map_forward(
         // its observer.
         let mut fold = builder.row_fold();
         let fold = fold.as_mut().map(|f| f as _);
-        let read = chunked.next_chunk_folding(source, fold, Some(Drawing::held(&mut holder))).await;
+        let read = chunked
+            .next_chunk_folding(source, fold, Some(Drawing::held(&mut holder).parking()))
+            .await;
         let mut chunk = match read {
             Ok(chunk) => chunk,
             // The check point above, reached through the read rather than
