@@ -41,10 +41,9 @@ to 33.5.3 carry the rest (STATUS, and the 2026-11-14 history entry).
   every line past its chunk is refused there, as the spec's "The floor is
   one reader" reads. A test wanting a ledger of no room carves its room
   away under a gibibyte, never a small allowance, whose floor is zero.
-- **What is `held` does not come off the floor**: a provider's pool grant can
-  pass its allowance (`pgdt-sql.md`'s example), which would refuse every
-  long line; a cache's resident statistics are the same kind of holding.
-  STATUS's "Decisions worth another look" carries it.
+- **A provider's pool grant does not come off the floor**: it can pass its
+  allowance (`pgdt-sql.md`'s example), which would refuse every long line.
+  The statistics and other scans' line charges do, since 33.30.
 - **The refusal names where what is held begins**: a held line's start, or
   a streamed row's field held whole, which a data-level parse collects past
   its chunk — `tests/ledger.rs` in pgdt-mapping refuses a zero-padded

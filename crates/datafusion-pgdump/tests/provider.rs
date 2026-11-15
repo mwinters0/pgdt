@@ -439,16 +439,17 @@ async fn the_resident_statistics_are_billed_and_lower_a_budget_the_margin_cannot
     // which the provider must bill both to reach.
     let pool = 128u64 << 20;
     let allowance = (512 << 20) + statistics;
-    let plain = |held| {
+    let plain = |statistics, granted| {
         let request = ArrangementRequest {
-            held,
+            statistics,
+            granted,
             carve_estimate: true,
             ..ArrangementRequest::recommended(4, source.default_worker_memory())
         };
         Arrangement::resolve(&Allowance::Stated(allowance), request).parallelism().budget_bytes()
     };
-    assert_eq!(plain(0), DEFAULT_MEMORY_BUDGET);
-    let ceiling = plain(statistics + pool);
+    assert_eq!(plain(0, 0), DEFAULT_MEMORY_BUDGET);
+    let ceiling = plain(statistics, pool);
     assert!(0 < ceiling && ceiling < DEFAULT_MEMORY_BUDGET);
     let query = "SELECT * FROM shop.public.widgets";
 

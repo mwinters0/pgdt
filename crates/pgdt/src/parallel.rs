@@ -217,9 +217,10 @@ impl Discovered<'_> {
     /// against the margin's ceiling as the provider bills a resident map, so
     /// it lowers the count first and, where the count cannot fall, the budget,
     /// under an allowance carved with a margin — half of what the machine
-    /// reports available is not, and holds nothing off (`pgdt_io::ArrangementRequest::held`;
-    /// `docs/design/decisions.md`, "D85"). A pass holding none passes `0`
-    /// ([`Discovered::resolve_pass`]).
+    /// reports available is not, and holds nothing off
+    /// (`pgdt_io::ArrangementRequest::statistics`; `docs/design/decisions.md`,
+    /// "D85"); under either it comes off what one reader may hold of a line
+    /// ("D161"). A pass holding none passes `0` ([`Discovered::resolve_pass`]).
     pub(crate) fn resolve(&self, source: &dyn ByteRangeSource, held: u64) -> Resolved {
         self.resolve_carving(source, held, 0)
     }
@@ -242,7 +243,7 @@ impl Discovered<'_> {
         // (`docs/design/decisions.md`, "D11", "D85").
         let allowance = self.args.memory.map_or_else(|| self.found.clone(), Allowance::Stated);
         let request = ArrangementRequest {
-            held,
+            statistics: held,
             line_charge,
             ..ArrangementRequest::of(source, self.args.jobs)
         };

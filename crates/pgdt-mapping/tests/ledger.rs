@@ -166,12 +166,13 @@ async fn a_parse_holding_a_field_past_its_floor_is_refused_for_memory() {
     let (data, cancel) = (&StatisticsRequest::DATA, CancellationToken::new());
     let arrangement = floored(floor);
     let refused = map_file(opened, read, &arrangement, default, data, &cancel).await.unwrap_err();
-    let pgdt_core::Error::LineOutgrowsMemory { offset, needs, holds, allowance } = refused else {
+    let pgdt_core::Error::LineOutgrowsMemory { offset, needs, holds, beside, allowance } = refused
+    else {
         panic!("not refused for memory: {refused}");
     };
     assert_eq!(offset, before.len() as u64, "where the field starts");
     assert!(needs > floor && needs <= long.len() as u64 + 1, "{needs}");
-    assert_eq!((holds, allowance), (floor, 1 << 30));
+    assert_eq!((holds, beside, allowance), (floor, 0, 1 << 30));
 
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let opened = CacheMode::DISABLED.open_source(source).await.unwrap();

@@ -1270,10 +1270,11 @@ statistics it pays for those and ends `held_bytes=…`, what they hold; where
 the longest line of the blocks it reads rows of is longer than a read chunk,
 and the query reads a field of them, it pays up front for holding that line
 while its row is decoded, and says so as `line_bytes=…`. A line one reader
-could not hold under `--memory` — the allowance less what `pgdt` keeps back
-and one reader's budget, whatever `--jobs` says — is refused for memory,
-naming where it starts and the bytes it needs: by `query` before it reads a
-byte where the map records it, and by any pass as it meets it. Two
+could not hold under `--memory` — the allowance less what `pgdt` keeps back,
+one reader's budget and the statistics the pass starts out holding, whatever `--jobs`
+says — is refused for memory, naming where it starts, the bytes it needs and
+what the statistics took: by `query` before it reads a byte where the map
+records it, and by any pass as it meets it. Two
 things can still cut the count: a compressed dump whose largest block the
 budget cannot hold is read through the streaming decoder, and a gzip dump with
 no complete index through its first pass, each **serial whatever `--jobs`

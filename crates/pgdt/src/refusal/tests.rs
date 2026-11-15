@@ -155,6 +155,7 @@ fn each_refusal_names_the_flag_its_remedy_is() {
                 offset: 4096,
                 needs: 1 << 30,
                 holds: 64 << 20,
+                beside: 0,
                 allowance: 512 << 20,
             },
             &["`--memory`"],

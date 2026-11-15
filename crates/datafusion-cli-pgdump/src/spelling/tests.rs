@@ -179,6 +179,7 @@ fn each_refusal_is_spelled_in_its_registration_s_grammar() {
                 offset: 4096,
                 needs: 1 << 30,
                 holds: 64 << 20,
+                beside: 0,
                 allowance: 512 << 20,
             }),
             Some("`SET pgdump.memory`"),

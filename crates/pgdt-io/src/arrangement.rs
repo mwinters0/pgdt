@@ -96,11 +96,20 @@ pub struct ArrangementRequest {
     /// The read-buffer budget other arrangements drawing on the same
     /// allowance hold now — concurrent scans in one process.
     pub drawn: u64,
-    /// What the process holds resident besides any arrangement: a cache's
-    /// loaded statistics, or memory granted to something other than a scan.
-    /// It comes off the margin's ceiling alone, where the allowance is carved
-    /// with one (`docs/design/decisions.md`, "D85").
-    pub held: u64,
+    /// **The statistics the run keeps resident beside its readers**: what a
+    /// cache hands a mapping pass, a replay's settled table's, a session's
+    /// registered dumps'. Part of what is [`held`](Self::held), and off the
+    /// [`Floor`] (`docs/design/decisions.md`, "D161").
+    pub statistics: u64,
+    /// **Memory granted to something other than a scan** — a session memory
+    /// pool's finite limit, a limit on DataFusion's operators rather than a
+    /// holding. Part of what is [`held`](Self::held), and never off the
+    /// [`Floor`] (`docs/design/decisions.md`, "D161").
+    pub granted: u64,
+    /// **The longest-line charges other live scans carved**
+    /// (`docs/design/decisions.md`, "D160"), reserved for as long as each
+    /// lives. Part of what is [`held`](Self::held), and off the [`Floor`].
+    pub lines: u64,
     /// Whether [`Allowance::HalfAvailable`] is carved as a stated allowance
     /// is, reserve and margin included, rather than capping the pools alone.
     /// A process hosting more than its scans — DataFusion's operators past
@@ -127,7 +136,9 @@ impl ArrangementRequest {
             jobs: Jobs::Recommended(jobs),
             worker_memory,
             drawn: 0,
-            held: 0,
+            statistics: 0,
+            granted: 0,
+            lines: 0,
             carve_estimate: false,
             line_charge: 0,
         }
@@ -142,6 +153,22 @@ impl ArrangementRequest {
             None => Jobs::Recommended(source.default_workers()),
         };
         Self { jobs, ..Self::recommended(1, source.default_worker_memory()) }
+    }
+
+    /// **What the process holds resident besides any arrangement**: the
+    /// statistics, the grant and other scans' line charges together. It comes
+    /// off the margin's ceiling alone, where the allowance is carved with one
+    /// (`docs/design/decisions.md`, "D85"), and opens the statistics' draw on
+    /// the ledger (`docs/design/decisions.md`, "D157").
+    pub fn held(&self) -> u64 {
+        self.statistics.saturating_add(self.granted).saturating_add(self.lines)
+    }
+
+    /// **What stays beside a line as the run is carved**: the statistics and
+    /// other scans' line charges, which come off the [`Floor`]; the grant
+    /// does not (`docs/design/decisions.md`, "D161").
+    fn beside_the_line(&self) -> u64 {
+        self.statistics.saturating_add(self.lines)
     }
 }
 
@@ -208,12 +235,16 @@ impl Arrangement {
     ///
     /// **Its [`Floor`] is what the allowance leaves one reader**, at any
     /// count: the cap, or the margin's ceiling where that is higher, less
-    /// what others drew and one reader's budget — never less than the room,
-    /// so no line the ledger lends room for is refused
+    /// what others drew and one reader's budget — never less than the room —
+    /// and less what stays beside the line as the run is carved, the
+    /// statistics and other scans' line charges, an uncarved estimate's
+    /// included, never the grant. So no line the ledger lends room for is
+    /// refused, its statistics' draw opening at all three
     /// (`docs/design/decisions.md`, "D161").
     pub fn resolve(allowance: &Allowance, request: ArrangementRequest) -> Self {
-        let ArrangementRequest { jobs, worker_memory, drawn, held, carve_estimate, line_charge } =
+        let ArrangementRequest { jobs, worker_memory, drawn, carve_estimate, line_charge, .. } =
             request;
+        let held = request.held();
         let asked = match jobs {
             Jobs::Stated(jobs) | Jobs::Recommended(jobs) => jobs,
         };
@@ -249,8 +280,10 @@ impl Arrangement {
         let uncarved = matches!(allowance, Allowance::HalfAvailable(_)) && !carve_estimate;
         let ledger = match (room, allowance.bytes()) {
             (Some(room), Some(bytes)) => {
-                let holds = one_reader_leaves(bytes, uncarved, worker_memory, drawn).max(room);
-                let floor = Floor { holds, allowance: bytes };
+                let beside = request.beside_the_line();
+                let leaves = one_reader_leaves(bytes, uncarved, worker_memory, drawn).max(room);
+                let floor =
+                    Floor { holds: leaves.saturating_sub(beside), beside, allowance: bytes };
                 let ledger = Ledger::limited(room, floor, Terms::of(parallelism, worker_memory));
                 ledger.draw_statistics(held);
                 ledger
@@ -322,9 +355,8 @@ pub fn arrangement_of(parallelism: Parallelism) -> Arrangement {
 /// estimate — or the margin's ceiling where that is higher, as the ledger
 /// lends under it below their crossing, less what others drew and the budget
 /// one reader of a source recommending `memory` is carved
-/// ([`Parallelism::fit`]). What is held beside the arrangements — a cache's
-/// statistics, a session's pool — does not come off it, as it does not off
-/// the cap.
+/// ([`Parallelism::fit`]). What stays beside the line comes off it after
+/// ([`Arrangement::resolve`]).
 fn one_reader_leaves(
     allowance: u64,
     uncarved: bool,

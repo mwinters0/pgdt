@@ -7,7 +7,8 @@ use pgdt_io::{Allowance, Arrangement, ArrangementRequest};
 /// one moves it, a charge retained or released included.
 #[test]
 fn the_account_draws_its_total_on_its_ledger() {
-    let request = ArrangementRequest { held: 300, ..ArrangementRequest::recommended(1, None) };
+    let request =
+        ArrangementRequest { statistics: 300, ..ArrangementRequest::recommended(1, None) };
     let arrangement = Arrangement::resolve(&Allowance::Stated(1 << 30), request);
     let ledger = arrangement.ledger();
     assert_eq!(ledger.statistics(), 300, "the draw opens at what is held");

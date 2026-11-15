@@ -38,6 +38,26 @@ fn joined(batches: &[RecordBatch]) -> RecordBatch {
     concat_batches(&batches[0].schema(), batches).unwrap()
 }
 
+/// One reader stated under a gibibyte, `statistics` bytes of it kept beside
+/// the line ([`ArrangementRequest::statistics`]) and other scans having drawn
+/// enough of the rest: **a ledger refusing a line past `holds` bytes**, its
+/// floor naming the statistics as what came off it
+/// (`docs/design/decisions.md`, "D161").
+fn beside_the_line(holds: u64, statistics: u64) -> Arrangement {
+    let allowance = Allowance::Stated(1 << 30);
+    let stated = ArrangementRequest {
+        jobs: Jobs::Stated(1),
+        statistics,
+        ..ArrangementRequest::recommended(1, None)
+    };
+    let alone = Arrangement::resolve(&allowance, stated).ledger().floor().unwrap().holds;
+    let drawn = alone - holds;
+    let arrangement = Arrangement::resolve(&allowance, ArrangementRequest { drawn, ..stated });
+    let floor = arrangement.ledger().floor().unwrap();
+    assert_eq!((floor.holds, floor.beside), (holds, statistics));
+    arrangement
+}
+
 /// How long a drive may take before it is called stalled.
 const STALLED: Duration = Duration::from_secs(60);
 
@@ -254,8 +274,9 @@ async fn a_read_over_mapped_blocks_carves_its_longest_line() {
 /// reads a byte** (`docs/design/decisions.md`, "D161"): at a floor of its
 /// charge the plan reads every row, the line admitted alone though the
 /// ledger has no room; a byte under it, the plan is refused, naming that
-/// line's start, the bytes it needs and the allowance — whatever the
-/// worker count, and never for a read holding no field of it.
+/// line's start, the bytes it needs and the allowance, and what statistics
+/// kept beside the line took off the floor — whatever the worker count, and
+/// never for a read holding no field of it.
 #[tokio::test]
 async fn a_read_whose_longest_line_passes_the_floor_is_refused_before_it_reads() {
     let text = "x".repeat(16 << 10);
@@ -271,13 +292,26 @@ async fn a_read_whose_longest_line_passes_the_floor_is_refused_before_it_reads()
 
     let under = pgdt_fixtures::floored(charge - 1);
     let refused = table.plan(reads(CHUNK), every.clone(), &under).map(|_| ()).unwrap_err();
-    let pgdt_core::Error::LineOutgrowsMemory { offset, needs, holds, allowance } = refused else {
+    let pgdt_core::Error::LineOutgrowsMemory { offset, needs, holds, beside, allowance } = refused
+    else {
         panic!("not refused for memory: {refused}");
     };
     let before = "CREATE TABLE public.t (\n    a integer,\n    b text\n);\n\n\
                   COPY public.t (a, b) FROM stdin;\n1\tshort\n";
     assert_eq!(offset, before.len() as u64, "the long line's start");
-    assert_eq!((needs, holds, allowance), (charge, charge - 1, 1 << 30));
+    assert_eq!((needs, holds, beside, allowance), (charge, charge - 1, 0, 1 << 30));
+
+    // What the run keeps beside the line comes off the floor, and the
+    // refusal names it: the same floor, reached with statistics held.
+    let statistics = 4 << 20;
+    let kept = beside_the_line(charge - 1, statistics);
+    let refused = table.plan(reads(CHUNK), every.clone(), &kept).map(|_| ()).unwrap_err();
+    let message = refused.to_string();
+    let pgdt_core::Error::LineOutgrowsMemory { holds, beside, .. } = refused else {
+        panic!("not refused for memory: {refused}");
+    };
+    assert_eq!((holds, beside), (charge - 1, statistics));
+    assert!(message.contains(&format!("the {statistics} byte(s) of statistics")), "{message}");
 
     // A streamed row draws at most two chunks, once, before its carry
     // streams it (`ChunkCarry::charge_absorbing`).

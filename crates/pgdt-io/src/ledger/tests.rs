@@ -40,7 +40,11 @@ impl Woken {
 
 /// A ledger of `capacity` bytes whose floor refuses no line.
 fn limited(capacity: u64) -> Ledger {
-    Ledger::limited(capacity, Floor { holds: u64::MAX, allowance: u64::MAX }, Terms::default())
+    Ledger::limited(
+        capacity,
+        Floor { holds: u64::MAX, beside: 0, allowance: u64::MAX },
+        Terms::default(),
+    )
 }
 
 /// `holder`'s draw of `charge` for the line at `start`, met without waiting.
@@ -251,7 +255,7 @@ fn the_earliest_line_is_admitted_past_the_capacity_alone() {
 /// waiting behind it is woken; a charge at the floor is admitted alone.
 #[test]
 fn a_charge_past_the_floor_is_refused_and_returns_what_it_held() {
-    let floor = Floor { holds: 40, allowance: 1000 };
+    let floor = Floor { holds: 40, beside: 0, allowance: 1000 };
     let ledger = Ledger::limited(10, floor, Terms::default());
     assert_eq!(ledger.floor(), Some(floor));
     let mut alone = ledger.holder();
@@ -387,7 +391,7 @@ async fn concurrent_readers_all_finish() {
 /// giving back 100 bytes parked: `[0, 100, 200]` by how many park.
 fn parking(capacity: u64) -> Ledger {
     let terms = Terms::of(Parallelism::workers(3, 300), Some(WorkerMemory::per_worker(100)));
-    Ledger::limited(capacity, Floor { holds: u64::MAX, allowance: u64::MAX }, terms)
+    Ledger::limited(capacity, Floor { holds: u64::MAX, beside: 0, allowance: u64::MAX }, terms)
 }
 
 /// **What parking gives back is the carve's fall**: each reader's term
@@ -530,7 +534,8 @@ fn a_line_alone_parks_no_reader_whose_parking_gives_nothing_back() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_parking_readers_all_finish() {
     let terms = Terms::of(Parallelism::workers(8, 400), Some(WorkerMemory::per_worker(50)));
-    let ledger = Ledger::limited(100, Floor { holds: u64::MAX, allowance: u64::MAX }, terms);
+    let ledger =
+        Ledger::limited(100, Floor { holds: u64::MAX, beside: 0, allowance: u64::MAX }, terms);
     let source = Arc::new(crate::test_support::ParkCounting::default());
     let readers = (0..8u64).map(|reader| {
         let (mut holder, source) = (ledger.holder(), Arc::clone(&source));

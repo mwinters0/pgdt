@@ -184,7 +184,7 @@ fn a_holding_lowers_the_count_and_then_the_budget() {
     let holding = |allowance: &Allowance, memory, held| {
         Arrangement::resolve(
             allowance,
-            ArrangementRequest { held, ..ArrangementRequest::recommended(24, memory) },
+            ArrangementRequest { statistics: held, ..ArrangementRequest::recommended(24, memory) },
         )
     };
     assert_eq!(holding(&limit, reader, 0).parallelism().jobs(), 9);
@@ -217,7 +217,7 @@ fn a_holding_lowers_the_count_and_then_the_budget() {
 fn an_estimate_is_a_cap_unless_carved() {
     let reader = Some(WorkerMemory::per_worker(READER));
     let half = Allowance::HalfAvailable(1 << 30);
-    let request = ArrangementRequest { held: 4 * READER, ..lowered_request(reader) };
+    let request = ArrangementRequest { statistics: 4 * READER, ..lowered_request(reader) };
     let capped = Arrangement::resolve(&half, request);
     assert_eq!(capped.parallelism(), Parallelism::workers(17, 17 * READER));
 
@@ -228,7 +228,7 @@ fn an_estimate_is_a_cap_unless_carved() {
     );
 
     let small = Some(WorkerMemory::per_worker(16 << 20));
-    let shared = ArrangementRequest { drawn: 1 << 30, held: 1 << 30, ..lowered_request(small) };
+    let shared = ArrangementRequest { drawn: 1 << 30, granted: 1 << 30, ..lowered_request(small) };
     let blind = Arrangement::resolve(&Allowance::NoneFound, shared);
     assert_eq!(blind.parallelism(), Parallelism::workers(4, DEFAULT_MEMORY_BUDGET));
     assert_eq!(blind.statistics_allowance(), None, "nothing found declines nothing");
@@ -240,7 +240,7 @@ fn an_estimate_is_a_cap_unless_carved() {
 
     // Carved, what is drawn comes off it, and what is held does not.
     let drawn = 16 << 20;
-    let carved = ArrangementRequest { carve_estimate: true, drawn, held: 1 << 30, ..shared };
+    let carved = ArrangementRequest { carve_estimate: true, drawn, granted: 1 << 30, ..shared };
     let rest = Arrangement::resolve(&Allowance::NoneFound, carved);
     assert_eq!(rest.parallelism(), Parallelism::workers(3, DEFAULT_MEMORY_BUDGET - drawn));
     let spent = ArrangementRequest { drawn: DEFAULT_MEMORY_BUDGET, ..carved };
@@ -292,7 +292,8 @@ fn the_ledger_is_what_the_ceiling_leaves_the_readers() {
     assert_eq!(alone.statistics_allowance(), alone.ledger().capacity());
 
     // What is held lowers the count, and the statistics' draw holds it.
-    let request = ArrangementRequest { held: GIB, ..ArrangementRequest::recommended(24, memory) };
+    let request =
+        ArrangementRequest { statistics: GIB, ..ArrangementRequest::recommended(24, memory) };
     let holding = Arrangement::resolve(&allowance, request);
     assert_eq!(holding.parallelism(), Parallelism::workers(6, 6 * GIB));
     let capacity = margin_room(10 * GIB, 6 * GIB);
@@ -308,7 +309,7 @@ fn the_ledger_is_what_the_ceiling_leaves_the_readers() {
     // An estimate's pools ignore what is held, and its ledger is carved
     // under the ceiling all the same, carved or not.
     let reader = Some(WorkerMemory::per_worker(READER));
-    let request = ArrangementRequest { held: 4 * READER, ..lowered_request(reader) };
+    let request = ArrangementRequest { statistics: 4 * READER, ..lowered_request(reader) };
     let estimate = Arrangement::resolve(&Allowance::HalfAvailable(8 * GIB), request);
     assert_eq!(estimate.parallelism(), Parallelism::workers(24, 24 * READER));
     assert_eq!(estimate.ledger().capacity(), Some(margin_room(8 * GIB, 24 * READER)));
@@ -319,7 +320,8 @@ fn the_ledger_is_what_the_ceiling_leaves_the_readers() {
     assert_eq!(carved.ledger().capacity(), Some(margin_room(8 * GIB, budget)));
 
     for carve_estimate in [false, true] {
-        let request = ArrangementRequest { carve_estimate, held: GIB, ..lowered_request(reader) };
+        let request =
+            ArrangementRequest { carve_estimate, statistics: GIB, ..lowered_request(reader) };
         let blind = Arrangement::resolve(&Allowance::NoneFound, request);
         assert_eq!(blind.ledger().capacity(), None, "nothing found carves no limit");
         assert_eq!(blind.ledger().drawn(), 0);
@@ -368,8 +370,8 @@ fn a_line_charge_is_carved_into_the_ledger_off_the_ceiling() {
 /// **The floor is what the allowance leaves one reader, whatever the count**
 /// (`docs/design/decisions.md`, "D161"): the cap less one reader's budget
 /// above the crossover, the margin's ceiling less it below, what others drew
-/// off both and what is held off neither; an uncarved estimate's cap is the
-/// whole estimate; and nothing found, no floor.
+/// off both; an uncarved estimate's cap is the whole estimate; and nothing
+/// found, no floor. What stays beside the line is the next test's.
 #[test]
 fn the_floor_is_what_the_allowance_leaves_one_reader() {
     const GIB: u64 = 1 << 30;
@@ -381,10 +383,9 @@ fn the_floor_is_what_the_allowance_leaves_one_reader() {
     let cap = 10 * GIB - MEMORY_RESERVE;
     for jobs in [1, 4, 24] {
         let at = floor(ArrangementRequest::recommended(jobs, memory));
-        assert_eq!(at, Floor { holds: cap - GIB, allowance: 10 * GIB }, "at {jobs} reader(s)");
+        let expected = Floor { holds: cap - GIB, beside: 0, allowance: 10 * GIB };
+        assert_eq!(at, expected, "at {jobs} reader(s)");
     }
-    let held = floor(ArrangementRequest { held: 3 * GIB, ..lowered_request(memory) });
-    assert_eq!(held.holds, cap - GIB, "a holding is none of the cap's");
     let drawn = floor(ArrangementRequest { drawn: 3 * GIB, ..lowered_request(memory) });
     assert_eq!(drawn.holds, cap - 3 * GIB - GIB);
     // A source recommending nothing is one reader at the default budget.
@@ -403,6 +404,50 @@ fn the_floor_is_what_the_allowance_leaves_one_reader() {
     assert_eq!(estimate.ledger().floor().unwrap().holds, GIB - READER);
     let blind = Arrangement::resolve(&Allowance::NoneFound, request);
     assert_eq!(blind.ledger().floor(), None, "nothing found refuses nothing");
+}
+
+/// **The floor takes off what stays beside the line as the run is carved**
+/// (`docs/design/decisions.md`, "D161"): the statistics the run keeps and
+/// other live scans' line charges come off what one reader is left, at any
+/// count, an uncarved estimate's included, and `Floor::beside` names them; a
+/// session pool's grant does not, though all three lower the count and open
+/// the statistics' draw alike. No line the ledger lends room for is refused.
+#[test]
+fn the_floor_takes_off_what_stays_beside_the_line() {
+    const GIB: u64 = 1 << 30;
+    let memory = Some(WorkerMemory::per_worker(GIB));
+    let allowance = Allowance::Stated(10 * GIB);
+    let resolve = |request| Arrangement::resolve(&allowance, request);
+    let bare = resolve(lowered_request(memory)).ledger().floor().unwrap();
+
+    let (statistics, lines, granted) = (GIB, 512 << 20, 2 * GIB);
+    for request in [
+        ArrangementRequest { statistics, lines, ..lowered_request(memory) },
+        ArrangementRequest { statistics, lines, granted, ..lowered_request(memory) },
+        ArrangementRequest { jobs: Jobs::Stated(24), statistics, lines, ..lowered_request(memory) },
+    ] {
+        let arrangement = resolve(request);
+        let ledger = arrangement.ledger();
+        let floor = ledger.floor().unwrap();
+        let beside = statistics + lines;
+        let expected = Floor { holds: bare.holds - beside, beside, allowance: 10 * GIB };
+        assert_eq!(floor, expected, "{request:?}");
+        assert_eq!(ledger.statistics(), request.held(), "the draw opens at all three");
+        let lends = ledger.capacity().unwrap() - ledger.statistics();
+        assert!(lends <= floor.holds, "the floor never under what the room lends a line");
+    }
+    let granted = resolve(ArrangementRequest { granted, ..lowered_request(memory) });
+    assert_eq!(granted.ledger().floor().unwrap(), bare, "a grant is no holding");
+    let fewer = resolve(lowered_request(memory)).parallelism().jobs() - 2;
+    assert_eq!(granted.parallelism().jobs(), fewer, "though it lowers the count");
+
+    // An uncarved estimate's floor takes them off its whole cap.
+    let reader = Some(WorkerMemory::per_worker(READER));
+    let half = Allowance::HalfAvailable(GIB);
+    let request =
+        ArrangementRequest { statistics: READER, lines: READER, ..lowered_request(reader) };
+    let estimate = Arrangement::resolve(&half, request).ledger().floor().unwrap();
+    assert_eq!(estimate, Floor { holds: GIB - 3 * READER, beside: 2 * READER, allowance: GIB });
 }
 
 /// **Every clone of an arrangement shares its ledger**: one run's.

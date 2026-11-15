@@ -271,8 +271,10 @@ comes off it, as does what each attached dump's cache holds in memory and
 the longest line each running query keeps room for, so the scans never count
 on memory already spoken for. `SET pgdump.memory` states
 the allowance instead ([below](#scan-settings)). A query whose longest line
-one reader could not hold under that allowance is refused before it reads,
-naming where the line starts and the bytes it needs.
+one reader could not hold under that allowance — once the attached dumps'
+statistics and the longest lines of the queries still running are set
+aside, though not the `--memory-limit` — is refused before it reads, naming
+where the line starts, the bytes it needs and what was set aside.
 
 ## Scan settings
 

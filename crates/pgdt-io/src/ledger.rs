@@ -76,12 +76,16 @@ struct Limits {
 
 /// **The most one line may hold**: what the allowance leaves one reader,
 /// whatever the worker count — the floor a pass's readers are parked down to
-/// before its earliest line is refused — and the allowance that was carved
-/// from, which a refusal names (`docs/design/decisions.md`, "D161").
+/// before its earliest line is refused — once what stays beside the line is
+/// off it, and the allowance that was carved from, both of which a refusal
+/// names (`docs/design/decisions.md`, "D161").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Floor {
     /// The bytes one line may hold at most.
     pub holds: u64,
+    /// The bytes that came off it as staying beside the line: the statistics
+    /// the run keeps and other live scans' line charges.
+    pub beside: u64,
     /// The resident allowance the floor was carved from, in bytes.
     pub allowance: u64,
 }
@@ -94,6 +98,7 @@ impl Floor {
             offset,
             needs,
             holds: self.holds,
+            beside: self.beside,
             allowance: self.allowance,
         }
     }

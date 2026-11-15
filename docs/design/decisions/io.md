@@ -61,12 +61,13 @@ Rejected: a kept run's own longest, unbounded by a block's record; asking a dyna
 
 ### D161 A line one reader cannot hold is refused at the floor, whatever the count, a mapped read before its first byte
 `Arrangement::resolve` gives a limited ledger a `Floor`: the cap, or the margin's ceiling where higher, less what others
-drew and one reader's budget, never under the room. A draw past it is refused wherever its line lies
-(`LineOutgrowsMemory`), and `TablePartitions::new` holds the longest line's charge against it. Why: parked down to one
-reader, that is all a line can have, at any `--jobs`. Rejected: the room at the resolved count, refusing at `--jobs 24`
-what `--jobs 1` reads; `held` off it, a session's pool grant refusing every long line; the cap alone, refusing below the
-crossover a line the ledger lends; refusing only the earliest, a later line waiting on room no line gives. Code:
-`one_reader_leaves`, `ledger.rs`. Evidence: `ledger/tests.rs`, `tests/ledger.rs`.
+drew and one reader's budget, never under the room, less the statistics and other scans' line charges carved beside it,
+an estimate's too. A draw past it is refused wherever its line lies (`LineOutgrowsMemory`, naming those), and
+`TablePartitions::new` holds the longest line against it. Why: parked down to one reader, that is all a line can have,
+at any `--jobs`; a holding ignored is an OOM kill. Rejected: the room at the resolved count; a pool's grant, which may
+pass the allowance; all a parse's statistics may hold; their yielding to a line, or their draw, by timing; the
+cap alone, refusing a line the ledger lends; refusing only the earliest. Code: `one_reader_leaves`. Evidence:
+`arrangement/tests.rs`, `tests/ledger.rs`.
 
 ### D162 A parked reader's pool share is given back as it parks; the budget and the arm stand
 A reader parks holding no read (`ParkedReader`, `hint_parked`), and its source sizes its pools for the readers still

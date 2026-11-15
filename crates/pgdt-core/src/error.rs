@@ -56,11 +56,14 @@ pub enum Error {
     /// reader's draw on its run's ledger, `offset` where what it holds of
     /// the line begins — the line, or the field of a streamed row it holds
     /// whole — and by a read over mapped blocks before it reads a byte,
-    /// `offset` the start of the longest line its blocks hold.
+    /// `offset` the start of the longest line its blocks hold. `beside` is
+    /// what came off `holds` as staying beside the line: the statistics the
+    /// run keeps and other live scans' line charges.
     #[error(
-        "the line at offset {offset} needs {needs} byte(s) held, and one reader is left {holds} of an allowance of {allowance} resident byte(s) — read it under a larger allowance"
+        "the line at offset {offset} needs {needs} byte(s) held, and one reader is left {holds} of an allowance of {allowance} resident byte(s){} — read it under a larger allowance",
+        held_beside(*.beside)
     )]
-    LineOutgrowsMemory { offset: u64, needs: u64, holds: u64, allowance: u64 },
+    LineOutgrowsMemory { offset: u64, needs: u64, holds: u64, beside: u64, allowance: u64 },
     #[error("scan cancelled at byte {scanned_through}")]
     ScanCancelled { scanned_through: u64 },
     #[error("value is not valid UTF-8 (valid up to byte {valid_up_to})")]
@@ -530,6 +533,17 @@ fn unlisted_labels(unlisted: usize) -> String {
     match unlisted {
         0 => String::new(),
         n => format!(", and {n} more, which the type's declaration lists"),
+    }
+}
+
+/// [`Error::LineOutgrowsMemory`]'s clause naming what came off one reader's
+/// share as staying beside the line, where anything did.
+fn held_beside(beside: u64) -> String {
+    match beside {
+        0 => String::new(),
+        n => format!(
+            ", once the {n} byte(s) of statistics and other scans' lines held beside it come off"
+        ),
     }
 }
 

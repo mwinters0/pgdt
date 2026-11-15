@@ -43,7 +43,9 @@ use pgdt_io::{Allowance, Arrangement, ArrangementRequest, Jobs, WorkerMemory};
 /// first, and whatever of them the ceiling's room cannot absorb at that count
 /// comes off its budget — a plain dump's scan, or one reader, whose count
 /// cannot fall, still leaves the margin, or where one reader alone overruns it,
-/// overruns it no further. *Rejected: taking them off the
+/// overruns it no further. The statistics and the line charges come off what
+/// a scan's ledger leaves one reader too, the pool's grant never
+/// (`docs/design/decisions.md`, "D161"). *Rejected: taking them off the
 /// allowance the margin is a fraction of*: the container's limit is still the
 /// whole allowance, and a margin taken of less would let the predicted
 /// resident leave less than `pgdt_io`'s margin percentage of the
@@ -191,7 +193,9 @@ impl ScanBudget {
             jobs: Jobs::Recommended(jobs),
             worker_memory: memory,
             drawn: held.scans,
-            held: held.maps.saturating_add(pool).saturating_add(held.lines),
+            statistics: held.maps,
+            granted: pool,
+            lines: held.lines,
             carve_estimate: true,
             line_charge,
         };
@@ -503,6 +507,31 @@ mod tests {
         drop((first, second));
         let alone = budget.draw(24, memory, pool, None, second_line);
         assert_eq!(alone.account().lines, 0, "a dropped scan's line is returned");
+    }
+
+    /// **A scan's floor takes off the resident statistics and the live scans'
+    /// line charges, never the pool's grant** (`docs/design/decisions.md`,
+    /// "D161"): each comes off what one reader is left by exactly its bytes,
+    /// named as what stays beside the line, while a pool's limit, though it
+    /// lowers the count as they do, leaves the floor where it was.
+    #[test]
+    fn a_draw_s_floor_takes_off_what_stays_beside_its_line() {
+        let memory = Some(WorkerMemory::per_worker(256 << 20));
+        let allowance = 10u64 << 30;
+        let floor = |draw: &Draw| draw.arrangement().ledger().floor().unwrap();
+        let bare = floor(&Arc::new(ScanBudget::new(allowance)).draw(8, memory, 0, None, 0));
+
+        let pooled = Arc::new(ScanBudget::new(allowance)).draw(8, memory, 1 << 30, None, 0);
+        assert_eq!(floor(&pooled), bare, "a grant is no holding");
+
+        let (map, line) = (512u64 << 20, 1u64 << 30);
+        let budget = Arc::new(ScanBudget::new(allowance));
+        let _map = budget.hold(map);
+        let first = budget.draw(1, memory, 0, None, line);
+        let first_budget = first.parallelism().memory_bytes().unwrap();
+        let second = budget.draw(8, memory, 1 << 30, None, 0);
+        let expected = bare.holds - first_budget - map - line;
+        assert_eq!((floor(&second).holds, floor(&second).beside), (expected, map + line));
     }
 
     /// A pool stating a `Finite` limit bills that limit; the default,
