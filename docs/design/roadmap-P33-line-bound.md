@@ -302,8 +302,10 @@ cap. What DataFusion does when it concatenates such batches is not the phase's.
 ## The floor is one reader
 
 **A line is refused for memory only when one reader could not hold it**: when
-the allowance's cap less one reader's term, `at(1)`, cannot hold its charge,
-whatever `--jobs` says. The carve fills its cap with readers, leaving the
+the allowance's cap less one reader's term, `at(1)`, and what stays resident
+or reserved beside the line as the run is carved — the statistics it keeps,
+other live scans' longest lines — cannot hold its charge, whatever `--jobs`
+says, under an estimate as under a stated or discovered allowance. The carve fills its cap with readers, leaving the
 ledger little, so when the earliest line cannot be admitted after later holders
 have given theirs up, **the pass parks readers, the latest in the file first**,
 each returning its standing term — its chunk and its share of the pools'
@@ -316,7 +318,13 @@ a ledger without limit, whose draws never wait.
 Rejected: refusing when the carve's leftover and the lines others give up fall
 short, under which a line read at `--jobs 1` is refused at `--jobs 24`; a
 ledger reserved for one line at the bound in every carve, which costs readers
-on every dump holding no long line, where the map's longest line costs nothing.
+on every dump holding no long line, where the map's longest line costs nothing;
+a session memory pool's grant off the floor, a limit on DataFusion's operators
+rather than a holding, which may pass the allowance and would refuse every long
+line; the statistics a mapping pass gathers after the carve off it — all they
+may hold, which takes most of the room off the floor; their yielding to a long
+line, which makes the cache depend on when one was held; or what they hold at
+the draw, which makes a refusal depend on timing.
 
 ## Where it lives
 
@@ -356,7 +364,8 @@ edge, pgdt-dump depending on pgdt-io already.
   pgdt-query's builders a crate away.
 - **The refusals** — pgdt-core's `error.rs`: `LineTooLong` loses its limit and
   names I71's bound; a line outgrowing the allowance is a refusal of its own,
-  naming the line's start, the bytes it needs and the allowance, which
+  naming the line's start, the bytes it needs, the allowance and what stays
+  beside the line off it, which
   `pgdt`'s `refusal.rs` spells with `--memory` as its remedy and the shell's
   `spelling.rs` with `pgdump.memory`.
 

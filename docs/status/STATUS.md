@@ -134,6 +134,7 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [ ] **33.5.1** The pools shrink and regrow: `BufferPool`'s slots and the block cache's retention given back by a reader that parks, and taken again as it resumes
 - [ ] **33.5.2** A parse's readers parked: the forward pass's, the interior's and the back-fill's readers parked latest in the file first, each returning its standing term — its chunk and its share of the pools' retention — until the earliest line fits, resuming as its row is emitted and its draw returned
 - [ ] **33.5.3** A query's readers parked: the replay's sub-streams parked as a parse's readers are, within the polling contract `TablePartitions` states
+- [ ] **33.30** The floor takes off what stays beside the line: `ArrangementRequest` telling a session pool's grant, the statistics the run keeps and other live scans' line charges apart, the line charges still off the margin's ceiling alone for the count (D160), the floor less the statistics and the line charges held as the run is carved, an estimate's included, and never the grant, `LineOutgrowsMemory` naming what came off, as the spec's "The floor is one reader" and "Where it lives" state (D161)
 - [ ] **33.6** The bound: I71's constant on every path, measured exactly; `LineTooLong` naming it; a batch cut before a value would overflow its column's offsets; `--max-line-bytes`, `pgdump.max_line_bytes`, `ReadOptions::max_line_bytes`, their manual section and tests removed; the real-bound test; `KD93` struck
 - [ ] **33.29** The readers off a long field's parse reworked: the rises 33.26's residual placed in M276's datetime readers and in `ResolvedTerm::eval`, the per-row reader test 33.14, 33.14.1 and 33.15 each add — each reworked into a shape as clean or accepted, its pair against its parent (D108, D155)
 - [ ] **33.7** Acceptance: `long-line-resident` re-taken and the charge factors confirmed or re-set, a parse flat in its line length; the two hand runs on the reference dump, a strict parse under a `--memory` below its longest line and a query reading its long field under one below its clusters, as the spec's "How it is shown" states
@@ -167,15 +168,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **The floor leaves out what is `held`** (33.5, D161). A ledger's floor is
-  the cap, or the margin's ceiling where higher, less what other scans drew
-  and one reader's budget; what `ArrangementRequest::held` carries — a
-  cache's resident statistics, a provider's pool grant, other live scans'
-  line charges — does not come off it. Why: a holding comes off the ceiling
-  alone and never the cap (D83, D157), and a session's pool grant may pass
-  its allowance outright, which would refuse every long line it reads.
-  Reconsidering it makes a refusal depend on what a cache's statistics hold
-  and what else the session runs, and refuses every long line where the
-  grant passes the allowance; leaving it, a line at the floor beside those
-  holdings can pass the allowance.
