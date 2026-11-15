@@ -168,18 +168,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A sub-stream asked to park emits its batch first, so where a parked
-  query cuts its batches depends on when the park was asked** (33.5.3,
-  D163). A replay's batch views the chunks its rows were read from (D46), so
-  a sub-stream parking with rows in its batch keeps alive reads its park is
-  credited as giving back (`Terms`; D162's "holding no read"). So one asked
-  flushes and yields what it holds, short of `max_rows`, and parks at its
-  next read. Why: it is the only shape under which the ledger's account of a
-  park is true. Its cost: where a ledger is limited, the source states a
-  worker cost and a line alone passes the room, batch boundaries vary with
-  timing, where D159 refused batches varying with the allowance; no row,
-  order or resume token moves. Reconsidering means parking with the batch
-  held and crediting the park less by the chunks its views pin, a number no
-  carve states, or never asking a sub-stream holding rows, so a line alone
-  is admitted past the room beside its term.

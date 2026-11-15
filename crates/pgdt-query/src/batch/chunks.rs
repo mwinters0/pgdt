@@ -52,6 +52,19 @@ impl SourceChunk {
 /// block index stale ([`Self::invalidate_block_cache`], which the loop calls)
 /// — is Arrow assembly's business, which is why this type lives
 /// beside the builders (`docs/design/decisions.md`, "D68").
+///
+/// Deficiency register: `deficiency: KD171` — a view taken here keeps its
+/// chunk's whole buffer, a read chunk or a decoded block, alive in the batch
+/// it is emitted in for as long as that batch's consumer holds it. The budget
+/// bills a reader its in-flight span or the unit it is decoding
+/// ([`pgdt_io::RetainedUnit`]), never a batch it has emitted, so a consumer
+/// holding batches — `pgdt query`'s merge one a partition (`KD57`), a
+/// DataFusion sort or a join's build side to its end — holds source buffers no
+/// carve states, and DataFusion's pool, where an operator reserves for them,
+/// charges the whole buffers. Closing it means compacting a batch to its
+/// viewed bytes as it is emitted, which `docs/design/decisions.md`, "D46"
+/// refuses at every flush, or billing what a consumer holds. **(c)
+/// unowned**; promoted by a phase taking up query-path memory.
 pub(crate) struct RetainedChunks {
     chunks: VecDeque<SourceChunk>,
 }

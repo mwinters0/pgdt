@@ -24,7 +24,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD170 -->
+rather than being deleted. <!-- deficiency-watermark: KD171 -->
 **`KD1`–`KD167` are allocated, and nothing at or below `KD167` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -596,3 +596,11 @@ than reading as a phase nobody has sliced.
   below that a pass holding none of the row is refused for memory. **(c)
   unowned**; promoted by a run refused so. Detail:
   `crates/pgdt-dump/src/scan/chunked.rs`.
+
+- **KD171** — an emitted batch's views pin each whole read chunk or decoded
+  block they point into while its consumer holds it, which no carve bills: a
+  reader is billed its in-flight span or unit, so `pgdt query`'s merge (`KD57`)
+  or a DataFusion sort or join build holds source buffers beside the budget,
+  DataFusion's pool charging them whole where an operator reserves. **(c)
+  unowned**; promoted by a phase taking up query-path memory. Detail:
+  `crates/pgdt-query/src/batch/chunks.rs`.
