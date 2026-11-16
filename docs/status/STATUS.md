@@ -168,25 +168,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A test states a line bound through a `test-support` field, not a
-  crate-private argument** (33.6, D164). The spec's "How it is shown" has each
-  path take the bound as a crate-private argument no caller outside the crate
-  can reach; but the paths span `pgdt-dump`'s read loop, `pgdt-mapping`'s
-  pieces and `pgdt-query`'s replay, and a crate-private argument cannot be
-  stated by the crates above, whose tests read each path at both edges. So
-  `ReadOptions::line_bound` exists only under `cfg(test)` or `pgdt-dump`'s
-  `test-support`, as the cache's test encodings do; a build without it has
-  `LINE_BOUND` alone. Reconsidering means either accepting that an embedder
-  turning on `test-support` can state a bound, or testing the crates above at
-  the real bound only (the spec's rejected gigabytes per test).
-- **The offset cut is a ceiling on `max_bytes`, unpriced** (33.6, D164). A
-  batch holding an `i32`-offset column flushes once its text reaches
-  `OFFSET_CUT_BYTES`, about half of what Arrow allows, rather than being tested
-  before each row against the room the next value needs, so no per-row code
-  changed and no count pair was taken (D108's trigger is code a row runs). The
-  `max_bytes` test `should_flush` already runs per row now compares, where it
-  found `None`, for a query of a `bytea`, array or enum column with no byte cap —
-  `query --schema-mode typed` over `arrays` among the pair's rows.
-  Reconsidering means a count pair on this change, or the test before each row
-  the spec describes, priced as one.
