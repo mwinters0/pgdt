@@ -13293,7 +13293,9 @@ def run_long_line_resident(session: Session) -> str:
     - a residual at 288 MiB differing from the 32 MiB one by more than a
       32 MiB line, at either count: past a chunk the peak then follows a
       buffer's doubling rather than the line, and a factor read off the
-      power-of-two ladder is a factor of the growth at one phase of it;
+      power-of-two ladder is a factor of the growth at one phase of it. At
+      four it reads how many lines the cut holds at once, which a factor,
+      read at one, never answers: no factor is re-set on a four-reader fire;
     - a residual at the bound larger than a 32 MiB line: the ladder's secant
       does not reach the bound, and what one reader holds there, the floor's
       question, is that row's reading, not a factor times the line;

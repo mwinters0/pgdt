@@ -414,9 +414,8 @@ builder's growth shows; one over a `text[]` of one-byte elements, the stage a
 part's token and unquoted copy hold beside its view; and an ordering filter
 over a `jsonb` object of empty keys, a key factor, each the densest text its
 term is stated over. Each reads its lengths at one reader, what one line holds
-being a term's question, and `int8[]` and `jsonb` read the bound beside them,
-the cell the floor's charge for a factor is otherwise extrapolated to;
-`text[]`'s, its builders doubling, outgrows the figure's container. Each leg's factor is read off its planned
+being a term's question, and each reads the bound beside them, the cell the
+floor's charge for a factor is otherwise extrapolated to. Each leg's factor is read off its planned
 query by the instrument, never restated, and the stated allowance is sized from
 the largest so it never binds on a line. Rejected: a leg for the largest
 factor, which reads the form `int8[]`'s does and a count of Arrow's buffers
@@ -430,10 +429,20 @@ the copies, and re-taken once the ledger lands, confirming the factors or
 re-setting them, and showing a parse flat in its line length. **The
 acceptance is two hand runs on the reference dump**, read with no setting and
 recorded in `runs/` and the day's history entry: a data-level, strict parse
-under a stated `--memory` below its longest line, flat and never slowed for
-memory, its long field a `text` column a parse streams; and a query whose batch reads its long field under a `--memory` below
-what its clusters hold at once, slowed and not refused, the one reading of the
-ledger over a real dump. The
+under a stated `--memory` below its longest line, flat and never waiting on a
+line, holding none, its long field a `text` column a parse streams — below
+that line the reserve leaves the reference dump one reader, so its readers
+and statistics are the allowance's, not the line's; and a query whose batch reads its long field under a `--memory`
+carving two readers or more below what the lines its clusters hold at once
+charge, so its arrangement rather than its timing makes readers wait and give
+up their lines, read as not refused, its peak resident within that `--memory`
+and its rows an unlimited run's, the one reading of the ledger over a real
+dump.
+Rejected: a `--memory` only below what its clusters hold at once, which may
+carve one reader, where nothing waits or parks; a count of waits and parks,
+user surface no user needs, or an `introspect` count the shipped build's run
+cannot read; a park read over a real dump, which only an uncarved estimate
+outside a container's limit makes, the ledger's tests reading parks. The
 dump is machine-local and not ours, so it is never in `measure.py`. Today's
 uncharged outcome to set it against is a whole data-level parse at 24 workers
 under a 12 GiB container limit with the limit raised to 512 MiB, read without

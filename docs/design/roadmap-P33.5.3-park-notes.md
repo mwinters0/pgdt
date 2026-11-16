@@ -29,8 +29,11 @@ parse's reader never meets shape it, both from its batch and its yields.
   DataFusion merge holding an input's batch, that line is admitted past the
   room beside those terms, up to the floor (D161), which is one reader's.
   `TablePartitions`' rustdoc states it as the polling contract's limit.
-  Nothing parks on a plain file (`Terms` is empty there), so 33.7's runs on
-  the reference dump meet none of this.
+  Nothing parks on a plain file (`Terms` is empty there), nor in a query
+  under a carved allowance, whose longest line `Arrangement::resolve` leaves
+  room for (D160), so 33.7's query run over the `.xz` reference dump, stating
+  a `--memory`, meets none of this; a query parks only under an uncarved
+  estimate.
 - **The ledger waits only on readers between a stand and a yield.** A
   sub-stream searching a piece's first row start reads without standing,
   and the re-draw after a cut-before yield draws without standing, so
