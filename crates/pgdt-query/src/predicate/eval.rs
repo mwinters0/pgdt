@@ -54,26 +54,16 @@ impl ResolvedTerm {
         row_offset: u64,
     ) -> Result<Truth> {
         let field = timed!(Part::Locate, split.field(raw_row.bytes(), self.index));
-        let runs = self.runs();
-        let walks = self.walks();
-        let jsonb = self.jsonb();
-        let escaped = runs.is_some() || walks.is_some() || jsonb.is_some();
+        let reader = self.reader();
         let read = match field {
-            Some(f) => timed!(Part::Unescape, read(raw_row, f, escaped))?,
+            Some(f) => timed!(Part::Unescape, read(raw_row, f, reader.reads_escaped()))?,
             None => Read::Missing,
         };
         let value = match &read {
             Read::Text(text) => Some(text.as_ref()),
             Read::Escaped(bytes) => {
-                let truth = match (runs, walks, jsonb) {
-                    (Some(runs), ..) => self.eval_runs(runs, bytes)?,
-                    (None, Some(nested), _) => self.eval_walk(nested, bytes)?,
-                    (None, None, Some(bound)) => self.eval_jsonb(bound, bytes)?,
-                    (None, None, None) => {
-                        unreachable!("a field is left escaped only for a term reading its runs")
-                    }
-                };
-                return truth
+                return self
+                    .eval_escaped(reader, bytes)?
                     .ok_or_else(|| self.field_decode(table, row_offset, printout_head(bytes)));
             }
             Read::Null => {
@@ -105,58 +95,53 @@ impl ResolvedTerm {
         }
     }
 
-    /// What this term reads of a field's unescaped text a run at a time,
-    /// holding no more of it than its bound, or `None` where it reads the
-    /// text otherwise: a nested value, walked ([`Self::walks`]), a `jsonb`
-    /// value by its pairs' positions ([`Self::jsonb`]), and whole a key of
-    /// another kind and a value its type cannot hold tested or read as NULL.
-    fn runs(&self) -> Option<TermRuns<'_>> {
+    /// How this term reads a located field, decided once a row: an escaped
+    /// field a run at a time where the term reads no more of its text than a
+    /// bound, walked where it orders a nested value, by its pairs' positions
+    /// where it orders or equates a `jsonb` value, and otherwise unescaped
+    /// whole — as is every field of a term reading a value its type cannot
+    /// hold, tested or read as NULL.
+    fn reader(&self) -> Reader<'_> {
         if self.unrepresentable.is_some() {
-            return None;
+            return Reader::Whole;
         }
         let Some(compared) = &self.compared else {
-            return self.tested.is_none().then_some(TermRuns::Nothing);
+            return if self.tested.is_none() {
+                Reader::Runs(TermRuns::Nothing)
+            } else {
+                Reader::Whole
+            };
         };
         match &compared.comparison {
-            Comparison::Ordered { kind, bound } => {
-                FieldOrder::new(kind, bound).map(TermRuns::Order)
-            }
+            Comparison::Ordered { kind, bound } => match FieldOrder::new(kind, bound) {
+                Some(order) => Reader::Runs(TermRuns::Order(order)),
+                None if *kind == CompareKind::Jsonb => Reader::Jsonb(bound),
+                None => Reader::Whole,
+            },
             Comparison::Equal(Equality::Canonical(spellings)) => {
-                Some(TermRuns::Spellings(spellings.runs()))
+                Reader::Runs(TermRuns::Spellings(spellings.runs()))
             }
             Comparison::Equal(Equality::Trimmed(bound)) => {
-                Some(TermRuns::Trimmed(BytewiseRuns::trimmed(bound.as_bytes())))
+                Reader::Runs(TermRuns::Trimmed(BytewiseRuns::trimmed(bound.as_bytes())))
             }
-            Comparison::Equal(Equality::Decoded { .. }) | Comparison::Nested(_) => None,
+            Comparison::Equal(Equality::Decoded { kind: CompareKind::Jsonb, bound }) => {
+                Reader::Jsonb(bound)
+            }
+            Comparison::Equal(Equality::Decoded { .. }) => Reader::Whole,
+            Comparison::Nested(nested) => Reader::Walk(nested),
         }
     }
 
-    /// The nested comparison this term orders a field by as the output
-    /// grammars' walk reads it, off an escaped field's bytes, or `None`:
-    /// a value its type cannot hold, tested or read as NULL, is read whole.
-    fn walks(&self) -> Option<&NestedComparison> {
-        if self.unrepresentable.is_some() {
-            return None;
-        }
-        match &self.compared.as_ref()?.comparison {
-            Comparison::Nested(nested) => Some(nested),
-            _ => None,
-        }
-    }
-
-    /// The `jsonb` key this term orders or equates a field against by its
-    /// pairs' positions, off an escaped field's bytes, or `None`: a value
-    /// its type cannot hold, tested or read as NULL, is read whole.
-    fn jsonb(&self) -> Option<&OrderKey> {
-        if self.unrepresentable.is_some() {
-            return None;
-        }
-        match &self.compared.as_ref()?.comparison {
-            Comparison::Ordered { kind: CompareKind::Jsonb, bound }
-            | Comparison::Equal(Equality::Decoded { kind: CompareKind::Jsonb, bound }) => {
-                Some(bound)
-            }
-            _ => None,
+    /// This term's answer for an escaped field, `bytes` as `COPY` wrote
+    /// them, read off them as `reader` reads it: [`Self::eval_value`]'s over
+    /// its text, and the error unescaping it raises where that text is not
+    /// UTF-8.
+    fn eval_escaped(&self, reader: Reader<'_>, bytes: &[u8]) -> Result<Option<Truth>> {
+        match reader {
+            Reader::Runs(runs) => self.eval_runs(runs, bytes),
+            Reader::Walk(nested) => self.eval_walk(nested, bytes),
+            Reader::Jsonb(bound) => self.eval_jsonb(bound, bytes),
+            Reader::Whole => unreachable!("a field is left escaped only for a term reading it so"),
         }
     }
 
@@ -348,19 +333,11 @@ impl ResolvedTerm {
     /// evaluation reaches it (`docs/design/decisions.md`, "D54").
     pub(crate) fn is_false(&self, raw_row: RawRow<'_>, split: &mut RowSplit) -> bool {
         let Some(field) = split.field(raw_row.bytes(), self.index) else { return false };
-        let runs = self.runs();
-        let walks = self.walks();
-        let jsonb = self.jsonb();
-        match read(raw_row, field, runs.is_some() || walks.is_some() || jsonb.is_some()) {
+        let reader = self.reader();
+        match read(raw_row, field, reader.reads_escaped()) {
             Ok(Read::Text(value)) => self.eval_value(Some(&value)) == Some(Truth::False),
             Ok(Read::Escaped(bytes)) => {
-                let truth = match (runs, walks, jsonb) {
-                    (Some(runs), ..) => self.eval_runs(runs, bytes),
-                    (None, Some(nested), _) => self.eval_walk(nested, bytes),
-                    (None, None, Some(bound)) => self.eval_jsonb(bound, bytes),
-                    (None, None, None) => return false,
-                };
-                matches!(truth, Ok(Some(Truth::False)))
+                matches!(self.eval_escaped(reader, bytes), Ok(Some(Truth::False)))
             }
             Ok(Read::Null | Read::Missing) | Err(_) => false,
         }
@@ -739,8 +716,27 @@ fn unescape_runs(bytes: &[u8], mut run: impl FnMut(&[u8])) {
     unescape.finish(&mut run);
 }
 
-/// What a term reads of a field's unescaped text a run at a time
-/// ([`ResolvedTerm::runs`]).
+/// How a term reads a located field ([`ResolvedTerm::reader`]).
+enum Reader<'t> {
+    /// Unescaped whole.
+    Whole,
+    /// Its unescaped text a run at a time, holding no more of it than the
+    /// term's bound.
+    Runs(TermRuns<'t>),
+    /// A nested value, as the output grammars' walk reads it.
+    Walk(&'t NestedComparison),
+    /// A `jsonb` value, by its pairs' positions, against this key.
+    Jsonb(&'t OrderKey),
+}
+
+impl Reader<'_> {
+    /// Whether an escaped field is left as `COPY` wrote it for this reader.
+    fn reads_escaped(&self) -> bool {
+        !matches!(self, Self::Whole)
+    }
+}
+
+/// What a term reads of a field's unescaped text a run at a time.
 enum TermRuns<'t> {
     /// A NULL test reading no text.
     Nothing,
