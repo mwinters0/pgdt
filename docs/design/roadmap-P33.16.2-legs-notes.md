@@ -19,10 +19,9 @@ read, no leg was refused or killed, and every answer was the input's rows.
   `int8array`, a `bigint[]` of single digits, and `textarray`, a `text[]` of
   one-letter elements, each read by the provider's query; `jsonb`, an object
   of empty keys, read by `pgdt query`'s ordering filter `v>{}` projecting
-  `id`. Each reads at one partition alone, and `int8array` and `jsonb` the
-  bound beside their ladder, in a second sweep with its 512 MiB anchor as
-  every other kind does; `textarray` reads the ladder alone
-  (`LONG_LINE_LADDER_ONLY`).
+  `id`. Each reads at one partition alone, and the bound beside its ladder,
+  in a second sweep with its 512 MiB anchor as every other kind does
+  (`textarray` since 33.7).
 - **Each kind's factor is read before any timed leg**: one instrument leg a
   kind with a query or filter pass (`LONG_FACTOR_FAMILY`), over its 32 MiB
   input on the introspection build, refused where its reports name no factor

@@ -1817,26 +1817,17 @@ LONG_LINE_CLUSTER = 4
 #: the one pass holding that term (`long_line_passes`), at one partition alone
 #: (`long_line_jobs`): **what one line holds is the term's question**, four
 #: partitions answering only how many lines the cut holds at once, which the
-#: other kinds' columns read. Each reads the bound beside its ladder but those
-#: of `LONG_LINE_LADDER_ONLY`.
+#: other kinds' columns read. Each reads the bound beside its ladder, as every
+#: kind does.
 LONG_LINE_TERM_KINDS: tuple[str, ...] = ("int8array", "textarray", "jsonb")
-#: The term kinds read along the ladder alone, no line at the bound: a
-#: `text[]` line's decode there, its builders doubling, passes
-#: `LONG_LINE_MEMORY`, the figure's one ceiling (`roadmap-P33-line-bound.md`,
-#: "How it is shown").
-LONG_LINE_LADDER_ONLY: tuple[str, ...] = ("textarray",)
 
 
 def long_line_lengths(kind: str) -> tuple[str, ...]:
-    """The tokens of `LONG_LINE_LENGTHS` `kind`'s lines are generated at: every
-    one, or the ladder alone for a kind of `LONG_LINE_LADDER_ONLY`."""
+    """The tokens of `LONG_LINE_LENGTHS` `kind`'s lines are generated at:
+    every one, the same for every kind."""
     if kind not in long_lines.KINDS:
         raise ValueError(f"{kind!r} is no value kind of long-line-resident")
-    return tuple(
-        length
-        for length, _ in LONG_LINE_LENGTHS
-        if kind not in LONG_LINE_LADDER_ONLY or length not in LONG_LINE_SERIAL_ONLY
-    )
+    return tuple(length for length, _ in LONG_LINE_LENGTHS)
 
 
 def long_line_bytes(length: str) -> int:
@@ -13114,11 +13105,10 @@ def long_line_answer(name: str) -> int:
     return long_lines.row_count(LONG_LINE_CLUSTER)
 
 
-def long_line_groups(kind: str) -> tuple[tuple[str, ...], ...]:
+def long_line_groups(kind: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """`kind`'s sweeps, as the lengths' tokens: every length but the bound,
-    which the secant and its residuals subtract; then, but for a kind of
-    `LONG_LINE_LADDER_ONLY`, which reads no line at the bound, the lengths
-    read at one worker alone beside the secant's longer end, their anchor.
+    which the secant and its residuals subtract; then the lengths read at one
+    worker alone beside the secant's longer end, their anchor.
 
     **Two sweeps because the bound's cluster outgrows the tmpfs room beside
     the ladder** (`warm_bound`): an anchor of the secant's longer end, measured
@@ -13128,8 +13118,6 @@ def long_line_groups(kind: str) -> tuple[tuple[str, ...], ...]:
     ladder = tuple(
         length for length in long_line_lengths(kind) if length not in LONG_LINE_SERIAL_ONLY
     )
-    if kind in LONG_LINE_LADDER_ONLY:
-        return (ladder,)
     return ladder, (LONG_LINE_SECANT[1], *LONG_LINE_SERIAL_ONLY)
 
 
@@ -13377,8 +13365,7 @@ def run_long_line_resident(session: Session) -> str:
     rows = []
     secants = []
     for kind in long_lines.KINDS:
-        groups = long_line_groups(kind)
-        ladder, serial = groups[0], groups[1] if len(groups) > 1 else ()
+        ladder, serial = long_line_groups(kind)
         for length in ladder:
             rows.append(
                 [f"{kind}, {row_name(length)}"]
@@ -13435,7 +13422,7 @@ def run_long_line_resident(session: Session) -> str:
     planned = ", ".join(f"`{kind}` {fmt_factor(f)}" for kind, f in factors.items())
     notes = (
         "\n\nEach cell is peak resident set; a length at the bound is read at one worker or "
-        "partition alone, and a term's kind at one alone, `textarray` along the ladder alone. "
+        "partition alone, and a term's kind at one alone. "
         f"Every input is one table of {long_lines.SHORT_ROWS} short rows, a cluster of {LONG_LINE_CLUSTER} "
         "consecutive rows each a line of the length its row names, terminator included, and "
         f"{long_lines.SHORT_ROWS} short rows (`generate_long_lines.py`): `text` decodes to "
@@ -13452,7 +13439,7 @@ def run_long_line_resident(session: Session) -> str:
         f"`{LONG_LINE_SQL}` at the column's count of partitions, and the ordering filter "
         f"`pgdt query`'s `--filter '{LONG_LINE_FILTER}'` projecting `id`, each over a cache an "
         "untimed `parse` wrote in the same container, its answer held to the input's rows. Each "
-        "kind is two sweeps but `textarray`, one: the lengths read at each count, and the bound "
+        "kind is two sweeps: the lengths read at each count, and the bound "
         f"beside the {hi} MiB input again, its row marked so.\n\n"
         f"**Each planned factor**, read off its plan by the introspection build over the "
         f"{LONG_LINE_FACTOR_LENGTH} MiB input, in its kind's first sweep ahead of every "

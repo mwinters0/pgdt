@@ -6083,15 +6083,15 @@ class LongLineResident(unittest.TestCase):
     def test_the_term_kinds_are_the_generators_last_three(self):
         self.assertEqual(measure.LONG_LINE_TERM_KINDS, self.TERMS)
         self.assertEqual(measure.long_lines.KINDS[-3:], self.TERMS)
-        # `text[]` alone outgrows the container at the bound.
-        self.assertEqual(measure.LONG_LINE_LADDER_ONLY, ("textarray",))
+        # Every kind reads the bound: none along the ladder alone.
+        self.assertFalse(hasattr(measure, "LONG_LINE_LADDER_ONLY"))
 
     def test_an_input_a_kind_and_a_length_each_a_cluster(self):
         fig = measure.SELECTABLE_BY_ID[self.FIGURE]
         lengths = dict(measure.LONG_LINE_LENGTHS)
         self.assertEqual(fig.warm_inputs, measure.LONG_LINE_INPUTS)
-        # Every length of every kind but `textarray`, its ladder alone.
-        self.assertEqual(len(fig.warm_inputs), 5 * len(lengths) + (len(lengths) - 1))
+        # Every length of every kind.
+        self.assertEqual(len(fig.warm_inputs), 6 * len(lengths))
         for kind in measure.long_lines.KINDS:
             for length in measure.long_line_lengths(kind):
                 name = measure.long_line_input(kind, length)
@@ -6109,12 +6109,7 @@ class LongLineResident(unittest.TestCase):
                     measure.long_lines.field_bytes(kind, lengths[length])
         for kind in self.TERMS:
             with self.subTest(kind=kind):
-                if kind == "textarray":
-                    self.assertNotIn("bound", measure.long_line_lengths(kind))
-                    with self.assertRaises(ValueError):
-                        measure.long_line_input(kind, "bound")
-                else:
-                    self.assertIn("bound", measure.long_line_lengths(kind))
+                self.assertIn("bound", measure.long_line_lengths(kind))
 
     def test_the_lengths_are_the_ladder_one_off_it_and_the_bound(self):
         lengths = dict(measure.LONG_LINE_LENGTHS)
@@ -6141,10 +6136,8 @@ class LongLineResident(unittest.TestCase):
         with self.assertRaises(ValueError):
             measure.long_line_input("text", "64")
         # A term's kind reads the bound at one partition, as every kind does.
-        self.assertEqual(measure.long_line_jobs("int8array", "bound"), (1,))
-        self.assertEqual(measure.long_line_jobs("jsonb", "bound"), (1,))
-        with self.assertRaises(ValueError):
-            measure.long_line_jobs("textarray", "bound")
+        for kind in self.TERMS:
+            self.assertEqual(measure.long_line_jobs(kind, "bound"), (1,))
 
     def test_a_term_is_read_by_the_one_pass_holding_it(self):
         for kind in ("text", "escaped", "bytea"):
@@ -6166,9 +6159,10 @@ class LongLineResident(unittest.TestCase):
 
     def test_the_allowance_holds_the_widest_legs_lines_at_their_charge(self):
         mib = 1 << 20
-        # The largest factor's kind, one 512 MiB line at one partition, at
-        # its line and its factor: more than four lines of a parse's at once.
-        widest = (1 + self.FACTORS["textarray"]) * 512 * mib
+        # The largest factor's kind, one line at the bound at one partition,
+        # at its line and its factor: more than four lines of a query's at
+        # once, or its own 512 MiB line.
+        widest = (1 + self.FACTORS["textarray"]) * measure.LONG_LINE_BOUND
         self.assertGreater(widest, 4 * 2 * 512 * mib)
         self.assertEqual(
             measure.long_line_allowance(self.FACTORS),
@@ -6188,10 +6182,10 @@ class LongLineResident(unittest.TestCase):
             measure.stated_allowance(measure.PARALLEL_BUDGET + 4 * 512 * mib),
         )
         # `int8array`'s line at the bound, at its factor, where it binds.
-        bound = self.FACTORS | {"int8array": Fraction(9)}
+        bound = self.FACTORS | {"int8array": Fraction(11)}
         self.assertEqual(
             measure.long_line_allowance(bound),
-            measure.stated_allowance(measure.PARALLEL_BUDGET + 10 * measure.LONG_LINE_BOUND),
+            measure.stated_allowance(measure.PARALLEL_BUDGET + 12 * measure.LONG_LINE_BOUND),
         )
         # A planned kind whose factor was not read is refused.
         with self.assertRaises(ValueError):
@@ -6222,12 +6216,8 @@ class LongLineResident(unittest.TestCase):
                 frozenset((name("128"), name("288"))),
             }
             with self.subTest(kind=kind):
-                self.assertEqual(groups[0], ("32", "128", "288", "512"))
-                if kind == "textarray":
-                    self.assertEqual(len(groups), 1)
-                else:
-                    self.assertEqual(groups[1], ("512", "bound"))
-                    want.add(frozenset((name("512"), name("bound"))))
+                self.assertEqual(groups, (("32", "128", "288", "512"), ("512", "bound")))
+                want.add(frozenset((name("512"), name("bound"))))
                 for group in groups:
                     names = tuple(name(length) for length in group)
                     self.assertIn(names, fig.warm_groups)
@@ -6349,8 +6339,8 @@ class LongLineResident(unittest.TestCase):
         passes = len(("parse", "strict", "query"))
         # A kind of three passes: four lengths at both counts, then the bound
         # and its anchor at one; a term's kind, its one pass at one partition,
-        # four lengths, then the bound and its anchor but for `textarray`.
-        self.assertEqual(len(specs), 3 * passes * (4 * 2 + 2) + 2 * (4 + 2) + 4)
+        # four lengths, then the bound and its anchor.
+        self.assertEqual(len(specs), 3 * passes * (4 * 2 + 2) + 3 * (4 + 2))
         for spec in specs:
             with self.subTest(leg=spec.label):
                 self.assertIn(spec.command, measure.command_shapes())
@@ -6436,7 +6426,7 @@ class LongLineResident(unittest.TestCase):
         with self.assertRaises(ValueError):
             measure.long_line_answer("control")
         with self.assertRaises(ValueError):
-            measure.long_line_answer("long_textarray_bound")
+            measure.long_line_answer("long_textarray_1024")
 
     def test_a_factor_leg_naming_none_or_answering_short_is_refused(self):
         specs = measure._long_factor_specs()
@@ -7887,18 +7877,13 @@ class WarmBound(unittest.TestCase):
                 ),
                 # A kind's lengths at both counts together, its secant and
                 # residuals subtracting them; then the bound beside the
-                # secant's longer end, the tmpfs holding no more, but for
-                # `textarray`, which reads no line at the bound.
+                # secant's longer end, the tmpfs holding no more.
                 "long-line-resident": tuple(
                     group
                     for kind in ("text", "escaped", "bytea", "int8array", "textarray", "jsonb")
                     for group in (
                         tuple(f"long_{kind}_{length}" for length in ("32", "128", "288", "512")),
-                        *(
-                            ((f"long_{kind}_512", f"long_{kind}_bound"),)
-                            if kind != "textarray"
-                            else ()
-                        ),
+                        (f"long_{kind}_512", f"long_{kind}_bound"),
                     )
                 ),
             },
