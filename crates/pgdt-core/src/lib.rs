@@ -35,6 +35,8 @@ pub mod internal {
     #[cfg(feature = "introspect")]
     pub use crate::instrument::factor::factor_planned;
     #[cfg(feature = "introspect")]
+    pub use crate::instrument::lines::line_moment;
+    #[cfg(feature = "introspect")]
     pub use crate::instrument::statistics::statistics_loaded;
     pub use crate::instrument::statistics::{StatisticsScope, statistics_account_updated};
     pub use crate::{row_evaluated, timed};

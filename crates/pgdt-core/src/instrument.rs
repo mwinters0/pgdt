@@ -1,7 +1,7 @@
 //! What the library can tell an instrumented binary about its own work: which
 //! allocations are statistics, how often a read began decoding a block,
-//! where a dynamic filter's row evaluation spends its time, and the factor a
-//! query's plan settled.
+//! where a dynamic filter's row evaluation spends its time, the factor a
+//! query's plan settled, and when a held line's draw is admitted and returned.
 //!
 //! **Off by default and compiled out of every build that does not ask.** The
 //! `introspect` feature turns it on, and only a binary's own `introspect`
@@ -23,6 +23,7 @@
 pub(crate) mod decode;
 pub(crate) mod evaluation;
 pub(crate) mod factor;
+pub(crate) mod lines;
 pub(crate) mod statistics;
 
 pub use evaluation::EvaluationPart;
@@ -30,5 +31,7 @@ pub use evaluation::EvaluationPart;
 pub use evaluation::{EvaluationReading, evaluation_reading};
 #[cfg(feature = "introspect")]
 pub use factor::factor_reading;
+#[cfg(feature = "introspect")]
+pub use lines::{LineEvent, LineMoment, observe_lines};
 #[cfg(feature = "introspect")]
 pub use statistics::{StatisticsReading, allocated, freed, statistics_reading};

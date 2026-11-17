@@ -397,14 +397,14 @@ than reading as a phase nobody has sliced.
   hand-written dump holding one. Detail:
   `crates/pgdt-codec/src/value/float.rs`.
 
-- **KD109** — no instrument attributes the shipped allocator's blocks to call
-  stacks: mimalloc is linked without `override`, so heaptrack and valgrind,
-  which hook `malloc`, see only C's allocations on the default build, and
-  Rust's are attributed only by recording a `system` build, which asks for the
-  same bytes from the same code. **(c) unowned**; the remedy is a
+- **KD109** — no tool records the shipped allocator's heap by call stack:
+  mimalloc is linked without `override`, so heaptrack and valgrind, which hook
+  `malloc`, see only C's allocations on the default build; Rust's are recorded
+  only on a `system` build, which asks for the same bytes from the same code,
+  and the `introspect` build's block tracker names only blocks past a size it
+  is told, at a held line's moments. **(c) unowned**; the remedy is a
   `MI_TRACK_VALGRIND` build of mimalloc run under valgrind, promoted by a
-  question about the shipped heap a `system` recording cannot answer. Detail:
-  `crates/pgdt/src/alloc.rs`.
+  question about the shipped heap neither answers. Detail: `crates/pgdt/src/alloc.rs`.
 
 - **KD111** — at 128 MiB blocks and five block-decoding readers, the program
   holds one block unit more than `WorkerMemory`'s charge bills in two reps of

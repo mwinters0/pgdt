@@ -66,6 +66,10 @@
 //!   beside its line per byte of it, or `none` where no plan held anything
 //!   that grows with its line (`docs/design/decisions.md`, "D154"); absent
 //!   where none was planned.
+//! * **`blocks_*`** — where `PGDT_INTROSPECT_BLOCKS_FROM` states a size: each
+//!   Rust heap block past it, live or freed, whose pages are resident at each
+//!   moment a held line's draw is first admitted or returned, named by the
+//!   stack that allocated it, after glibc's lines (`introspect/blocks.rs`).
 //! * **`evaluation_*`** — where `pgdt sql` ran: what
 //!   `datafusion_cli_pgdump::introspection_section` timed of a dynamic
 //!   filter's row evaluation, under its own `evaluation_scope`, after the
@@ -84,6 +88,9 @@
 //! It is compiled into **both** configurations, so
 //! `cargo test -p pgdt --features introspect` re-runs that assertion under the
 //! counting allocator.
+
+#[cfg(feature = "introspect")]
+mod blocks;
 
 /// The environment variable naming the file [`report`] writes to.
 ///
@@ -127,7 +134,12 @@ pub fn statistics_returned(held: &pgdt_mapping::statistics::StatisticsHeld) {
 
 /// Arm the report. A no-op without the `introspect` feature, where [`report`]
 /// has nothing to write.
+///
+/// Arms the block tracker too, where its variable states a size
+/// (`introspect/blocks.rs`).
 pub fn at_exit(sections: Sections) -> AtExit {
+    #[cfg(feature = "introspect")]
+    blocks::arm(enabled::line_observed);
     AtExit(sections)
 }
 
@@ -187,6 +199,12 @@ mod enabled {
     fn gave_back(bytes: usize) {
         LIVE.fetch_sub(bytes, Ordering::Relaxed);
         pgdt_core::instrument::freed(bytes);
+    }
+
+    /// The block tracker's observer: it reads the heap at `line` beside
+    /// what the counter holds live then.
+    pub(super) fn line_observed(line: pgdt_core::instrument::LineEvent) {
+        super::blocks::observed(line, LIVE.load(Ordering::Relaxed));
     }
 
     /// What [`super::statistics_returned`] recorded: the account and the
@@ -262,6 +280,7 @@ mod enabled {
             let ptr = unsafe { MiMalloc.alloc(layout) };
             if !ptr.is_null() {
                 took(layout.size());
+                super::blocks::allocated(ptr, layout.size());
             }
             ptr
         }
@@ -270,18 +289,25 @@ mod enabled {
             let ptr = unsafe { MiMalloc.alloc_zeroed(layout) };
             if !ptr.is_null() {
                 took(layout.size());
+                super::blocks::allocated(ptr, layout.size());
             }
             ptr
         }
 
         unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
             gave_back(layout.size());
+            // Before the free, so no thread is handed the range first.
+            super::blocks::freed(ptr, layout.size());
             unsafe { MiMalloc.dealloc(ptr, layout) }
         }
 
         unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            // A move frees the old block and a growth in place re-takes it,
+            // which the tracker reads as the freed range cut whole.
+            super::blocks::freed(ptr, layout.size());
             let out = unsafe { MiMalloc.realloc(ptr, layout, new_size) };
             if !out.is_null() {
+                super::blocks::allocated(out, new_size);
                 // Only the difference: a `realloc` that grows a block never
                 // holds both sizes at once from the program's point of view,
                 // so charging the new size and crediting the old would put a
@@ -340,6 +366,7 @@ mod enabled {
         push_mimalloc(&mut out);
         out.push_str("glibc_scope=c-malloc\n");
         push_glibc(&mut out);
+        out.push_str(&super::blocks::section());
         out
     }
 

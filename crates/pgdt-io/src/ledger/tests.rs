@@ -565,3 +565,46 @@ async fn concurrent_parking_readers_all_finish() {
         .unwrap();
     assert_eq!((ledger.drawn(), ledger.parked(), source.parked()), (0, 0, 0));
 }
+
+/// **An instrumented binary hears a line's first admission and its return**,
+/// and nothing of the draws between, each with what the ledger then holds.
+#[cfg(feature = "introspect")]
+#[test]
+fn an_instrumented_binary_hears_a_line_admitted_once_and_returned_once() {
+    use pgdt_core::instrument::{LineEvent, LineMoment, observe_lines};
+    use std::sync::Mutex;
+
+    static HEARD: Mutex<Vec<LineEvent>> = Mutex::new(Vec::new());
+    fn heard(event: LineEvent) {
+        HEARD.lock().unwrap().push(event);
+    }
+    observe_lines(heard);
+    // A start no other test draws for, the observer being the process's.
+    const START: u64 = 0x5133_1000;
+    let ledger = limited(100);
+    let mut holder = ledger.holder();
+    assert_eq!(drawn_now(&mut holder, START, 10), Admission::Held);
+    assert_eq!(drawn_now(&mut holder, START, 20), Admission::Held);
+    holder.release();
+    let mut unlimited = Ledger::unlimited().holder();
+    assert_eq!(drawn_now(&mut unlimited, START + 1, 5), Admission::Held);
+    drop(unlimited);
+
+    let ours: Vec<LineEvent> = HEARD
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|e| e.start == START || e.start == START + 1)
+        .copied()
+        .collect();
+    let event = |moment, start, charge, drawn| LineEvent { moment, start, charge, drawn };
+    assert_eq!(
+        ours,
+        [
+            event(LineMoment::Admitted, START, 10, Some(10)),
+            event(LineMoment::Returned, START, 20, Some(0)),
+            event(LineMoment::Admitted, START + 1, 5, None),
+            event(LineMoment::Returned, START + 1, 5, None),
+        ]
+    );
+}

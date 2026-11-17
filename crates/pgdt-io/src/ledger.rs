@@ -281,6 +281,8 @@ impl Holder {
             self.release();
         }
         self.line = Some(start);
+        #[cfg(feature = "introspect")]
+        let before = self.held;
         let admission = match self.ledger.shared.clone() {
             None => Admission::Held,
             Some(shared) => {
@@ -293,12 +295,39 @@ impl Holder {
             Admission::GiveUp => (self.line, self.held) = (None, 0),
             Admission::Refused(_) => self.release(),
         }
+        // The moments an instrumented binary reads its heap at
+        // (`pgdt_core::instrument::LineMoment`).
+        #[cfg(feature = "introspect")]
+        match admission {
+            Admission::Held if before == 0 => {
+                self.told(pgdt_core::instrument::LineMoment::Admitted, start, charge);
+            }
+            Admission::GiveUp if before > 0 => {
+                self.told(pgdt_core::instrument::LineMoment::Returned, start, before);
+            }
+            _ => {}
+        }
         admission
+    }
+
+    /// Tell an instrumented binary `moment` of the line at `start`, holding
+    /// `charge`, with what the ledger holds now.
+    #[cfg(feature = "introspect")]
+    fn told(&self, moment: pgdt_core::instrument::LineMoment, start: u64, charge: u64) {
+        let drawn = self.ledger.capacity().map(|_| self.ledger.drawn());
+        pgdt_core::internal::line_moment(pgdt_core::instrument::LineEvent {
+            moment,
+            start,
+            charge,
+            drawn,
+        });
     }
 
     /// Return what the line holds: its row was emitted, or its reader drops
     /// it.
     pub fn release(&mut self) {
+        #[cfg(feature = "introspect")]
+        let returned = self.line.filter(|_| self.held > 0).map(|start| (start, self.held));
         if let (Some(start), Some(shared)) = (self.line.take(), &self.ledger.shared) {
             let mut woken = Vec::new();
             {
@@ -312,6 +341,10 @@ impl Holder {
             woken.into_iter().for_each(Waker::wake);
         }
         self.held = 0;
+        #[cfg(feature = "introspect")]
+        if let Some((start, held)) = returned {
+            self.told(pgdt_core::instrument::LineMoment::Returned, start, held);
+        }
     }
 
     /// What its line holds.

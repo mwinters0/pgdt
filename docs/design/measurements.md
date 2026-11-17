@@ -1156,6 +1156,7 @@ account, none of it takes a marker, and nothing here needs a quiet machine.
 | `mallinfo2()` | live bytes now, split arena-backed (`uordblks`) from mmap-backed (`hblkhd`); arena free bytes (`fordblks`) | the peak — it is a snapshot; non-heap pages | one call |
 | `malloc_info()` | the same per arena, **including each arena's high-water** (`system type="max"`) | mmap-backed blocks, which are not per-arena | one call |
 | a counting `#[global_allocator]` | exact live bytes and their **high-water**, allocator-independent | where they were allocated | two atomics and a thread-local read per allocation |
+| its block tracker — `PGDT_INTROSPECT_BLOCKS_FROM` | each block past a stated size, **live or freed**, by its **allocating call stack**, with its pages `mincore` finds resident at each held line's admission and return | blocks under the size; a freed range a smaller block took, read as retention | a stack per tracked block; a `mincore` per range per event |
 | `mi_stats_get_json()` | mimalloc's `committed` and `reserved`, each now and at its **high-water**, merged over its heaps | what C allocates through libc | one call |
 | jemalloc `prof` + `jeprof` | live heap attributed to **call stacks** | the shipped allocator's behaviour — it is a different allocator | a feature flag and a build |
 | `perf record -e page-faults` | resident **growth** attributed to call stacks | what was freed and retained | a `runs/` artifact |
@@ -1182,6 +1183,11 @@ is never timed is [`decisions.md`](decisions.md), "D13". **The counter also attr
 statistics**: what a thread allocates inside the library's statistics scope is
 counted apart, and a `parse` reports it beside the library's own account of the
 same bytes as `statistics_*` lines ([`decisions.md`](decisions.md), "D81").
+**And it names what a freed block keeps resident**: told a size, it tracks
+each block past it by its allocating stack and reads, at each moment a held
+line's draw is first admitted or returned, which of them hold resident pages,
+live or freed — what mimalloc keeps of a freed block until its purge, which
+nothing else here attributes to a call stack (`crates/pgdt/src/introspect/blocks.rs`).
 
 **One built instrument times rather than counts**: under
 `datafusion-cli-pgdump`'s own `introspect` feature, which `pgdt`'s turns on,

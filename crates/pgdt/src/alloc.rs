@@ -76,8 +76,10 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 /// shipped one. Neither route reaches what this heap retains after a `free`:
 /// Massif's `--pages-as-heap` counts mapped pages, not resident ones, charges
 /// them to whichever allocation grew an arena, and runs the threads serially.
-/// That retention is read without stacks, by the gate's RSS and the
-/// `introspect` build's mimalloc statistics.
+/// That retention is read by the gate's RSS and the `introspect` build's
+/// mimalloc statistics, and by its block tracker (`introspect/blocks.rs`),
+/// which names a block past a size it is told by its allocating stack and
+/// reads its resident pages once freed, at a held line's moments alone.
 #[cfg(all(feature = "mimalloc", not(feature = "introspect")))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

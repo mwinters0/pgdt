@@ -17065,8 +17065,8 @@ def cmd_profile() -> int:
 # **It records a `system` build, so it sees C and Rust alike**: the shipped
 # build links mimalloc without `override`, so none of its Rust allocations
 # reaches `malloc`, and a `system` build asks for the same bytes from the same
-# code (`HEAPTRACK_LEG`). What the shipped heap does with them reaches no call
-# stack (`KD109`).
+# code (`HEAPTRACK_LEG`). What the shipped heap does with them heaptrack does
+# not see (`KD109`).
 #
 # It is not a figure, for koji's reason and the profile's: no reps, no median,
 # no apparatus gate, no `measurements.md` marker. What it produces is a **name**
