@@ -4,7 +4,8 @@ use crate::{alloc, profile};
 
 /// What `pgdt --version` prints: the crate version, `(unreleased)` unless
 /// this is a release's build ([`RELEASED`]), the allocator's markers
-/// ([`alloc::MARKERS`]), the Cargo profile ([`profile::MARKER`]), a measured
+/// ([`alloc::MARKERS`]), the purge delay mimalloc runs under where it is the
+/// allocator ([`alloc::purge_delay_marker`]), the Cargo profile ([`profile::MARKER`]), a measured
 /// leg's gzip chunk where it is one ([`CHUNK_MARKER`]), and the
 /// DataFusion release `sql` is, which `sql`'s
 /// help also closes on, `sql` carrying no `--version` of its own. Formatted
@@ -12,10 +13,11 @@ use crate::{alloc, profile};
 pub(crate) fn version() -> &'static str {
     static VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         format!(
-            "{}{} {} {}{} (datafusion: {})",
+            "{}{} {}{} {}{} (datafusion: {})",
             env!("CARGO_PKG_VERSION"),
             if RELEASED { "" } else { " (unreleased)" },
             alloc::MARKERS,
+            alloc::purge_delay_marker(),
             profile::MARKER,
             CHUNK_MARKER,
             datafusion_cli_pgdump::DATAFUSION_VERSION

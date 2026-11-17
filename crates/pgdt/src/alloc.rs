@@ -1,4 +1,5 @@
-//! Which allocator `pgdt` links against, and nothing else.
+//! Which allocator `pgdt` links against, and the one default it sets of it,
+//! mimalloc's purge delay.
 //!
 //! The choice is the binary's, never the library's: see
 //! `docs/design/decisions.md`, "D13". The consequence is that every figure in
@@ -83,6 +84,85 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 #[cfg(all(feature = "mimalloc", not(feature = "introspect")))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+/// mimalloc's purge delay, set as `pgdt`'s default: how long it keeps a page
+/// of freed blocks committed before it purges it. On a build linking mimalloc,
+/// the default, and under `introspect`, whose heap is this one with a counter
+/// in front of it. The shipped binary's one `unsafe` site, two calls into
+/// mimalloc (`docs/design/decisions.md`, "D27").
+#[cfg(all(
+    any(feature = "mimalloc", feature = "introspect"),
+    not(feature = "jemalloc"),
+    not(feature = "system")
+))]
+mod purge {
+    /// The delay in milliseconds where the environment states none
+    /// (`MIMALLOC_PURGE_DELAY`, which overrides it): `pgdt`'s default, never a
+    /// library's, an embedder linking mimalloc keeping its own
+    /// (`docs/design/decisions.md`, "D13").
+    pub const PURGE_DELAY_MS: std::ffi::c_long = 100;
+
+    /// `mi_option_purge_delay`'s place in `mimalloc.h`'s `mi_option_e`, which
+    /// `libmimalloc-sys` does not declare. Counted by hand, so held to
+    /// mimalloc's own reading of `MIMALLOC_PURGE_DELAY` by
+    /// `tests/allocator.rs`: an index naming another option would leave the
+    /// variable's value unread here.
+    pub const MI_OPTION_PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
+
+    /// Sets [`PURGE_DELAY_MS`] as the purge delay unless the environment
+    /// stated one, which mimalloc read as the process loaded and which this
+    /// leaves in place (`mi_option_set_default`). Called first in `main`,
+    /// while one thread runs, the option's setter not being thread-safe;
+    /// mimalloc reads the delay afresh at each purge it schedules, so every
+    /// page the commands free is purged under it.
+    pub fn configure() {
+        // SAFETY: an option's setter takes any option index and value, and
+        // runs here before a second thread exists.
+        #[allow(unsafe_code)]
+        unsafe {
+            libmimalloc_sys::mi_option_set_default(MI_OPTION_PURGE_DELAY, PURGE_DELAY_MS)
+        };
+    }
+
+    /// ` (purge delay: <ms> ms)`: the delay mimalloc runs under once
+    /// [`configure`] has run, [`PURGE_DELAY_MS`] or what the environment
+    /// stated, read back from mimalloc.
+    pub fn marker() -> String {
+        // SAFETY: an option's getter takes any option index.
+        #[allow(unsafe_code)]
+        let delay = unsafe { libmimalloc_sys::mi_option_get(MI_OPTION_PURGE_DELAY) };
+        format!(" (purge delay: {delay} ms)")
+    }
+}
+
+/// A build linking another allocator sets nothing and names nothing.
+#[cfg(not(all(
+    any(feature = "mimalloc", feature = "introspect"),
+    not(feature = "jemalloc"),
+    not(feature = "system")
+)))]
+mod purge {
+    pub fn configure() {}
+
+    pub fn marker() -> String {
+        String::new()
+    }
+}
+
+/// For the block tracker's test, which tells mimalloc never to purge.
+#[cfg(all(test, feature = "introspect", not(feature = "jemalloc"), not(feature = "system")))]
+pub use purge::MI_OPTION_PURGE_DELAY;
+
+/// Sets the allocator's defaults: mimalloc's purge delay (`purge`), first
+/// thing in `main`.
+pub use purge::configure;
+
+/// What `pgdt --version` names of the purge delay mimalloc runs under, so the
+/// harness asks the binary rather than trusting the variable it set
+/// (`scripts/measure.py`, `binary_purge_delay`); `MIMALLOC_VERBOSE` prints
+/// the options as the process loads, before `pgdt` sets its default. Empty on
+/// a build linking another allocator.
+pub use purge::marker as purge_delay_marker;
 
 /// What `pgdt --version` names of the allocator: `(allocator: <name>)`, and
 /// the instrument's marker where there is one. `version.rs`'s `version` puts it

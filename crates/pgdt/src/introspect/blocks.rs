@@ -566,12 +566,10 @@ mod tests {
     /// freed and resident at the next, mimalloc told never to purge.
     #[test]
     fn a_block_is_read_live_then_freed_and_resident_at_line_moments() {
-        // `mi_option_purge_delay`'s place in `mimalloc.h`'s `mi_option_e`.
-        const PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
         // SAFETY: an option's setter takes any value; -1 never purges.
         #[allow(unsafe_code)]
         unsafe {
-            libmimalloc_sys::mi_option_set(PURGE_DELAY, -1)
+            libmimalloc_sys::mi_option_set(crate::alloc::MI_OPTION_PURGE_DELAY, -1)
         };
         const LEN: usize = 48 << 20;
         arm_from(32 << 20, |line| observed(line, 0));

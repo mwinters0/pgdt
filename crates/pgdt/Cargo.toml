@@ -20,7 +20,7 @@ publish.workspace = true
 [features]
 default = ["mimalloc"]
 jemalloc = ["dep:tikv-jemallocator"]
-mimalloc = ["dep:mimalloc"]
+mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
 system = []
 # The introspection build (`src/introspect.rs`): a counting
 # `#[global_allocator]` over mimalloc, with mimalloc's own statistics for the
@@ -67,9 +67,11 @@ futures = { workspace = true }
 # `introspect` only: `mallinfo2`, `malloc_info` and the `open_memstream` the
 # second one writes into. A default build does not depend on it directly.
 libc = { workspace = true, optional = true }
-# `introspect` only: `mi_stats_get_json` and `mi_free`, behind `extended`, as
-# upstream DataFusion's benchmarks read mimalloc's statistics. The version is
-# the one `mimalloc` itself links, so the two name one library.
+# `mi_option_set_default` and `mi_option_get`, behind `extended`, for the
+# purge delay `src/alloc.rs` sets; and under `introspect`, `mi_stats_get_json`
+# and `mi_free`, as upstream DataFusion's benchmarks read mimalloc's
+# statistics. `extended` declares functions and builds the same C. The version
+# is the one `mimalloc` itself links, so the two name one library.
 libmimalloc-sys = { version = "0.1.49", optional = true, default-features = false, features = ["extended"] }
 # The shipped allocator. No default features, as upstream's `datafusion-cli`
 # links it: no `override`, so `liblzma` and `aws-lc` keep libc's `malloc` and

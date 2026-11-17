@@ -71,9 +71,9 @@ One SIMD validation of the largest line-terminated prefix per chunk, not one `fr
 nothing is decoded; the escaped path still validates (`\xNN` synthesizes bytes). In D68's seven crates the sites are
 `append_view_unchecked` (`batch/chunks.rs`), its bounds from the `contains` that produced its coordinates and its
 validity from the decode's borrowed arm (D46), and `LineMapping`'s system calls and the memory they map (D139);
-`pgdt-gzip-seek`'s zlib module is the other shipped site (UF4). The workspace denies `unsafe` in every target and each
-root forbids it unless a site of its production tree allows it (`scripts/layering.py`). Four `unsafe` attempts lost to
-the safe shape.
+`pgdt-gzip-seek`'s zlib module (UF4) and `pgdt`'s setting of mimalloc's purge delay (D13) are the other shipped sites.
+The workspace denies `unsafe` in every target and each root forbids it unless a site of its production tree allows it
+(`scripts/layering.py`). Four `unsafe` attempts lost to the safe shape.
 
 ### D28 One row split, shared unconditionally
 One `RowSplit` per row, memoized and shared unconditionally by the filter's terms and the batcher, extending only as

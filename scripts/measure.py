@@ -9414,31 +9414,34 @@ def _per_rep_counts(
 #: a page it holds of freed blocks stays committed, and resident, before it is
 #: decommitted. What the shipped binary keeps past a zero delay is retention of
 #: every buffer a scan frees at its rate (`roadmap-P33-line-bound.md`, "What a
-#: held line costs"), which `docs/design/decisions.md`, "D13"'s second remedy
-#: bounds by this delay, set as `pgdt`'s default once priced.
+#: held line costs"), which `docs/design/decisions.md`, "D13" bounds by this
+#: delay, `pgdt` setting a default the variable overrides
+#: (`crates/pgdt/src/alloc.rs`, `PURGE_DELAY_MS`).
 PURGE_DELAY_VAR = "MIMALLOC_PURGE_DELAY"
 
 #: The delays `purge-delay`'s and `purge-delay-resident`'s legs state, in
 #: milliseconds, beside the shipped leg stating none (`purge_delay_legs`):
 #: zero, purging as a page empties, and two between it and mimalloc v3's
-#: default of 1000, a decade apart. **The chosen value is one of these or the
-#: shipped one** (the spec's "What a held line costs": the largest holding
-#: both readings at a cost within the throughput figures' noise), so this
-#: tuple is the choice's resolution. **It stops at 100 ms on purpose**: a
-#: value above it is gained only where 100 ms resolves a cost on a
-#: `purge-delay` row yet holds 33.7's query run, and is then added here
-#: before the choice (`roadmap-P33.32-purge-notes.md`, "The leg grid").
+#: default of 1000, a decade apart. **The value `pgdt` sets is one of these**
+#: (the spec's "What a held line costs": the largest holding both readings at
+#: a cost within the throughput figures' noise, else the cheapest holding),
+#: so this tuple is the choice's resolution, and the shipped leg now runs at
+#: its last. **It stops at 100 ms on purpose**: a value above it is gained
+#: only where 100 ms resolves a cost on a `purge-delay` row yet holds 33.7's
+#: query run, and is then added here before the choice is moved
+#: (`roadmap-P33.32-purge-notes.md`, "The leg grid").
 PURGE_DELAY_LEGS: tuple[int, ...] = (0, 10, 100)
 
-#: Where mimalloc prints its purge delay when asked to be verbose at startup
-#: (`MIMALLOC_VERBOSE=1`, `mi_options_print`): the value it runs under, whether
-#: the environment or its default set it.
-PURGE_DELAY_RE = re.compile(r"option 'purge_delay': (-?\d+)")
+#: Where `pgdt --version` names the purge delay mimalloc runs under once
+#: `pgdt` has set its default, the environment's or that default
+#: (`crates/pgdt/src/alloc.rs`, `purge_delay_marker`). Not `MIMALLOC_VERBOSE`'s
+#: listing, which mimalloc prints as the process loads, before `pgdt` sets it.
+PURGE_DELAY_RE = re.compile(r"\(purge delay: (-?\d+) ms\)")
 
-#: The purge delay a dry run names for the shipped leg: mimalloc v3's default,
-#: what `libmimalloc-sys` builds and the shipped binary links today. Never a
-#: reading: a live sitting asks the binary (`binary_purge_delay`).
-MIMALLOC_DEFAULT_PURGE_DELAY = 1000
+#: The purge delay a dry run names for the shipped leg: `pgdt`'s default, as
+#: `crates/pgdt/src/alloc.rs`'s `PURGE_DELAY_MS` states it. Never a reading: a
+#: live sitting asks the binary (`binary_purge_delay`).
+DRY_RUN_PURGE_DELAY = 100
 
 
 def purge_delay_legs() -> tuple[int | None, ...]:
@@ -9461,7 +9464,8 @@ def purge_delay_caption(delay: int | None) -> str:
 
 def binary_purge_delay(cfg: Config, binary: Path, delay: int | None) -> int:
     """The purge delay `binary` runs under in the image with `delay`'s leg's
-    environment, asked of mimalloc itself (`PURGE_DELAY_RE`).
+    environment, asked of the binary, which reads it back from mimalloc
+    (`PURGE_DELAY_RE`).
 
     `binary_allocator`'s argument one layer down: a leg labelled by the
     variable it sets is a claim about what mimalloc read, and a variable it
@@ -9472,18 +9476,18 @@ def binary_purge_delay(cfg: Config, binary: Path, delay: int | None) -> int:
     limit, never on the host."""
     env = purge_delay_env(delay)
     if cfg.dry_run:
-        return MIMALLOC_DEFAULT_PURGE_DELAY if delay is None else delay
+        return DRY_RUN_PURGE_DELAY if delay is None else delay
     argv = [
         *cfg.container_argv(), "run", "--rm", "-m", cfg.memory, "--memory-swap", cfg.memory,
-        "-v", f"{binary}:/pgdt:ro", "-e", "MIMALLOC_VERBOSE=1",
+        "-v", f"{binary}:/pgdt:ro",
         *(["-e", env] if env is not None else []),
-        cfg.image, "bash", "-c", "/pgdt --version 2>&1",
+        cfg.image, "/pgdt", "--version",
     ]  # fmt: skip
     found = set(PURGE_DELAY_RE.findall(run(argv, capture=True)))
     if len(found) != 1:
         raise RuntimeError(
-            f"{binary} names {sorted(found) or 'no'} purge delay under `MIMALLOC_VERBOSE=1`"
-            + (f" and `{env}`" if env else "")
+            f"{binary} --version names {sorted(found) or 'no'} purge delay"
+            + (f" under `{env}`" if env else "")
             + ": no leg is timed under a delay mimalloc does not report"
         )
     got = int(found.pop())
@@ -9637,7 +9641,7 @@ def run_purge_delay(session: Session) -> str:
     asked = purge_delays_asked(delays)
     notes = (
         "Every leg is the shipped binary, differing by its environment alone, and each was "
-        f"asked under `MIMALLOC_VERBOSE=1` which purge delay it runs under before it was timed: "
+        f"asked which purge delay it runs under before it was timed: "
         f"{asked}.\n\n"
         + _cached_query_note("Each `query` row")
         + "\nThe `pgdt sql` rows run `parallel-scan-throughput`'s query, the serial one at "
@@ -13869,8 +13873,8 @@ def run_purge_delay_resident(session: Session) -> str:
         "shipped leg's. The legs are `long-line-resident`'s but its anchors beside the bound, "
         f"over its inputs, in a {LONG_LINE_MEMORY} container — its apparatus departure from the "
         "register's 512 MB, which one held line outgrows — each the shipped binary differing by "
-        "its environment alone, and each was asked under `MIMALLOC_VERBOSE=1` which purge delay "
-        f"it runs under before it was read: {asked}. Every leg states "
+        "its environment alone, and each was asked which purge delay it runs under before it "
+        f"was read: {asked}. Every leg states "
         f"`--memory {allowance}`, sized as `long-line-resident` sizes it from the factors its "
         "instrument legs read in this sitting.\n\n"
         "Each leg against that allowance, over every rep of every row:\n"

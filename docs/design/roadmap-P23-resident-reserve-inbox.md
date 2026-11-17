@@ -13,16 +13,16 @@ fold it into the spec or discard it as stale, and delete this file. See
 (`src/options.c`), which writes each option's name and value as mimalloc holds
 it, through a caller's output function. `libmimalloc-sys` 0.1.49 does not
 declare it, nor v3's purge options; the symbol is linked regardless, as
-`mi_option_set` is. An earlier instrument read one option back instead, by
-an index into `mi_option_e` counted by hand, guarded by a test `mise run
-check` never runs (`introspect`'s `MI_OPTION_PURGE_DELAY`, removed; `30f73fb6`
-holds it).
+`mi_option_set` is. `pgdt` reads one option back instead, the purge delay it
+sets, by an index into `mi_option_e` counted by hand
+(`crates/pgdt/src/alloc.rs`, `MI_OPTION_PURGE_DELAY`), held to mimalloc's
+reading of `MIMALLOC_PURGE_DELAY` by `crates/pgdt/tests/allocator.rs`.
 
 **Why P23 cares.** If P23 confirms the unit mimalloc keeps by switching an
 option off, or sets one as the remedy, the instrument has to show the option
 reached mimalloc rather than assume it. Reading all of them by name needs no
-index to drift at an upgrade; copying back that hand count is the obvious
-route and the worse one.
+index to drift at an upgrade; a hand count for each further option, each
+needing a test of its own, is the obvious route and the worse one.
 
 **Origin.** 2026-10-06
 ([`../status/history/2026-10-06.md`](../status/history/2026-10-06.md),
@@ -78,9 +78,9 @@ under mimalloc and bills or removes `KD111`'s unit. A remedy for the retained
 unit must first be confirmed by switching the candidate off with mimalloc's
 own option, and is chosen in D13's order: a library change suiting both
 allocators first, an option as a default the environment overrides second
-([`decisions.md`](decisions.md), "D13"). P33 sets the purge delay as the
-binary's default, priced first (`../status/STATUS.md`, 33.32 and 33.33), so
-this phase re-fits the constants under the delay that ships.
+([`decisions.md`](decisions.md), "D13"). `pgdt` sets the purge delay as its
+default (D13), so this phase re-fits the constants under the delay that
+ships.
 
 **Origin.** The diagnostic sitting on the instrument build, 2026-10-05, at `27593d2c`
 ([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md),

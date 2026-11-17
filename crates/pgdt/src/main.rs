@@ -1,5 +1,3 @@
-#![cfg_attr(not(feature = "introspect"), forbid(unsafe_code))]
-
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
@@ -106,8 +104,11 @@ fn init_status_output() {
 /// on `SIGINT` would end the session a `ctrl_c` was cancelling a statement in.
 /// As init, a signal before either arm's handlers is discarded
 /// (`docs/design/runtime-invariants.md`, "RT19"), and that window is clap's
-/// parse and the chosen arm's setup ahead of its handlers.
+/// parse and the chosen arm's setup ahead of its handlers. **The allocator's
+/// defaults come before the parse**, which reads them back for `--version`
+/// (`alloc::configure`).
 fn main() -> Result<ExitCode> {
+    alloc::configure();
     let cli = Cli::parse();
     match cli.command {
         Invocation::Sql(args) => {

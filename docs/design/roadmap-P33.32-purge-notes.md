@@ -21,11 +21,12 @@ sweep"). No production code; 33.33 sets the value.
 - **The legs**: the shipped binary stating nothing, then
   `MIMALLOC_PURGE_DELAY` at `PURGE_DELAY_LEGS`, 0, 10 and 100 ms, each given to
   the container (`RunSpec.env`, keyed where set) and so outside the shape. Each
-  leg is asked under `MIMALLOC_VERBOSE=1` which delay mimalloc runs under
-  before its first reading (`binary_purge_delay`), a stating leg answering
-  another refused, the answers kept with the sitting (`Session.purge_delay`).
-  Asked of today's binary: the shipped leg runs at mimalloc v3's 1000 ms, each
-  other at the delay it states.
+  leg is asked which delay it runs under before its first reading
+  (`binary_purge_delay`; at this sitting under `MIMALLOC_VERBOSE=1`, by
+  `pgdt --version` from 33.33), a stating leg answering another refused, the
+  answers kept with the sitting (`Session.purge_delay`). Asked of `7860c5fb`'s
+  binary: the shipped leg runs at mimalloc v3's 1000 ms, each other at the
+  delay it states.
 - **`long_line_leg_problems`** is `run_long_line_resident`'s leg check, moved
   out so both resident figures hold their legs to it; `long_line_factors`
   takes the figure whose instrument legs it reads.

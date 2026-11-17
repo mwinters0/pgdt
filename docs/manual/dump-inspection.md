@@ -1073,7 +1073,12 @@ with no room to hold what they decode buys less than either number suggests.
 > **Under a container memory limit, leave room for the allocator as well.**
 > pgdt's allocator, mimalloc, keeps memory for each thread that allocates and
 > holds on to some of what is freed for a while rather than returning it at
-> once; an `.xz` file's decoder allocates through the C library instead, which
+> once — 100 ms by default in pgdt, a tenth of mimalloc's own default, which
+> `MIMALLOC_PURGE_DELAY=<milliseconds>` overrides and `pgdt --version` names
+> as `(purge delay: … ms)`. A longer delay holds more of what a scan frees past
+> what `--memory` carves, and a run reading long values can then outgrow a
+> container sized at `--memory`; a shorter one costs a little time. An `.xz`
+> file's decoder allocates through the C library instead, which
 > on glibc gives each such thread an arena of its own and keeps it. pgdt runs
 > a thread for each piece of work it has in flight, so raising `--jobs` raises
 > both. So size a cgroup at what `--memory` names rather than at the

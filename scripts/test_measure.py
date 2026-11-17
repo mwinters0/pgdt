@@ -1782,12 +1782,10 @@ class PurgeDelay(unittest.TestCase):
                 self.assertEqual(
                     measure.purge_delay_env(delay), f"{measure.PURGE_DELAY_VAR}={delay}"
                 )
-        # Below the shipped default, distinct, zero among them.
+        # At or below the shipped default, distinct, zero among them.
         self.assertIn(0, measure.PURGE_DELAY_LEGS)
         self.assertEqual(len(set(measure.PURGE_DELAY_LEGS)), len(measure.PURGE_DELAY_LEGS))
-        self.assertTrue(
-            all(d < measure.MIMALLOC_DEFAULT_PURGE_DELAY for d in measure.PURGE_DELAY_LEGS)
-        )
+        self.assertTrue(all(d <= measure.DRY_RUN_PURGE_DELAY for d in measure.PURGE_DELAY_LEGS))
 
     def test_a_spec_s_environment_keys_it_only_where_stated(self):
         # An unstated environment keys as before, so every earlier sitting
@@ -1845,22 +1843,25 @@ class PurgeDelay(unittest.TestCase):
         self.assertNotIn(measure.PURGE_DELAY_VAR, script)
         self.assertNotIn(measure.PURGE_DELAY_VAR, self._logged_run(shipped))
 
-    def test_mimalloc_s_answer_is_read_and_a_leg_it_did_not_reach_refused(self):
+    def test_the_binary_s_answer_is_read_and_a_leg_it_did_not_reach_refused(self):
         def answering(delay: str):
-            out = f"option 'verbose': 1 \noption 'purge_delay': {delay} \npgdt 0.3.0\n"
+            out = (
+                "pgdt 0.3.0 (unreleased) (allocator: mimalloc) "
+                f"(purge delay: {delay} ms) (profile: release) (datafusion: 55.1.0)\n"
+            )
             return unittest.mock.patch.object(measure, "run", return_value=out)
 
         cfg = measure.Config()
-        with answering("1000") as run:
-            self.assertEqual(measure.binary_purge_delay(cfg, Path("/pgdt"), None), 1000)
+        with answering("100") as run:
+            self.assertEqual(measure.binary_purge_delay(cfg, Path("/pgdt"), None), 100)
         argv = run.call_args.args[0]
-        self.assertIn("MIMALLOC_VERBOSE=1", argv)
+        self.assertIn("--version", argv)
         self.assertFalse(any(a.startswith(measure.PURGE_DELAY_VAR) for a in argv))
         self.assertIn("-m", argv)
         with answering("10") as run:
             self.assertEqual(measure.binary_purge_delay(cfg, Path("/pgdt"), 10), 10)
         self.assertIn(f"{measure.PURGE_DELAY_VAR}=10", run.call_args.args[0])
-        with answering("1000"), self.assertRaises(RuntimeError):
+        with answering("100"), self.assertRaises(RuntimeError):
             measure.binary_purge_delay(cfg, Path("/pgdt"), 10)
         with unittest.mock.patch.object(measure, "run", return_value="pgdt 0.3.0\n"):
             with self.assertRaises(RuntimeError):
@@ -1881,7 +1882,9 @@ class PurgeDelay(unittest.TestCase):
         }
         if asked:
             for delay in measure.purge_delay_legs():
-                got = measure.MIMALLOC_DEFAULT_PURGE_DELAY if delay is None else delay
+                # A sitting before `pgdt` set its default: what a render
+                # names is what it asked, never today's answer.
+                got = 1000 if delay is None else delay
                 reported[f"{figure}/purge-delay/{measure.purge_delay_caption(delay)}"] = {
                     "purge_delay": str(got)
                 }
