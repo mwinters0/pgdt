@@ -172,9 +172,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **33.32's legs are 0, 10 and 100 ms beside the shipped 1000** (`measure.PURGE_DELAY_LEGS`), so the delay 33.33
-  ships is one of the four; and `purge-delay` adds `parse` and the provider's scan at four and twenty-four to
-  `release-profile`'s serial shapes, the parallel rows being where frees cross threads. The call: a decade apart from
-  zero to the default, the row naming "values between" and no grid, and `purge-delay-resident` already reading
-  `long-line-resident`'s legs four times, about three hours. Deciding: a finer grid — 250 or 500 ms, say — where
-  100 ms holds and 1000 ms does not, each value adding one more pass over those legs; or fewer parallel rows.

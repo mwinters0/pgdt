@@ -59,6 +59,39 @@ paragraph is also why no library change suiting both allocators reaches the
 retention, which the resident legs and 33.31's readings bear on and the
 readings round confirms or refutes there.
 
+## The leg grid
+
+**The grid stops at 100 ms, the four parallel rows stay**, reviewed with
+the maintainer (STATUS's "Decisions worth another look", 2026-11-17).
+
+- **Only 33.7's query run can reject a delay.** `long-line-resident`'s
+  allowance is one number, the widest leg's, and its last take at the shipped
+  delay holds every leg under it by gigabytes (`measurements.md`, "What a held
+  line holds resident"); a lower delay leaves no more resident, which is
+  `purge-delay-resident`'s falsifier. So that figure reads what each delay
+  leaves resident and narrows nothing.
+- **Where the query run stops holding is at most about a quarter to a third of
+  a second.** mimalloc v3 (`libmimalloc-sys` 0.1.49, `v3/src/arena.c`,
+  `mi_arena_schedule_purge`, `mi_arenas_try_purge`) arms an arena's expiry
+  at its first pending free and never extends it, purging on a later page
+  allocation or free, one thread at a time under a global guard; at 0 ms it
+  purges inside the free instead. What a delay keeps is therefore at most the
+  scan's free rate times the delay. Taking the rate from what the shipped
+  delay keeps over the zero-delay runs (`runs/p33.7-query-hand-run-20261117-0320/`,
+  each `.err`'s `maxrss_kib`), the zero-delay headroom under the stated
+  `--memory` runs out at 230–370 ms, an upper bound, reuse within a window
+  only raising the rate: 500 ms cannot hold, 250 ms is at the edge.
+- **So a value between 100 ms and that edge is wanted only where 100 ms
+  resolves a cost on a `purge-delay` row yet holds the query run.** Where
+  100 ms is within the noise, a larger delay buys purges no row resolves and
+  spends the one binding run's margin. Where it resolves one, the readings
+  round reads candidates above 100 ms on the query run by hand first, adds the
+  one it keeps to `PURGE_DELAY_LEGS` in a commit, and re-takes both figures
+  from it before the choice, so every table names each candidate.
+- **The parallel rows are where a positive delay's cost shows first**, frees
+  crossing threads and purges serialized, and cost minutes of the figure's
+  quarter hour; dropping them would hide the one outcome that refines the grid.
+
 ## Negative results
 
 - **The reference leg states nothing rather than 1000 ms**, so it is the

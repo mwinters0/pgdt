@@ -9424,7 +9424,10 @@ PURGE_DELAY_VAR = "MIMALLOC_PURGE_DELAY"
 #: default of 1000, a decade apart. **The chosen value is one of these or the
 #: shipped one** (the spec's "What a held line costs": the largest holding
 #: both readings at a cost within the throughput figures' noise), so this
-#: tuple is the choice's resolution.
+#: tuple is the choice's resolution. **It stops at 100 ms on purpose**: a
+#: value above it is gained only where 100 ms resolves a cost on a
+#: `purge-delay` row yet holds 33.7's query run, and is then added here
+#: before the choice (`roadmap-P33.32-purge-notes.md`, "The leg grid").
 PURGE_DELAY_LEGS: tuple[int, ...] = (0, 10, 100)
 
 #: Where mimalloc prints its purge delay when asked to be verbose at startup
@@ -13801,7 +13804,11 @@ def run_purge_delay_resident(session: Session) -> str:
     from the factors its instrument legs read in this sitting
     (`long_line_allowance`), and whether each delay holds every rep within it
     is the resident half of the spec's criterion; 33.7's query run is the
-    other reading it names, taken by hand on the reference dump.
+    other reading it names, taken by hand on the reference dump. **That half
+    cannot tell the legs apart**: the allowance is the widest leg's, which
+    the shipped delay already holds on every leg, so the choice turns on the
+    query run and `purge-delay` (`roadmap-P33.32-purge-notes.md`, "The leg
+    grid"), and this figure reads what each delay leaves resident.
 
     **What would falsify the account**, written before any reading: a
     stating leg whose readings lie wholly above the shipped one's on any
