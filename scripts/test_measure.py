@@ -1761,14 +1761,14 @@ class PurgeDelay(unittest.TestCase):
 
     FIGURES = ("purge-delay", "purge-delay-resident")
 
-    def test_both_are_built_untaken_and_borrow_nothing(self):
-        # Untaken until a commit carries them; standing in no sharing edge
-        # lets each publish outside a sweep.
+    def test_both_are_taken_and_borrow_nothing(self):
+        # Taken from a commit and published outside a sweep, which standing
+        # in no sharing edge allows.
         for figure in self.FIGURES:
             with self.subTest(figure=figure):
                 fig = measure.SELECTABLE_BY_ID[figure]
-                self.assertIn(fig, measure.UNTAKEN)
-                self.assertNotIn(fig, measure.FIGURES)
+                self.assertIn(fig, measure.FIGURES)
+                self.assertNotIn(fig, measure.UNTAKEN)
                 self.assertEqual(fig.shares, ())
                 self.assertEqual(measure.entangled_with(figure), [])
                 self.assertIn("Cargo.lock", fig.depends)

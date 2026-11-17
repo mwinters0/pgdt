@@ -5,7 +5,7 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **23 of the 32 figures below come from that sitting.** The other 9 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `gzip-first-pass` (`055c8d27`), `gzip-resident` (`055c8d27`), `gzseek-backend` (`39744f33`), `gzseek-spacing` (`4691536e`), `inflate-throughput` (`d2cf15c4`), `long-line-resident` (`4cb97fd4`), `parallel-scan-throughput` (`de2f6076`), `release-profile` (`ef442ad6`), `resumable-reader-micro` (`0fd33bd3`).
+**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **23 of the 34 figures below come from that sitting.** The other 11 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `gzip-first-pass` (`055c8d27`), `gzip-resident` (`055c8d27`), `gzseek-backend` (`39744f33`), `gzseek-spacing` (`4691536e`), `inflate-throughput` (`d2cf15c4`), `long-line-resident` (`4cb97fd4`), `parallel-scan-throughput` (`de2f6076`), `purge-delay` (`7860c5fb`), `purge-delay-resident` (`7860c5fb`), `release-profile` (`ef442ad6`), `resumable-reader-micro` (`0fd33bd3`).
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -4543,6 +4543,643 @@ over escaped text took 3.83–4.13 s and a strict one 6.74–6.85 s, against
 11.03–11.64 s and 14.25–14.79 s at `93428ef7`. Over `text[]` the query took
 29.3–31.5 s at 512 MiB and 61.1–72.1 s at the bound; the `jsonb` filter
 157.6–166.4 s at the bound.
+
+## What mimalloc's purge delay costs, and what it leaves resident
+
+**The delay `pgdt` sets is priced on three readings** (`roadmap-P33-line-bound.md`,
+"What a held line costs"): the wall clock of the shapes below, what each delay
+leaves resident over `long-line-resident`'s legs, and 33.7's query run on the
+reference dump, which is taken by hand and never by `measure.py`
+(`runs/p33.32-query-delays-20261117-0959/` and
+`runs/p33.32-query-above-100-20261117-1334/`, each with its `readings.txt`).
+Both figures were taken in one detached job from `7860c5fb`, logged at
+`runs/p33.32-figures-20261117-1011/log`.
+
+<!-- figure: purge-delay — taken at `7860c5fb` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure purge-delay` -->
+
+**Wall clock**
+
+| Warm, on tmpfs | `shipped` — the environment states none | `0 ms` — `MIMALLOC_PURGE_DELAY=0` | `10 ms` — `MIMALLOC_PURGE_DELAY=10` | `100 ms` — `MIMALLOC_PURGE_DELAY=100` |
+|---|---|---|---|---|
+| `pgdt parse` — structure discovery | **0.421 s** (0.417–0.451) | **0.488 s** (0.420–0.770) — 1.16× | **0.421 s** (0.415–0.424) — 1.00× | **0.417 s** (0.416–0.625) — 0.99× |
+| `query --schema-mode strings` — zero-copy extraction | **3.13 s** (3.11–3.24) | **3.73 s** (3.50–3.86) — 1.19× | **3.26 s** (3.14–3.32) — 1.04× | **3.22 s** (3.21–3.24) — 1.03× |
+| `query --schema-mode typed` | **4.51 s** (4.38–4.59) | **5.16 s** (4.95–5.17) — 1.14× | **4.84 s** (4.69–4.90) — 1.07× | **4.58 s** (4.54–4.70) — 1.01× |
+| `pgdt sql -c` — a typed DataFusion scan | **2.88 s** (2.83–2.98) | **3.50 s** (3.41–3.58) — 1.21× | **3.15 s** (3.10–3.30) — 1.09× | **3.05 s** (3.02–3.12) — 1.06× |
+| `pgdt parse`, 4j | **0.332 s** (0.268–0.345) | **0.314 s** (0.290–0.333) — 0.95× | **0.307 s** (0.281–0.350) — 0.92× | **0.315 s** (0.279–0.337) — 0.95× |
+| `pgdt sql -c` — a typed DataFusion scan, 4p | **0.966 s** (0.941–0.980) | **1.127 s** (1.113–1.131) — 1.17× | **1.036 s** (1.009–1.043) — 1.07× | **0.986 s** (0.978–1.002) — 1.02× |
+| `pgdt parse`, 24j | **0.370 s** (0.339–0.377) | **0.375 s** (0.373–0.384) — 1.01× | **0.368 s** (0.355–0.377) — 0.99× | **0.369 s** (0.352–0.392) — 1.00× |
+| `pgdt sql -c` — a typed DataFusion scan, 24p | **0.849 s** (0.843–0.863) | **0.955 s** (0.938–0.966) — 1.12× | **0.961 s** (0.943–0.980) — 1.13× | **0.966 s** (0.961–0.982) — 1.14× |
+| `dd` → `/dev/null` — the co-measured floor | **0.315 s** (0.314–0.319) | — | — | — |
+
+Every leg is the shipped binary, differing by its environment alone, and each was asked under `MIMALLOC_VERBOSE=1` which purge delay it runs under before it was timed: the shipped leg 1000 ms, and each other leg the delay it states.
+
+Each `query` row reads a cache one untimed `pgdt parse` stating `--statistics-level data --row-group-size 1048576` wrote in the same container, and states `--statistics none`, so no row group is skipped: its reading carries decoding that cache whole, statistics included, and no mapping pass.
+
+The `pgdt sql` rows run `parallel-scan-throughput`'s query, the serial one at `DATAFUSION_EXECUTION_TARGET_PARTITIONS=1` stating no allowance in the register's container, as `release-profile`'s does, and the four- and twenty-four-partition ones stating that figure's allowance in its 4g container, as the `parse` rows at four and twenty-four workers do. Every leg answered alike, byte for byte.
+
+Each leg against the shipped one, row by row:
+- `0 ms`:
+  - `pgdt parse` — structure discovery: +15.91%, within the noise, the two legs' readings meeting.
+  - `query --schema-mode strings` — zero-copy extraction: +19.08%, **slower, resolved**.
+  - `query --schema-mode typed`: +14.20%, **slower, resolved**.
+  - `pgdt sql -c` — a typed DataFusion scan: +21.49%, **slower, resolved**.
+  - `pgdt parse`, 4j: -5.42%, within the noise, the two legs' readings meeting.
+  - `pgdt sql -c` — a typed DataFusion scan, 4p: +16.67%, **slower, resolved**.
+  - `pgdt parse`, 24j: +1.35%, within the noise, the two legs' readings meeting.
+  - `pgdt sql -c` — a typed DataFusion scan, 24p: +12.49%, **slower, resolved**.
+- `10 ms`:
+  - `pgdt parse` — structure discovery: +0.00%, within the noise, the two legs' readings meeting.
+  - `query --schema-mode strings` — zero-copy extraction: +4.08%, within the noise, the two legs' readings meeting.
+  - `query --schema-mode typed`: +7.27%, **slower, resolved**.
+  - `pgdt sql -c` — a typed DataFusion scan: +9.25%, **slower, resolved**.
+  - `pgdt parse`, 4j: -7.53%, within the noise, the two legs' readings meeting.
+  - `pgdt sql -c` — a typed DataFusion scan, 4p: +7.25%, **slower, resolved**.
+  - `pgdt parse`, 24j: -0.54%, within the noise, the two legs' readings meeting.
+  - `pgdt sql -c` — a typed DataFusion scan, 24p: +13.19%, **slower, resolved**.
+- `100 ms`:
+  - `pgdt parse` — structure discovery: -0.95%, within the noise, the two legs' readings meeting.
+  - `query --schema-mode strings` — zero-copy extraction: +2.62%, within the noise, the two legs' readings meeting.
+  - `query --schema-mode typed`: +1.48%, within the noise, the two legs' readings meeting.
+  - `pgdt sql -c` — a typed DataFusion scan: +5.86%, **slower, resolved**.
+  - `pgdt parse`, 4j: -5.12%, within the noise, the two legs' readings meeting.
+  - `pgdt sql -c` — a typed DataFusion scan, 4p: +2.07%, within the noise, the two legs' readings meeting.
+  - `pgdt parse`, 24j: -0.27%, within the noise, the two legs' readings meeting.
+  - `pgdt sql -c` — a typed DataFusion scan, 24p: +13.78%, **slower, resolved**.
+
+Per-rep readings (s):
+- `pgdt parse` — structure discovery (shipped): 0.421, 0.418, 0.417, 0.451, 0.429
+- `pgdt parse` — structure discovery (0 ms): 0.420, 0.433, 0.488, 0.692, 0.770
+- `pgdt parse` — structure discovery (10 ms): 0.424, 0.418, 0.415, 0.421, 0.423
+- `pgdt parse` — structure discovery (100 ms): 0.451, 0.625, 0.416, 0.416, 0.417
+- `query --schema-mode strings` — zero-copy extraction (shipped): 3.24, 3.11, 3.11, 3.16, 3.13
+- `query --schema-mode strings` — zero-copy extraction (0 ms): 3.50, 3.77, 3.73, 3.73, 3.86
+- `query --schema-mode strings` — zero-copy extraction (10 ms): 3.32, 3.32, 3.26, 3.14, 3.25
+- `query --schema-mode strings` — zero-copy extraction (100 ms): 3.21, 3.24, 3.22, 3.21, 3.22
+- `query --schema-mode typed` (shipped): 4.54, 4.59, 4.38, 4.51, 4.45
+- `query --schema-mode typed` (0 ms): 5.16, 5.17, 5.17, 4.95, 5.03
+- `query --schema-mode typed` (10 ms): 4.75, 4.85, 4.84, 4.69, 4.90
+- `query --schema-mode typed` (100 ms): 4.59, 4.58, 4.54, 4.70, 4.57
+- `pgdt sql -c` — a typed DataFusion scan (shipped): 2.83, 2.97, 2.98, 2.86, 2.88
+- `pgdt sql -c` — a typed DataFusion scan (0 ms): 3.50, 3.41, 3.55, 3.58, 3.50
+- `pgdt sql -c` — a typed DataFusion scan (10 ms): 3.10, 3.30, 3.13, 3.16, 3.15
+- `pgdt sql -c` — a typed DataFusion scan (100 ms): 3.02, 3.10, 3.03, 3.12, 3.05
+- `pgdt parse`, 4j (shipped): 0.268, 0.345, 0.337, 0.297, 0.332
+- `pgdt parse`, 4j (0 ms): 0.314, 0.296, 0.333, 0.290, 0.315
+- `pgdt parse`, 4j (10 ms): 0.307, 0.350, 0.281, 0.329, 0.297
+- `pgdt parse`, 4j (100 ms): 0.317, 0.294, 0.315, 0.279, 0.337
+- `pgdt sql -c` — a typed DataFusion scan, 4p (shipped): 0.941, 0.974, 0.966, 0.980, 0.964
+- `pgdt sql -c` — a typed DataFusion scan, 4p (0 ms): 1.127, 1.131, 1.113, 1.123, 1.129
+- `pgdt sql -c` — a typed DataFusion scan, 4p (10 ms): 1.036, 1.014, 1.036, 1.043, 1.009
+- `pgdt sql -c` — a typed DataFusion scan, 4p (100 ms): 1.000, 0.979, 0.978, 0.986, 1.002
+- `pgdt parse`, 24j (shipped): 0.372, 0.370, 0.364, 0.339, 0.377
+- `pgdt parse`, 24j (0 ms): 0.374, 0.384, 0.373, 0.375, 0.381
+- `pgdt parse`, 24j (10 ms): 0.360, 0.370, 0.377, 0.355, 0.368
+- `pgdt parse`, 24j (100 ms): 0.375, 0.392, 0.369, 0.363, 0.352
+- `pgdt sql -c` — a typed DataFusion scan, 24p (shipped): 0.849, 0.845, 0.843, 0.862, 0.863
+- `pgdt sql -c` — a typed DataFusion scan, 24p (0 ms): 0.966, 0.938, 0.955, 0.954, 0.965
+- `pgdt sql -c` — a typed DataFusion scan, 24p (10 ms): 0.957, 0.943, 0.965, 0.961, 0.980
+- `pgdt sql -c` — a typed DataFusion scan, 24p (100 ms): 0.976, 0.982, 0.963, 0.961, 0.966
+- `dd` → `/dev/null` (warm): 0.315, 0.314, 0.314, 0.315, 0.319
+
+Apparatus over every run in this table: CPU stall ≤0.38%, I/O stall ≤3.98%, machine ≤11% busy, steal ≤0.00%, busiest core ≥3.53 GHz, ≤68°C.
+
+**What it says.** No delay below the shipped one is free, and the cost falls
+as the delay rises:
+
+- **At 0 ms five of the eight rows are resolved slower**, by 12.5% to 21.5%; at
+  10 ms four, by 7.3% to 13.2%; at 100 ms two, the serial `pgdt sql -c` scan
+  by 5.9% and the twenty-four-partition one by 13.8%. No `parse` row is
+  resolved at any delay, serial or at four or twenty-four workers.
+- **The cost is system time.** Each run's `cpu_seconds` in the sitting's
+  `raw.json` puts the serial scan's median kernel time at 0.38 s on the
+  shipped leg, 1.04 s at 0 ms, 0.68 s at 10 ms and 0.45 s at 100 ms; at
+  twenty-four partitions it is 1.53 s against 2.64, 2.20 and 2.10 s. User time
+  moves by under a quarter of a second on every row.
+- **At twenty-four partitions the cost does not fall with the delay**: 12.5%,
+  13.2% and 13.8% at 0, 10 and 100 ms, their spreads overlapping, where at
+  four partitions 100 ms costs 2.1%, within the noise. Those two runs take
+  0.85 s and 0.97 s, less than the shipped leg's 1000 ms delay, so on those
+  rows each delay is priced against a leg whose delay outlasts its run.
+
+<!-- figure: purge-delay-resident — taken at `7860c5fb` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure purge-delay-resident` -->
+
+**Peak resident over `long-line-resident`'s legs**
+
+| Leg | `shipped` — the environment states none | `0 ms` — `MIMALLOC_PURGE_DELAY=0` | `10 ms` — `MIMALLOC_PURGE_DELAY=10` | `100 ms` — `MIMALLOC_PURGE_DELAY=100` |
+|---|---|---|---|---|
+| text, 32 MiB lines, default parse, 1j | **25.10 MiB** (24.81–25.29) | **24.19 MiB** (23.99–24.43) — -936 KiB | **24.93 MiB** (24.91–24.95) — -176 KiB | **25.39 MiB** (25.17–25.47) — +300 KiB |
+| text, 32 MiB lines, default parse, 4j | **31.18 MiB** (31.10–31.46) | **29.60 MiB** (29.56–29.83) — -1.58 MiB | **30.06 MiB** (30.02–30.63) — -1.12 MiB | **31.66 MiB** (31.27–32.73) — +492 KiB |
+| text, 32 MiB lines, strict parse, 1j | **25.40 MiB** (25.19–25.64) | **24.34 MiB** (24.16–24.40) — -1.06 MiB | **25.15 MiB** (24.70–25.29) — -252 KiB | **25.22 MiB** (25.20–25.61) — -184 KiB |
+| text, 32 MiB lines, strict parse, 4j | **31.11 MiB** (30.98–31.35) | **29.04 MiB** (28.93–30.07) — -2.07 MiB | **30.30 MiB** (30.22–30.49) — -836 KiB | **31.51 MiB** (31.27–31.53) — +408 KiB |
+| text, 32 MiB lines, query, 1p | **84.65 MiB** (84.47–84.67) | **84.92 MiB** (84.65–85.02) — +272 KiB | **85.26 MiB** (85.04–86.27) — +624 KiB | **84.52 MiB** (84.32–84.71) — -140 KiB |
+| text, 32 MiB lines, query, 4p | **195.12 MiB** (194.87–195.34) | **195.07 MiB** (194.80–196.36) — -52 KiB | **197.29 MiB** (197.20–197.35) — +2.16 MiB | **196.65 MiB** (195.16–197.09) — +1.53 MiB |
+| text, 128 MiB lines, default parse, 1j | **27.43 MiB** (26.97–29.57) | **26.20 MiB** (25.99–26.30) — -1.23 MiB | **27.13 MiB** (26.44–27.27) — -304 KiB | **26.69 MiB** (26.69–28.85) — -756 KiB |
+| text, 128 MiB lines, default parse, 4j | **31.50 MiB** (31.26–32.76) | **29.23 MiB** (28.46–29.36) — -2.27 MiB | **31.98 MiB** (31.70–32.25) — +488 KiB | **30.80 MiB** (30.70–32.46) — -716 KiB |
+| text, 128 MiB lines, strict parse, 1j | **27.57 MiB** (26.96–27.84) | **26.41 MiB** (26.20–26.58) — -1.16 MiB | **27.09 MiB** (26.66–28.87) — -496 KiB | **26.90 MiB** (26.70–26.93) — -684 KiB |
+| text, 128 MiB lines, strict parse, 4j | **33.27 MiB** (31.64–33.45) | **29.30 MiB** (29.14–30.13) — -3.97 MiB | **32.25 MiB** (31.97–32.76) — -1.02 MiB | **32.87 MiB** (32.41–33.18) — -408 KiB |
+| text, 128 MiB lines, query, 1p | **181.11 MiB** (180.03–182.57) | **182.19 MiB** (180.16–182.93) — +1.08 MiB | **180.75 MiB** (180.71–181.39) — -368 KiB | **181.12 MiB** (180.39–183.14) — +4 KiB |
+| text, 128 MiB lines, query, 4p | **580.16 MiB** (579.95–580.66) | **580.11 MiB** (579.34–580.26) — -60 KiB | **580.37 MiB** (579.34–580.78) — +212 KiB | **580.75 MiB** (580.21–582.43) — +596 KiB |
+| text, 288 MiB lines, default parse, 1j | **31.47 MiB** (31.44–31.64) | **29.74 MiB** (29.69–29.83) — -1.73 MiB | **30.61 MiB** (30.31–30.83) — -880 KiB | **30.23 MiB** (29.88–30.67) — -1.24 MiB |
+| text, 288 MiB lines, default parse, 4j | **33.05 MiB** (32.73–33.23) | **30.32 MiB** (30.22–30.96) — -2.72 MiB | **32.68 MiB** (32.32–34.40) — -372 KiB | **32.57 MiB** (32.51–33.30) — -484 KiB |
+| text, 288 MiB lines, strict parse, 1j | **31.65 MiB** (30.78–31.85) | **29.62 MiB** (29.57–29.92) — -2.02 MiB | **30.57 MiB** (30.41–31.05) — -1.07 MiB | **30.21 MiB** (30.15–30.64) — -1.44 MiB |
+| text, 288 MiB lines, strict parse, 4j | **35.35 MiB** (33.18–35.51) | **30.11 MiB** (28.97–30.30) — -5.24 MiB | **32.77 MiB** (32.46–34.77) — -2.58 MiB | **34.23 MiB** (32.75–34.90) — -1.12 MiB |
+| text, 288 MiB lines, query, 1p | **341.27 MiB** (340.61–341.51) | **340.62 MiB** (340.08–341.35) — -660 KiB | **340.68 MiB** (340.52–340.96) — -604 KiB | **340.41 MiB** (340.16–340.82) — -872 KiB |
+| text, 288 MiB lines, query, 4p | **1219.87 MiB** (1219.48–1220.65) | **1220.34 MiB** (1220.26–1220.48) — +480 KiB | **1219.79 MiB** (1219.43–1219.84) — -76 KiB | **1219.47 MiB** (1219.02–1219.62) — -404 KiB |
+| text, 512 MiB lines, default parse, 1j | **32.31 MiB** (32.26–34.57) | **30.00 MiB** (29.88–30.17) — -2.31 MiB | **31.92 MiB** (31.48–32.05) — -400 KiB | **31.76 MiB** (31.69–32.11) — -564 KiB |
+| text, 512 MiB lines, default parse, 4j | **38.27 MiB** (35.93–38.56) | **33.44 MiB** (30.80–33.48) — -4.84 MiB | **37.46 MiB** (35.07–38.96) — -836 KiB | **36.62 MiB** (35.75–36.63) — -1.65 MiB |
+| text, 512 MiB lines, strict parse, 1j | **32.27 MiB** (32.14–32.44) | **29.91 MiB** (29.77–30.05) — -2.36 MiB | **32.04 MiB** (31.97–34.04) — -232 KiB | **31.72 MiB** (31.50–31.83) — -560 KiB |
+| text, 512 MiB lines, strict parse, 4j | **36.95 MiB** (36.08–37.12) | **32.03 MiB** (31.66–32.73) — -4.92 MiB | **36.49 MiB** (35.92–36.92) — -472 KiB | **36.62 MiB** (36.28–36.86) — -344 KiB |
+| text, 512 MiB lines, query, 1p | **566.73 MiB** (566.72–569.19) | **566.52 MiB** (566.24–568.55) — -220 KiB | **567.25 MiB** (566.65–569.25) — +528 KiB | **566.71 MiB** (565.85–567.18) — -24 KiB |
+| text, 512 MiB lines, query, 4p | **2118.91 MiB** (2117.80–2119.77) | **2119.81 MiB** (2117.43–2120.02) — +928 KiB | **2117.57 MiB** (2117.04–2117.91) — -1.34 MiB | **2120.38 MiB** (2117.64–2120.64) — +1.48 MiB |
+| text, lines at the bound, default parse, 1j | **40.95 MiB** (29.08–42.65) | **36.17 MiB** (30.39–36.41) — -4.77 MiB | **40.37 MiB** (31.09–40.70) — -588 KiB | **40.58 MiB** (35.29–40.63) — -372 KiB |
+| text, lines at the bound, strict parse, 1j | **41.06 MiB** (39.28–41.24) | **36.38 MiB** (34.07–36.45) — -4.68 MiB | **40.37 MiB** (40.18–40.94) — -704 KiB | **40.39 MiB** (40.24–40.85) — -688 KiB |
+| text, lines at the bound, query, 1p | **1081.26 MiB** (1081.25–1081.35) | **1080.76 MiB** (1080.08–1081.07) — -512 KiB | **1080.34 MiB** (1079.98–1080.77) — -944 KiB | **1080.68 MiB** (1080.35–1080.76) — -596 KiB |
+| escaped, 32 MiB lines, default parse, 1j | **25.09 MiB** (24.82–25.50) | **24.26 MiB** (24.10–24.52) — -852 KiB | **25.22 MiB** (24.98–25.38) — +132 KiB | **25.10 MiB** (24.99–25.34) — +8 KiB |
+| escaped, 32 MiB lines, default parse, 4j | **31.20 MiB** (31.09–33.70) | **29.34 MiB** (29.21–30.18) — -1.87 MiB | **30.25 MiB** (29.99–30.84) — -980 KiB | **31.17 MiB** (30.90–31.43) — -36 KiB |
+| escaped, 32 MiB lines, strict parse, 1j | **25.27 MiB** (24.83–27.13) | **24.36 MiB** (23.80–24.77) — -936 KiB | **25.26 MiB** (25.05–27.45) — -12 KiB | **25.29 MiB** (25.04–25.39) — +16 KiB |
+| escaped, 32 MiB lines, strict parse, 4j | **31.87 MiB** (31.15–33.28) | **31.11 MiB** (28.89–31.48) — -772 KiB | **30.89 MiB** (30.78–32.96) — -996 KiB | **30.73 MiB** (30.05–31.08) — -1.14 MiB |
+| escaped, 32 MiB lines, query, 1p | **110.96 MiB** (110.45–111.08) | **110.55 MiB** (110.38–110.68) — -420 KiB | **111.04 MiB** (111.04–113.05) — +84 KiB | **110.82 MiB** (110.62–110.88) — -144 KiB |
+| escaped, 32 MiB lines, query, 4p | **307.27 MiB** (306.82–308.55) | **304.45 MiB** (303.52–307.27) — -2.82 MiB | **307.12 MiB** (301.04–307.69) — -152 KiB | **305.21 MiB** (305.11–307.61) — -2.06 MiB |
+| escaped, 128 MiB lines, default parse, 1j | **26.82 MiB** (26.76–27.17) | **26.59 MiB** (26.05–26.60) — -240 KiB | **26.76 MiB** (26.73–28.36) — -64 KiB | **26.59 MiB** (26.55–26.75) — -240 KiB |
+| escaped, 128 MiB lines, default parse, 4j | **32.64 MiB** (32.62–34.93) | **29.19 MiB** (28.94–29.80) — -3.45 MiB | **32.17 MiB** (31.15–32.95) — -476 KiB | **32.13 MiB** (30.34–32.88) — -520 KiB |
+| escaped, 128 MiB lines, strict parse, 1j | **26.68 MiB** (26.51–26.89) | **26.27 MiB** (26.20–26.59) — -428 KiB | **26.62 MiB** (26.41–26.96) — -60 KiB | **26.73 MiB** (26.69–26.96) — +48 KiB |
+| escaped, 128 MiB lines, strict parse, 4j | **32.52 MiB** (30.96–33.44) | **30.13 MiB** (29.47–30.40) — -2.39 MiB | **32.74 MiB** (32.05–33.36) — +232 KiB | **32.57 MiB** (32.29–33.14) — +60 KiB |
+| escaped, 128 MiB lines, query, 1p | **292.75 MiB** (292.70–293.20) | **293.34 MiB** (292.18–293.40) — +608 KiB | **293.03 MiB** (292.75–293.31) — +284 KiB | **292.70 MiB** (292.41–292.98) — -52 KiB |
+| escaped, 128 MiB lines, query, 4p | **1023.46 MiB** (1012.27–1028.90) | **1025.06 MiB** (996.64–1027.33) — +1.60 MiB | **1025.52 MiB** (1007.43–1029.43) — +2.06 MiB | **1028.80 MiB** (1026.48–1029.34) — +5.34 MiB |
+| escaped, 288 MiB lines, default parse, 1j | **30.45 MiB** (30.33–32.42) | **29.62 MiB** (29.21–29.97) — -844 KiB | **30.48 MiB** (30.43–30.58) — +28 KiB | **30.65 MiB** (30.12–30.66) — +208 KiB |
+| escaped, 288 MiB lines, default parse, 4j | **32.83 MiB** (32.55–32.90) | **29.41 MiB** (29.11–32.54) — -3.42 MiB | **32.15 MiB** (31.58–34.22) — -696 KiB | **32.18 MiB** (32.13–32.26) — -664 KiB |
+| escaped, 288 MiB lines, strict parse, 1j | **30.35 MiB** (30.31–30.52) | **29.75 MiB** (29.12–29.96) — -612 KiB | **30.57 MiB** (30.53–30.68) — +228 KiB | **30.38 MiB** (30.05–30.76) — +32 KiB |
+| escaped, 288 MiB lines, strict parse, 4j | **35.57 MiB** (32.54–36.78) | **32.37 MiB** (31.08–33.54) — -3.20 MiB | **32.05 MiB** (31.15–36.75) — -3.52 MiB | **32.98 MiB** (32.62–34.68) — -2.59 MiB |
+| escaped, 288 MiB lines, query, 1p | **592.25 MiB** (592.23–593.03) | **592.61 MiB** (592.29–595.22) — +372 KiB | **592.52 MiB** (592.32–593.62) — +280 KiB | **592.84 MiB** (592.32–593.23) — +608 KiB |
+| escaped, 288 MiB lines, query, 4p | **2215.20 MiB** (2191.79–2225.59) | **2204.36 MiB** (2152.80–2204.64) — -10.84 MiB | **2228.86 MiB** (2198.71–2231.41) — +13.66 MiB | **2173.23 MiB** (2161.12–2195.16) — -41.97 MiB |
+| escaped, 512 MiB lines, default parse, 1j | **31.96 MiB** (31.79–32.25) | **29.95 MiB** (29.71–30.37) — -2.02 MiB | **31.75 MiB** (31.57–32.15) — -224 KiB | **32.11 MiB** (31.54–32.25) — +144 KiB |
+| escaped, 512 MiB lines, default parse, 4j | **38.70 MiB** (36.44–38.80) | **35.36 MiB** (33.29–35.57) — -3.34 MiB | **36.84 MiB** (36.40–37.05) — -1.86 MiB | **38.66 MiB** (35.93–40.57) — -36 KiB |
+| escaped, 512 MiB lines, strict parse, 1j | **32.25 MiB** (31.64–32.29) | **30.02 MiB** (30.01–31.82) — -2.23 MiB | **32.13 MiB** (31.90–33.83) — -120 KiB | **31.83 MiB** (31.46–31.89) — -424 KiB |
+| escaped, 512 MiB lines, strict parse, 4j | **38.47 MiB** (38.04–38.82) | **34.23 MiB** (34.05–35.15) — -4.24 MiB | **38.31 MiB** (36.61–38.53) — -160 KiB | **36.71 MiB** (36.18–38.49) — -1.76 MiB |
+| escaped, 512 MiB lines, query, 1p | **1014.77 MiB** (1014.58–1015.24) | **1014.97 MiB** (1014.68–1015.05) — +212 KiB | **1015.23 MiB** (1014.48–1017.15) — +476 KiB | **1014.85 MiB** (1014.71–1015.03) — +84 KiB |
+| escaped, 512 MiB lines, query, 4p | **3780.65 MiB** (3741.53–3851.43) | **3839.07 MiB** (3792.26–3855.02) — +58.41 MiB | **3874.55 MiB** (3870.73–3886.73) — +93.90 MiB | **3840.67 MiB** (3788.89–3884.49) — +60.02 MiB |
+| escaped, lines at the bound, default parse, 1j | **40.81 MiB** (40.45–41.20) | **36.47 MiB** (36.09–37.64) — -4.34 MiB | **40.40 MiB** (40.38–40.70) — -424 KiB | **40.45 MiB** (40.07–40.70) — -372 KiB |
+| escaped, lines at the bound, strict parse, 1j | **40.31 MiB** (40.24–40.63) | **36.52 MiB** (36.45–36.73) — -3.79 MiB | **40.59 MiB** (40.34–41.07) — +288 KiB | **40.43 MiB** (40.34–40.94) — +120 KiB |
+| escaped, lines at the bound, query, 1p | **1979.46 MiB** (1979.14–1980.08) | **1978.55 MiB** (1978.00–1979.55) — -936 KiB | **1978.04 MiB** (1977.67–1978.46) — -1.43 MiB | **1978.27 MiB** (1978.03–1978.81) — -1.19 MiB |
+| bytea, 32 MiB lines, default parse, 1j | **25.47 MiB** (25.23–25.50) | **24.42 MiB** (24.21–24.45) — -1.05 MiB | **25.29 MiB** (24.93–25.30) — -184 KiB | **24.73 MiB** (24.62–24.95) — -756 KiB |
+| bytea, 32 MiB lines, default parse, 4j | **32.89 MiB** (31.33–33.39) | **30.10 MiB** (29.11–31.23) — -2.79 MiB | **30.52 MiB** (30.42–30.57) — -2.37 MiB | **31.52 MiB** (31.02–31.69) — -1.36 MiB |
+| bytea, 32 MiB lines, strict parse, 1j | **25.27 MiB** (25.23–25.72) | **24.38 MiB** (24.18–24.48) — -912 KiB | **25.09 MiB** (25.08–25.35) — -180 KiB | **25.16 MiB** (25.00–25.16) — -116 KiB |
+| bytea, 32 MiB lines, strict parse, 4j | **31.33 MiB** (31.01–31.34) | **29.41 MiB** (29.00–29.64) — -1.91 MiB | **30.13 MiB** (30.12–30.50) — -1.20 MiB | **31.06 MiB** (30.93–31.22) — -276 KiB |
+| bytea, 32 MiB lines, query, 1p | **98.62 MiB** (98.54–98.95) | **99.11 MiB** (98.31–99.30) — +508 KiB | **99.14 MiB** (98.53–99.18) — +532 KiB | **99.21 MiB** (98.99–99.39) — +612 KiB |
+| bytea, 32 MiB lines, query, 4p | **256.63 MiB** (255.19–257.51) | **247.20 MiB** (244.77–249.21) — -9.43 MiB | **251.04 MiB** (248.70–258.83) — -5.59 MiB | **257.02 MiB** (256.77–257.28) — +404 KiB |
+| bytea, 128 MiB lines, default parse, 1j | **27.28 MiB** (26.98–27.87) | **26.52 MiB** (26.17–27.98) — -776 KiB | **26.60 MiB** (26.52–26.85) — -696 KiB | **26.78 MiB** (26.40–26.86) — -512 KiB |
+| bytea, 128 MiB lines, default parse, 4j | **32.98 MiB** (31.11–33.33) | **29.41 MiB** (28.80–30.51) — -3.57 MiB | **30.19 MiB** (29.45–33.26) — -2.79 MiB | **33.37 MiB** (31.66–33.52) — +404 KiB |
+| bytea, 128 MiB lines, strict parse, 1j | **26.78 MiB** (26.47–26.98) | **26.29 MiB** (25.99–26.51) — -500 KiB | **26.49 MiB** (26.27–26.62) — -296 KiB | **27.07 MiB** (26.91–28.65) — +296 KiB |
+| bytea, 128 MiB lines, strict parse, 4j | **34.22 MiB** (32.62–34.98) | **29.23 MiB** (28.80–29.68) — -4.99 MiB | **32.93 MiB** (32.92–34.76) — -1.30 MiB | **33.00 MiB** (32.70–33.34) — -1.22 MiB |
+| bytea, 128 MiB lines, query, 1p | **247.18 MiB** (246.53–247.22) | **247.17 MiB** (247.01–247.20) — -12 KiB | **246.40 MiB** (246.36–246.57) — -800 KiB | **246.55 MiB** (246.39–246.56) — -652 KiB |
+| bytea, 128 MiB lines, query, 4p | **810.92 MiB** (807.17–816.41) | **819.22 MiB** (811.24–829.55) — +8.30 MiB | **813.47 MiB** (812.99–819.88) — +2.55 MiB | **815.76 MiB** (813.48–829.44) — +4.84 MiB |
+| bytea, 288 MiB lines, default parse, 1j | **30.68 MiB** (30.45–31.07) | **29.76 MiB** (29.16–29.82) — -940 KiB | **30.46 MiB** (30.43–30.52) — -224 KiB | **30.49 MiB** (30.49–30.98) — -188 KiB |
+| bytea, 288 MiB lines, default parse, 4j | **32.95 MiB** (32.93–33.00) | **30.18 MiB** (29.01–30.31) — -2.76 MiB | **33.45 MiB** (32.47–34.59) — +516 KiB | **34.40 MiB** (33.52–36.32) — +1.45 MiB |
+| bytea, 288 MiB lines, strict parse, 1j | **30.09 MiB** (30.07–30.78) | **29.52 MiB** (29.43–31.41) — -580 KiB | **30.59 MiB** (30.36–30.62) — +516 KiB | **30.38 MiB** (30.23–30.49) — +296 KiB |
+| bytea, 288 MiB lines, strict parse, 4j | **33.38 MiB** (32.62–36.65) | **30.58 MiB** (29.09–31.94) — -2.80 MiB | **35.27 MiB** (34.57–36.50) — +1.89 MiB | **32.24 MiB** (31.89–35.08) — -1.14 MiB |
+| bytea, 288 MiB lines, query, 1p | **486.99 MiB** (485.39–488.25) | **486.55 MiB** (483.86–487.11) — -448 KiB | **486.41 MiB** (484.84–486.52) — -588 KiB | **486.25 MiB** (484.73–487.24) — -760 KiB |
+| bytea, 288 MiB lines, query, 4p | **1723.91 MiB** (1698.01–1747.80) | **1753.70 MiB** (1735.00–1760.78) — +29.79 MiB | **1736.22 MiB** (1716.71–1755.72) — +12.32 MiB | **1752.31 MiB** (1737.59–1760.81) — +28.41 MiB |
+| bytea, 512 MiB lines, default parse, 1j | **32.47 MiB** (32.15–32.52) | **29.99 MiB** (29.56–30.10) — -2.48 MiB | **31.72 MiB** (31.15–31.75) — -764 KiB | **31.49 MiB** (31.35–31.89) — -1004 KiB |
+| bytea, 512 MiB lines, default parse, 4j | **36.82 MiB** (35.56–39.03) | **33.13 MiB** (32.22–33.54) — -3.69 MiB | **38.66 MiB** (36.70–38.86) — +1.84 MiB | **38.59 MiB** (38.33–38.94) — +1.77 MiB |
+| bytea, 512 MiB lines, strict parse, 1j | **31.93 MiB** (31.86–32.10) | **29.90 MiB** (29.67–30.03) — -2.03 MiB | **32.02 MiB** (31.77–32.28) — +88 KiB | **32.06 MiB** (31.76–32.27) — +136 KiB |
+| bytea, 512 MiB lines, strict parse, 4j | **36.77 MiB** (36.04–37.71) | **32.48 MiB** (31.16–34.12) — -4.29 MiB | **38.65 MiB** (38.63–38.86) — +1.88 MiB | **36.39 MiB** (36.35–38.77) — -392 KiB |
+| bytea, 512 MiB lines, query, 1p | **824.14 MiB** (822.54–824.60) | **824.94 MiB** (822.45–825.89) — +820 KiB | **824.23 MiB** (822.05–824.61) — +92 KiB | **823.81 MiB** (822.32–825.23) — -332 KiB |
+| bytea, 512 MiB lines, query, 4p | **3028.47 MiB** (2971.13–3111.86) | **3065.44 MiB** (3024.33–3078.94) — +36.96 MiB | **3055.73 MiB** (3038.39–3067.65) — +27.25 MiB | **3051.88 MiB** (3045.91–3088.85) — +23.41 MiB |
+| bytea, lines at the bound, default parse, 1j | **40.63 MiB** (40.56–40.77) | **36.38 MiB** (36.11–37.08) — -4.25 MiB | **40.59 MiB** (40.19–40.65) — -44 KiB | **40.33 MiB** (40.31–41.03) — -312 KiB |
+| bytea, lines at the bound, strict parse, 1j | **40.49 MiB** (40.44–40.50) | **36.91 MiB** (36.44–36.95) — -3.58 MiB | **40.63 MiB** (40.36–42.56) — +144 KiB | **40.38 MiB** (40.16–40.55) — -116 KiB |
+| bytea, lines at the bound, query, 1p | **1592.60 MiB** (1592.36–1594.05) | **1592.51 MiB** (1592.08–1595.06) — -88 KiB | **1592.33 MiB** (1592.30–1593.30) — -272 KiB | **1592.17 MiB** (1592.08–1592.52) — -440 KiB |
+| int8array, 32 MiB lines, query, 1p | **210.88 MiB** (210.18–210.90) | **210.31 MiB** (210.26–212.52) — -580 KiB | **210.72 MiB** (210.05–211.23) — -156 KiB | **211.42 MiB** (210.34–211.47) — +560 KiB |
+| int8array, 128 MiB lines, query, 1p | **692.30 MiB** (692.24–693.24) | **692.30 MiB** (692.19–692.41) — +0 KiB | **691.80 MiB** (691.71–693.12) — -520 KiB | **693.05 MiB** (692.30–693.42) — +760 KiB |
+| int8array, 288 MiB lines, query, 1p | **1494.39 MiB** (1494.28–1494.83) | **1494.43 MiB** (1493.46–1495.18) — +44 KiB | **1494.72 MiB** (1494.22–1495.05) — +340 KiB | **1494.95 MiB** (1494.22–1495.09) — +572 KiB |
+| int8array, 512 MiB lines, query, 1p | **2614.46 MiB** (2614.08–2615.32) | **2615.16 MiB** (2614.51–2616.02) — +708 KiB | **2614.24 MiB** (2614.02–2614.35) — -228 KiB | **2614.18 MiB** (2613.75–2614.57) — -296 KiB |
+| int8array, lines at the bound, query, 1p | **5176.37 MiB** (5176.02–5176.61) | **5176.55 MiB** (5176.31–5176.81) — +188 KiB | **5176.38 MiB** (5176.03–5176.56) — +8 KiB | **5176.18 MiB** (5176.11–5176.37) — -196 KiB |
+| textarray, 32 MiB lines, query, 1p | **338.48 MiB** (338.32–340.25) | **338.43 MiB** (338.25–339.02) — -56 KiB | **338.64 MiB** (338.29–339.02) — +160 KiB | **338.99 MiB** (338.86–339.06) — +516 KiB |
+| textarray, 128 MiB lines, query, 1p | **1206.17 MiB** (1206.03–1206.84) | **1206.82 MiB** (1206.41–1207.38) — +668 KiB | **1207.15 MiB** (1206.16–1208.54) — +1004 KiB | **1206.65 MiB** (1206.63–1207.04) — +496 KiB |
+| textarray, 288 MiB lines, query, 1p | **2646.40 MiB** (2646.25–2647.15) | **2646.43 MiB** (2646.33–2646.75) — +28 KiB | **2646.68 MiB** (2646.11–2646.84) — +284 KiB | **2646.79 MiB** (2646.71–2647.06) — +396 KiB |
+| textarray, 512 MiB lines, query, 1p | **4662.94 MiB** (4662.88–4664.40) | **4663.19 MiB** (4661.86–4664.42) — +256 KiB | **4663.77 MiB** (4663.43–4665.39) — +844 KiB | **4662.93 MiB** (4662.86–4664.55) — -16 KiB |
+| textarray, lines at the bound, query, 1p | **9272.82 MiB** (9272.54–9274.77) | **9273.04 MiB** (9272.90–9274.62) — +220 KiB | **9272.74 MiB** (9272.34–9272.87) — -80 KiB | **9272.89 MiB** (9272.70–9273.01) — +72 KiB |
+| jsonb, 32 MiB lines, ordering filter, 1j | **84.39 MiB** (83.92–84.93) | **83.68 MiB** (83.16–84.20) — -732 KiB | **84.62 MiB** (84.27–84.63) — +236 KiB | **84.33 MiB** (84.13–84.98) — -64 KiB |
+| jsonb, 128 MiB lines, ordering filter, 1j | **258.56 MiB** (258.41–258.62) | **258.12 MiB** (257.77–259.93) — -448 KiB | **258.53 MiB** (258.39–258.63) — -32 KiB | **258.63 MiB** (258.57–258.64) — +72 KiB |
+| jsonb, 288 MiB lines, ordering filter, 1j | **548.49 MiB** (548.14–550.52) | **551.48 MiB** (550.60–552.36) — +2.99 MiB | **548.54 MiB** (548.14–549.75) — +52 KiB | **548.30 MiB** (548.16–550.64) — -200 KiB |
+| jsonb, 512 MiB lines, ordering filter, 1j | **950.73 MiB** (950.63–952.56) | **952.94 MiB** (952.64–956.35) — +2.21 MiB | **950.57 MiB** (950.16–950.94) — -160 KiB | **950.55 MiB** (950.12–953.12) — -188 KiB |
+| jsonb, lines at the bound, ordering filter, 1j | **1874.39 MiB** (1874.09–1876.18) | **1877.39 MiB** (1876.53–1879.85) — +3.01 MiB | **1876.25 MiB** (1874.46–1876.80) — +1.87 MiB | **1874.36 MiB** (1874.13–1876.79) — -32 KiB |
+
+Each cell is a peak resident set, and each stating leg's its median less the shipped leg's. The legs are `long-line-resident`'s but its anchors beside the bound, over its inputs, in a 15g container — its apparatus departure from the register's 512 MB, which one held line outgrows — each the shipped binary differing by its environment alone, and each was asked under `MIMALLOC_VERBOSE=1` which purge delay it runs under before it was read: the shipped leg 1000 ms, and each other leg the delay it states. Every leg states `--memory 15502147560`, sized as `long-line-resident` sizes it from the factors its instrument legs read in this sitting.
+
+Each leg against that allowance, over every rep of every row:
+- `shipped`: every rep within it, the largest 9274.77 MiB
+- `0 ms`: every rep within it, the largest 9274.62 MiB
+- `10 ms`: every rep within it, the largest 9272.87 MiB
+- `100 ms`: every rep within it, the largest 9273.01 MiB
+
+Per-rep readings (peak RSS):
+- text, 32 MiB lines, default parse, 1j (shipped): 24.81 MiB, 25.29 MiB, 25.10 MiB
+- text, 32 MiB lines, default parse, 1j (0 ms): 24.19 MiB, 24.43 MiB, 23.99 MiB
+- text, 32 MiB lines, default parse, 1j (10 ms): 24.95 MiB, 24.93 MiB, 24.91 MiB
+- text, 32 MiB lines, default parse, 1j (100 ms): 25.39 MiB, 25.47 MiB, 25.17 MiB
+- text, 32 MiB lines, default parse, 4j (shipped): 31.46 MiB, 31.10 MiB, 31.18 MiB
+- text, 32 MiB lines, default parse, 4j (0 ms): 29.56 MiB, 29.60 MiB, 29.83 MiB
+- text, 32 MiB lines, default parse, 4j (10 ms): 30.06 MiB, 30.02 MiB, 30.63 MiB
+- text, 32 MiB lines, default parse, 4j (100 ms): 31.66 MiB, 31.27 MiB, 32.73 MiB
+- text, 32 MiB lines, strict parse, 1j (shipped): 25.64 MiB, 25.40 MiB, 25.19 MiB
+- text, 32 MiB lines, strict parse, 1j (0 ms): 24.16 MiB, 24.34 MiB, 24.40 MiB
+- text, 32 MiB lines, strict parse, 1j (10 ms): 25.29 MiB, 25.15 MiB, 24.70 MiB
+- text, 32 MiB lines, strict parse, 1j (100 ms): 25.61 MiB, 25.22 MiB, 25.20 MiB
+- text, 32 MiB lines, strict parse, 4j (shipped): 31.11 MiB, 31.35 MiB, 30.98 MiB
+- text, 32 MiB lines, strict parse, 4j (0 ms): 30.07 MiB, 29.04 MiB, 28.93 MiB
+- text, 32 MiB lines, strict parse, 4j (10 ms): 30.22 MiB, 30.30 MiB, 30.49 MiB
+- text, 32 MiB lines, strict parse, 4j (100 ms): 31.51 MiB, 31.27 MiB, 31.53 MiB
+- text, 32 MiB lines, query, 1p (shipped): 84.65 MiB, 84.67 MiB, 84.47 MiB
+- text, 32 MiB lines, query, 1p (0 ms): 85.02 MiB, 84.92 MiB, 84.65 MiB
+- text, 32 MiB lines, query, 1p (10 ms): 85.04 MiB, 85.26 MiB, 86.27 MiB
+- text, 32 MiB lines, query, 1p (100 ms): 84.71 MiB, 84.32 MiB, 84.52 MiB
+- text, 32 MiB lines, query, 4p (shipped): 194.87 MiB, 195.34 MiB, 195.12 MiB
+- text, 32 MiB lines, query, 4p (0 ms): 195.07 MiB, 196.36 MiB, 194.80 MiB
+- text, 32 MiB lines, query, 4p (10 ms): 197.29 MiB, 197.35 MiB, 197.20 MiB
+- text, 32 MiB lines, query, 4p (100 ms): 196.65 MiB, 197.09 MiB, 195.16 MiB
+- text, 128 MiB lines, default parse, 1j (shipped): 27.43 MiB, 29.57 MiB, 26.97 MiB
+- text, 128 MiB lines, default parse, 1j (0 ms): 25.99 MiB, 26.30 MiB, 26.20 MiB
+- text, 128 MiB lines, default parse, 1j (10 ms): 26.44 MiB, 27.27 MiB, 27.13 MiB
+- text, 128 MiB lines, default parse, 1j (100 ms): 26.69 MiB, 26.69 MiB, 28.85 MiB
+- text, 128 MiB lines, default parse, 4j (shipped): 31.50 MiB, 31.26 MiB, 32.76 MiB
+- text, 128 MiB lines, default parse, 4j (0 ms): 29.23 MiB, 29.36 MiB, 28.46 MiB
+- text, 128 MiB lines, default parse, 4j (10 ms): 31.70 MiB, 32.25 MiB, 31.98 MiB
+- text, 128 MiB lines, default parse, 4j (100 ms): 32.46 MiB, 30.70 MiB, 30.80 MiB
+- text, 128 MiB lines, strict parse, 1j (shipped): 26.96 MiB, 27.84 MiB, 27.57 MiB
+- text, 128 MiB lines, strict parse, 1j (0 ms): 26.58 MiB, 26.41 MiB, 26.20 MiB
+- text, 128 MiB lines, strict parse, 1j (10 ms): 28.87 MiB, 27.09 MiB, 26.66 MiB
+- text, 128 MiB lines, strict parse, 1j (100 ms): 26.90 MiB, 26.93 MiB, 26.70 MiB
+- text, 128 MiB lines, strict parse, 4j (shipped): 31.64 MiB, 33.27 MiB, 33.45 MiB
+- text, 128 MiB lines, strict parse, 4j (0 ms): 29.14 MiB, 29.30 MiB, 30.13 MiB
+- text, 128 MiB lines, strict parse, 4j (10 ms): 32.76 MiB, 31.97 MiB, 32.25 MiB
+- text, 128 MiB lines, strict parse, 4j (100 ms): 32.41 MiB, 33.18 MiB, 32.87 MiB
+- text, 128 MiB lines, query, 1p (shipped): 181.11 MiB, 180.03 MiB, 182.57 MiB
+- text, 128 MiB lines, query, 1p (0 ms): 180.16 MiB, 182.93 MiB, 182.19 MiB
+- text, 128 MiB lines, query, 1p (10 ms): 180.71 MiB, 180.75 MiB, 181.39 MiB
+- text, 128 MiB lines, query, 1p (100 ms): 181.12 MiB, 180.39 MiB, 183.14 MiB
+- text, 128 MiB lines, query, 4p (shipped): 579.95 MiB, 580.66 MiB, 580.16 MiB
+- text, 128 MiB lines, query, 4p (0 ms): 579.34 MiB, 580.26 MiB, 580.11 MiB
+- text, 128 MiB lines, query, 4p (10 ms): 579.34 MiB, 580.37 MiB, 580.78 MiB
+- text, 128 MiB lines, query, 4p (100 ms): 580.75 MiB, 580.21 MiB, 582.43 MiB
+- text, 288 MiB lines, default parse, 1j (shipped): 31.47 MiB, 31.44 MiB, 31.64 MiB
+- text, 288 MiB lines, default parse, 1j (0 ms): 29.69 MiB, 29.74 MiB, 29.83 MiB
+- text, 288 MiB lines, default parse, 1j (10 ms): 30.83 MiB, 30.31 MiB, 30.61 MiB
+- text, 288 MiB lines, default parse, 1j (100 ms): 30.23 MiB, 30.67 MiB, 29.88 MiB
+- text, 288 MiB lines, default parse, 4j (shipped): 32.73 MiB, 33.05 MiB, 33.23 MiB
+- text, 288 MiB lines, default parse, 4j (0 ms): 30.96 MiB, 30.22 MiB, 30.32 MiB
+- text, 288 MiB lines, default parse, 4j (10 ms): 34.40 MiB, 32.32 MiB, 32.68 MiB
+- text, 288 MiB lines, default parse, 4j (100 ms): 32.51 MiB, 32.57 MiB, 33.30 MiB
+- text, 288 MiB lines, strict parse, 1j (shipped): 30.78 MiB, 31.65 MiB, 31.85 MiB
+- text, 288 MiB lines, strict parse, 1j (0 ms): 29.57 MiB, 29.92 MiB, 29.62 MiB
+- text, 288 MiB lines, strict parse, 1j (10 ms): 31.05 MiB, 30.41 MiB, 30.57 MiB
+- text, 288 MiB lines, strict parse, 1j (100 ms): 30.21 MiB, 30.15 MiB, 30.64 MiB
+- text, 288 MiB lines, strict parse, 4j (shipped): 35.51 MiB, 33.18 MiB, 35.35 MiB
+- text, 288 MiB lines, strict parse, 4j (0 ms): 30.30 MiB, 28.97 MiB, 30.11 MiB
+- text, 288 MiB lines, strict parse, 4j (10 ms): 32.77 MiB, 34.77 MiB, 32.46 MiB
+- text, 288 MiB lines, strict parse, 4j (100 ms): 32.75 MiB, 34.90 MiB, 34.23 MiB
+- text, 288 MiB lines, query, 1p (shipped): 340.61 MiB, 341.51 MiB, 341.27 MiB
+- text, 288 MiB lines, query, 1p (0 ms): 341.35 MiB, 340.08 MiB, 340.62 MiB
+- text, 288 MiB lines, query, 1p (10 ms): 340.96 MiB, 340.68 MiB, 340.52 MiB
+- text, 288 MiB lines, query, 1p (100 ms): 340.41 MiB, 340.82 MiB, 340.16 MiB
+- text, 288 MiB lines, query, 4p (shipped): 1219.87 MiB, 1219.48 MiB, 1220.65 MiB
+- text, 288 MiB lines, query, 4p (0 ms): 1220.34 MiB, 1220.26 MiB, 1220.48 MiB
+- text, 288 MiB lines, query, 4p (10 ms): 1219.79 MiB, 1219.43 MiB, 1219.84 MiB
+- text, 288 MiB lines, query, 4p (100 ms): 1219.62 MiB, 1219.02 MiB, 1219.47 MiB
+- text, 512 MiB lines, default parse, 1j (shipped): 34.57 MiB, 32.31 MiB, 32.26 MiB
+- text, 512 MiB lines, default parse, 1j (0 ms): 30.00 MiB, 29.88 MiB, 30.17 MiB
+- text, 512 MiB lines, default parse, 1j (10 ms): 31.48 MiB, 31.92 MiB, 32.05 MiB
+- text, 512 MiB lines, default parse, 1j (100 ms): 32.11 MiB, 31.76 MiB, 31.69 MiB
+- text, 512 MiB lines, default parse, 4j (shipped): 35.93 MiB, 38.27 MiB, 38.56 MiB
+- text, 512 MiB lines, default parse, 4j (0 ms): 30.80 MiB, 33.48 MiB, 33.44 MiB
+- text, 512 MiB lines, default parse, 4j (10 ms): 38.96 MiB, 37.46 MiB, 35.07 MiB
+- text, 512 MiB lines, default parse, 4j (100 ms): 35.75 MiB, 36.63 MiB, 36.62 MiB
+- text, 512 MiB lines, strict parse, 1j (shipped): 32.27 MiB, 32.44 MiB, 32.14 MiB
+- text, 512 MiB lines, strict parse, 1j (0 ms): 30.05 MiB, 29.77 MiB, 29.91 MiB
+- text, 512 MiB lines, strict parse, 1j (10 ms): 34.04 MiB, 32.04 MiB, 31.97 MiB
+- text, 512 MiB lines, strict parse, 1j (100 ms): 31.72 MiB, 31.83 MiB, 31.50 MiB
+- text, 512 MiB lines, strict parse, 4j (shipped): 36.95 MiB, 37.12 MiB, 36.08 MiB
+- text, 512 MiB lines, strict parse, 4j (0 ms): 31.66 MiB, 32.03 MiB, 32.73 MiB
+- text, 512 MiB lines, strict parse, 4j (10 ms): 36.49 MiB, 35.92 MiB, 36.92 MiB
+- text, 512 MiB lines, strict parse, 4j (100 ms): 36.62 MiB, 36.86 MiB, 36.28 MiB
+- text, 512 MiB lines, query, 1p (shipped): 566.73 MiB, 569.19 MiB, 566.72 MiB
+- text, 512 MiB lines, query, 1p (0 ms): 568.55 MiB, 566.52 MiB, 566.24 MiB
+- text, 512 MiB lines, query, 1p (10 ms): 567.25 MiB, 569.25 MiB, 566.65 MiB
+- text, 512 MiB lines, query, 1p (100 ms): 566.71 MiB, 567.18 MiB, 565.85 MiB
+- text, 512 MiB lines, query, 4p (shipped): 2118.91 MiB, 2119.77 MiB, 2117.80 MiB
+- text, 512 MiB lines, query, 4p (0 ms): 2117.43 MiB, 2120.02 MiB, 2119.81 MiB
+- text, 512 MiB lines, query, 4p (10 ms): 2117.04 MiB, 2117.91 MiB, 2117.57 MiB
+- text, 512 MiB lines, query, 4p (100 ms): 2117.64 MiB, 2120.64 MiB, 2120.38 MiB
+- text, lines at the bound, default parse, 1j (shipped): 29.08 MiB, 40.95 MiB, 42.65 MiB
+- text, lines at the bound, default parse, 1j (0 ms): 30.39 MiB, 36.41 MiB, 36.17 MiB
+- text, lines at the bound, default parse, 1j (10 ms): 31.09 MiB, 40.37 MiB, 40.70 MiB
+- text, lines at the bound, default parse, 1j (100 ms): 35.29 MiB, 40.58 MiB, 40.63 MiB
+- text, lines at the bound, strict parse, 1j (shipped): 39.28 MiB, 41.06 MiB, 41.24 MiB
+- text, lines at the bound, strict parse, 1j (0 ms): 34.07 MiB, 36.45 MiB, 36.38 MiB
+- text, lines at the bound, strict parse, 1j (10 ms): 40.94 MiB, 40.37 MiB, 40.18 MiB
+- text, lines at the bound, strict parse, 1j (100 ms): 40.39 MiB, 40.85 MiB, 40.24 MiB
+- text, lines at the bound, query, 1p (shipped): 1081.35 MiB, 1081.26 MiB, 1081.25 MiB
+- text, lines at the bound, query, 1p (0 ms): 1080.08 MiB, 1081.07 MiB, 1080.76 MiB
+- text, lines at the bound, query, 1p (10 ms): 1080.77 MiB, 1079.98 MiB, 1080.34 MiB
+- text, lines at the bound, query, 1p (100 ms): 1080.76 MiB, 1080.68 MiB, 1080.35 MiB
+- escaped, 32 MiB lines, default parse, 1j (shipped): 25.50 MiB, 25.09 MiB, 24.82 MiB
+- escaped, 32 MiB lines, default parse, 1j (0 ms): 24.26 MiB, 24.10 MiB, 24.52 MiB
+- escaped, 32 MiB lines, default parse, 1j (10 ms): 24.98 MiB, 25.22 MiB, 25.38 MiB
+- escaped, 32 MiB lines, default parse, 1j (100 ms): 24.99 MiB, 25.34 MiB, 25.10 MiB
+- escaped, 32 MiB lines, default parse, 4j (shipped): 31.20 MiB, 33.70 MiB, 31.09 MiB
+- escaped, 32 MiB lines, default parse, 4j (0 ms): 29.21 MiB, 29.34 MiB, 30.18 MiB
+- escaped, 32 MiB lines, default parse, 4j (10 ms): 29.99 MiB, 30.25 MiB, 30.84 MiB
+- escaped, 32 MiB lines, default parse, 4j (100 ms): 31.17 MiB, 31.43 MiB, 30.90 MiB
+- escaped, 32 MiB lines, strict parse, 1j (shipped): 24.83 MiB, 27.13 MiB, 25.27 MiB
+- escaped, 32 MiB lines, strict parse, 1j (0 ms): 24.77 MiB, 23.80 MiB, 24.36 MiB
+- escaped, 32 MiB lines, strict parse, 1j (10 ms): 25.26 MiB, 27.45 MiB, 25.05 MiB
+- escaped, 32 MiB lines, strict parse, 1j (100 ms): 25.39 MiB, 25.04 MiB, 25.29 MiB
+- escaped, 32 MiB lines, strict parse, 4j (shipped): 33.28 MiB, 31.87 MiB, 31.15 MiB
+- escaped, 32 MiB lines, strict parse, 4j (0 ms): 28.89 MiB, 31.48 MiB, 31.11 MiB
+- escaped, 32 MiB lines, strict parse, 4j (10 ms): 30.78 MiB, 30.89 MiB, 32.96 MiB
+- escaped, 32 MiB lines, strict parse, 4j (100 ms): 31.08 MiB, 30.73 MiB, 30.05 MiB
+- escaped, 32 MiB lines, query, 1p (shipped): 111.08 MiB, 110.45 MiB, 110.96 MiB
+- escaped, 32 MiB lines, query, 1p (0 ms): 110.38 MiB, 110.68 MiB, 110.55 MiB
+- escaped, 32 MiB lines, query, 1p (10 ms): 111.04 MiB, 111.04 MiB, 113.05 MiB
+- escaped, 32 MiB lines, query, 1p (100 ms): 110.62 MiB, 110.88 MiB, 110.82 MiB
+- escaped, 32 MiB lines, query, 4p (shipped): 308.55 MiB, 306.82 MiB, 307.27 MiB
+- escaped, 32 MiB lines, query, 4p (0 ms): 303.52 MiB, 304.45 MiB, 307.27 MiB
+- escaped, 32 MiB lines, query, 4p (10 ms): 301.04 MiB, 307.69 MiB, 307.12 MiB
+- escaped, 32 MiB lines, query, 4p (100 ms): 305.11 MiB, 307.61 MiB, 305.21 MiB
+- escaped, 128 MiB lines, default parse, 1j (shipped): 27.17 MiB, 26.76 MiB, 26.82 MiB
+- escaped, 128 MiB lines, default parse, 1j (0 ms): 26.59 MiB, 26.05 MiB, 26.60 MiB
+- escaped, 128 MiB lines, default parse, 1j (10 ms): 28.36 MiB, 26.73 MiB, 26.76 MiB
+- escaped, 128 MiB lines, default parse, 1j (100 ms): 26.55 MiB, 26.59 MiB, 26.75 MiB
+- escaped, 128 MiB lines, default parse, 4j (shipped): 34.93 MiB, 32.64 MiB, 32.62 MiB
+- escaped, 128 MiB lines, default parse, 4j (0 ms): 28.94 MiB, 29.80 MiB, 29.19 MiB
+- escaped, 128 MiB lines, default parse, 4j (10 ms): 32.17 MiB, 31.15 MiB, 32.95 MiB
+- escaped, 128 MiB lines, default parse, 4j (100 ms): 30.34 MiB, 32.13 MiB, 32.88 MiB
+- escaped, 128 MiB lines, strict parse, 1j (shipped): 26.51 MiB, 26.89 MiB, 26.68 MiB
+- escaped, 128 MiB lines, strict parse, 1j (0 ms): 26.59 MiB, 26.20 MiB, 26.27 MiB
+- escaped, 128 MiB lines, strict parse, 1j (10 ms): 26.96 MiB, 26.41 MiB, 26.62 MiB
+- escaped, 128 MiB lines, strict parse, 1j (100 ms): 26.73 MiB, 26.69 MiB, 26.96 MiB
+- escaped, 128 MiB lines, strict parse, 4j (shipped): 30.96 MiB, 32.52 MiB, 33.44 MiB
+- escaped, 128 MiB lines, strict parse, 4j (0 ms): 30.40 MiB, 29.47 MiB, 30.13 MiB
+- escaped, 128 MiB lines, strict parse, 4j (10 ms): 32.05 MiB, 32.74 MiB, 33.36 MiB
+- escaped, 128 MiB lines, strict parse, 4j (100 ms): 32.29 MiB, 33.14 MiB, 32.57 MiB
+- escaped, 128 MiB lines, query, 1p (shipped): 293.20 MiB, 292.70 MiB, 292.75 MiB
+- escaped, 128 MiB lines, query, 1p (0 ms): 292.18 MiB, 293.34 MiB, 293.40 MiB
+- escaped, 128 MiB lines, query, 1p (10 ms): 293.31 MiB, 293.03 MiB, 292.75 MiB
+- escaped, 128 MiB lines, query, 1p (100 ms): 292.70 MiB, 292.41 MiB, 292.98 MiB
+- escaped, 128 MiB lines, query, 4p (shipped): 1012.27 MiB, 1023.46 MiB, 1028.90 MiB
+- escaped, 128 MiB lines, query, 4p (0 ms): 996.64 MiB, 1027.33 MiB, 1025.06 MiB
+- escaped, 128 MiB lines, query, 4p (10 ms): 1007.43 MiB, 1029.43 MiB, 1025.52 MiB
+- escaped, 128 MiB lines, query, 4p (100 ms): 1026.48 MiB, 1028.80 MiB, 1029.34 MiB
+- escaped, 288 MiB lines, default parse, 1j (shipped): 30.33 MiB, 30.45 MiB, 32.42 MiB
+- escaped, 288 MiB lines, default parse, 1j (0 ms): 29.21 MiB, 29.97 MiB, 29.62 MiB
+- escaped, 288 MiB lines, default parse, 1j (10 ms): 30.58 MiB, 30.43 MiB, 30.48 MiB
+- escaped, 288 MiB lines, default parse, 1j (100 ms): 30.65 MiB, 30.12 MiB, 30.66 MiB
+- escaped, 288 MiB lines, default parse, 4j (shipped): 32.55 MiB, 32.90 MiB, 32.83 MiB
+- escaped, 288 MiB lines, default parse, 4j (0 ms): 29.41 MiB, 29.11 MiB, 32.54 MiB
+- escaped, 288 MiB lines, default parse, 4j (10 ms): 32.15 MiB, 34.22 MiB, 31.58 MiB
+- escaped, 288 MiB lines, default parse, 4j (100 ms): 32.13 MiB, 32.18 MiB, 32.26 MiB
+- escaped, 288 MiB lines, strict parse, 1j (shipped): 30.35 MiB, 30.52 MiB, 30.31 MiB
+- escaped, 288 MiB lines, strict parse, 1j (0 ms): 29.96 MiB, 29.75 MiB, 29.12 MiB
+- escaped, 288 MiB lines, strict parse, 1j (10 ms): 30.57 MiB, 30.68 MiB, 30.53 MiB
+- escaped, 288 MiB lines, strict parse, 1j (100 ms): 30.76 MiB, 30.05 MiB, 30.38 MiB
+- escaped, 288 MiB lines, strict parse, 4j (shipped): 32.54 MiB, 36.78 MiB, 35.57 MiB
+- escaped, 288 MiB lines, strict parse, 4j (0 ms): 31.08 MiB, 33.54 MiB, 32.37 MiB
+- escaped, 288 MiB lines, strict parse, 4j (10 ms): 36.75 MiB, 32.05 MiB, 31.15 MiB
+- escaped, 288 MiB lines, strict parse, 4j (100 ms): 32.98 MiB, 34.68 MiB, 32.62 MiB
+- escaped, 288 MiB lines, query, 1p (shipped): 593.03 MiB, 592.25 MiB, 592.23 MiB
+- escaped, 288 MiB lines, query, 1p (0 ms): 592.61 MiB, 595.22 MiB, 592.29 MiB
+- escaped, 288 MiB lines, query, 1p (10 ms): 592.32 MiB, 592.52 MiB, 593.62 MiB
+- escaped, 288 MiB lines, query, 1p (100 ms): 592.32 MiB, 593.23 MiB, 592.84 MiB
+- escaped, 288 MiB lines, query, 4p (shipped): 2225.59 MiB, 2191.79 MiB, 2215.20 MiB
+- escaped, 288 MiB lines, query, 4p (0 ms): 2204.36 MiB, 2204.64 MiB, 2152.80 MiB
+- escaped, 288 MiB lines, query, 4p (10 ms): 2228.86 MiB, 2198.71 MiB, 2231.41 MiB
+- escaped, 288 MiB lines, query, 4p (100 ms): 2173.23 MiB, 2195.16 MiB, 2161.12 MiB
+- escaped, 512 MiB lines, default parse, 1j (shipped): 32.25 MiB, 31.79 MiB, 31.96 MiB
+- escaped, 512 MiB lines, default parse, 1j (0 ms): 30.37 MiB, 29.71 MiB, 29.95 MiB
+- escaped, 512 MiB lines, default parse, 1j (10 ms): 31.57 MiB, 32.15 MiB, 31.75 MiB
+- escaped, 512 MiB lines, default parse, 1j (100 ms): 32.25 MiB, 32.11 MiB, 31.54 MiB
+- escaped, 512 MiB lines, default parse, 4j (shipped): 38.70 MiB, 36.44 MiB, 38.80 MiB
+- escaped, 512 MiB lines, default parse, 4j (0 ms): 33.29 MiB, 35.57 MiB, 35.36 MiB
+- escaped, 512 MiB lines, default parse, 4j (10 ms): 36.84 MiB, 37.05 MiB, 36.40 MiB
+- escaped, 512 MiB lines, default parse, 4j (100 ms): 40.57 MiB, 38.66 MiB, 35.93 MiB
+- escaped, 512 MiB lines, strict parse, 1j (shipped): 32.25 MiB, 31.64 MiB, 32.29 MiB
+- escaped, 512 MiB lines, strict parse, 1j (0 ms): 30.02 MiB, 31.82 MiB, 30.01 MiB
+- escaped, 512 MiB lines, strict parse, 1j (10 ms): 31.90 MiB, 33.83 MiB, 32.13 MiB
+- escaped, 512 MiB lines, strict parse, 1j (100 ms): 31.46 MiB, 31.83 MiB, 31.89 MiB
+- escaped, 512 MiB lines, strict parse, 4j (shipped): 38.82 MiB, 38.04 MiB, 38.47 MiB
+- escaped, 512 MiB lines, strict parse, 4j (0 ms): 34.23 MiB, 34.05 MiB, 35.15 MiB
+- escaped, 512 MiB lines, strict parse, 4j (10 ms): 36.61 MiB, 38.53 MiB, 38.31 MiB
+- escaped, 512 MiB lines, strict parse, 4j (100 ms): 38.49 MiB, 36.71 MiB, 36.18 MiB
+- escaped, 512 MiB lines, query, 1p (shipped): 1014.58 MiB, 1015.24 MiB, 1014.77 MiB
+- escaped, 512 MiB lines, query, 1p (0 ms): 1015.05 MiB, 1014.68 MiB, 1014.97 MiB
+- escaped, 512 MiB lines, query, 1p (10 ms): 1014.48 MiB, 1017.15 MiB, 1015.23 MiB
+- escaped, 512 MiB lines, query, 1p (100 ms): 1015.03 MiB, 1014.85 MiB, 1014.71 MiB
+- escaped, 512 MiB lines, query, 4p (shipped): 3780.65 MiB, 3741.53 MiB, 3851.43 MiB
+- escaped, 512 MiB lines, query, 4p (0 ms): 3855.02 MiB, 3792.26 MiB, 3839.07 MiB
+- escaped, 512 MiB lines, query, 4p (10 ms): 3870.73 MiB, 3874.55 MiB, 3886.73 MiB
+- escaped, 512 MiB lines, query, 4p (100 ms): 3884.49 MiB, 3840.67 MiB, 3788.89 MiB
+- escaped, lines at the bound, default parse, 1j (shipped): 41.20 MiB, 40.81 MiB, 40.45 MiB
+- escaped, lines at the bound, default parse, 1j (0 ms): 36.09 MiB, 36.47 MiB, 37.64 MiB
+- escaped, lines at the bound, default parse, 1j (10 ms): 40.70 MiB, 40.40 MiB, 40.38 MiB
+- escaped, lines at the bound, default parse, 1j (100 ms): 40.45 MiB, 40.07 MiB, 40.70 MiB
+- escaped, lines at the bound, strict parse, 1j (shipped): 40.63 MiB, 40.24 MiB, 40.31 MiB
+- escaped, lines at the bound, strict parse, 1j (0 ms): 36.52 MiB, 36.45 MiB, 36.73 MiB
+- escaped, lines at the bound, strict parse, 1j (10 ms): 40.59 MiB, 41.07 MiB, 40.34 MiB
+- escaped, lines at the bound, strict parse, 1j (100 ms): 40.94 MiB, 40.34 MiB, 40.43 MiB
+- escaped, lines at the bound, query, 1p (shipped): 1979.14 MiB, 1979.46 MiB, 1980.08 MiB
+- escaped, lines at the bound, query, 1p (0 ms): 1978.00 MiB, 1978.55 MiB, 1979.55 MiB
+- escaped, lines at the bound, query, 1p (10 ms): 1977.67 MiB, 1978.46 MiB, 1978.04 MiB
+- escaped, lines at the bound, query, 1p (100 ms): 1978.03 MiB, 1978.81 MiB, 1978.27 MiB
+- bytea, 32 MiB lines, default parse, 1j (shipped): 25.47 MiB, 25.50 MiB, 25.23 MiB
+- bytea, 32 MiB lines, default parse, 1j (0 ms): 24.45 MiB, 24.21 MiB, 24.42 MiB
+- bytea, 32 MiB lines, default parse, 1j (10 ms): 24.93 MiB, 25.30 MiB, 25.29 MiB
+- bytea, 32 MiB lines, default parse, 1j (100 ms): 24.62 MiB, 24.73 MiB, 24.95 MiB
+- bytea, 32 MiB lines, default parse, 4j (shipped): 31.33 MiB, 32.89 MiB, 33.39 MiB
+- bytea, 32 MiB lines, default parse, 4j (0 ms): 31.23 MiB, 30.10 MiB, 29.11 MiB
+- bytea, 32 MiB lines, default parse, 4j (10 ms): 30.42 MiB, 30.57 MiB, 30.52 MiB
+- bytea, 32 MiB lines, default parse, 4j (100 ms): 31.69 MiB, 31.52 MiB, 31.02 MiB
+- bytea, 32 MiB lines, strict parse, 1j (shipped): 25.72 MiB, 25.23 MiB, 25.27 MiB
+- bytea, 32 MiB lines, strict parse, 1j (0 ms): 24.38 MiB, 24.48 MiB, 24.18 MiB
+- bytea, 32 MiB lines, strict parse, 1j (10 ms): 25.08 MiB, 25.09 MiB, 25.35 MiB
+- bytea, 32 MiB lines, strict parse, 1j (100 ms): 25.16 MiB, 25.16 MiB, 25.00 MiB
+- bytea, 32 MiB lines, strict parse, 4j (shipped): 31.01 MiB, 31.34 MiB, 31.33 MiB
+- bytea, 32 MiB lines, strict parse, 4j (0 ms): 29.64 MiB, 29.00 MiB, 29.41 MiB
+- bytea, 32 MiB lines, strict parse, 4j (10 ms): 30.12 MiB, 30.13 MiB, 30.50 MiB
+- bytea, 32 MiB lines, strict parse, 4j (100 ms): 31.22 MiB, 30.93 MiB, 31.06 MiB
+- bytea, 32 MiB lines, query, 1p (shipped): 98.54 MiB, 98.95 MiB, 98.62 MiB
+- bytea, 32 MiB lines, query, 1p (0 ms): 99.30 MiB, 98.31 MiB, 99.11 MiB
+- bytea, 32 MiB lines, query, 1p (10 ms): 99.14 MiB, 99.18 MiB, 98.53 MiB
+- bytea, 32 MiB lines, query, 1p (100 ms): 98.99 MiB, 99.21 MiB, 99.39 MiB
+- bytea, 32 MiB lines, query, 4p (shipped): 256.63 MiB, 255.19 MiB, 257.51 MiB
+- bytea, 32 MiB lines, query, 4p (0 ms): 244.77 MiB, 249.21 MiB, 247.20 MiB
+- bytea, 32 MiB lines, query, 4p (10 ms): 258.83 MiB, 248.70 MiB, 251.04 MiB
+- bytea, 32 MiB lines, query, 4p (100 ms): 256.77 MiB, 257.28 MiB, 257.02 MiB
+- bytea, 128 MiB lines, default parse, 1j (shipped): 26.98 MiB, 27.87 MiB, 27.28 MiB
+- bytea, 128 MiB lines, default parse, 1j (0 ms): 27.98 MiB, 26.52 MiB, 26.17 MiB
+- bytea, 128 MiB lines, default parse, 1j (10 ms): 26.52 MiB, 26.85 MiB, 26.60 MiB
+- bytea, 128 MiB lines, default parse, 1j (100 ms): 26.40 MiB, 26.86 MiB, 26.78 MiB
+- bytea, 128 MiB lines, default parse, 4j (shipped): 33.33 MiB, 32.98 MiB, 31.11 MiB
+- bytea, 128 MiB lines, default parse, 4j (0 ms): 29.41 MiB, 28.80 MiB, 30.51 MiB
+- bytea, 128 MiB lines, default parse, 4j (10 ms): 30.19 MiB, 29.45 MiB, 33.26 MiB
+- bytea, 128 MiB lines, default parse, 4j (100 ms): 31.66 MiB, 33.37 MiB, 33.52 MiB
+- bytea, 128 MiB lines, strict parse, 1j (shipped): 26.78 MiB, 26.98 MiB, 26.47 MiB
+- bytea, 128 MiB lines, strict parse, 1j (0 ms): 25.99 MiB, 26.29 MiB, 26.51 MiB
+- bytea, 128 MiB lines, strict parse, 1j (10 ms): 26.49 MiB, 26.62 MiB, 26.27 MiB
+- bytea, 128 MiB lines, strict parse, 1j (100 ms): 26.91 MiB, 28.65 MiB, 27.07 MiB
+- bytea, 128 MiB lines, strict parse, 4j (shipped): 34.98 MiB, 32.62 MiB, 34.22 MiB
+- bytea, 128 MiB lines, strict parse, 4j (0 ms): 29.23 MiB, 29.68 MiB, 28.80 MiB
+- bytea, 128 MiB lines, strict parse, 4j (10 ms): 32.92 MiB, 34.76 MiB, 32.93 MiB
+- bytea, 128 MiB lines, strict parse, 4j (100 ms): 33.34 MiB, 33.00 MiB, 32.70 MiB
+- bytea, 128 MiB lines, query, 1p (shipped): 247.22 MiB, 246.53 MiB, 247.18 MiB
+- bytea, 128 MiB lines, query, 1p (0 ms): 247.17 MiB, 247.01 MiB, 247.20 MiB
+- bytea, 128 MiB lines, query, 1p (10 ms): 246.40 MiB, 246.36 MiB, 246.57 MiB
+- bytea, 128 MiB lines, query, 1p (100 ms): 246.55 MiB, 246.56 MiB, 246.39 MiB
+- bytea, 128 MiB lines, query, 4p (shipped): 816.41 MiB, 810.92 MiB, 807.17 MiB
+- bytea, 128 MiB lines, query, 4p (0 ms): 829.55 MiB, 811.24 MiB, 819.22 MiB
+- bytea, 128 MiB lines, query, 4p (10 ms): 819.88 MiB, 812.99 MiB, 813.47 MiB
+- bytea, 128 MiB lines, query, 4p (100 ms): 813.48 MiB, 829.44 MiB, 815.76 MiB
+- bytea, 288 MiB lines, default parse, 1j (shipped): 30.45 MiB, 30.68 MiB, 31.07 MiB
+- bytea, 288 MiB lines, default parse, 1j (0 ms): 29.16 MiB, 29.76 MiB, 29.82 MiB
+- bytea, 288 MiB lines, default parse, 1j (10 ms): 30.43 MiB, 30.52 MiB, 30.46 MiB
+- bytea, 288 MiB lines, default parse, 1j (100 ms): 30.49 MiB, 30.49 MiB, 30.98 MiB
+- bytea, 288 MiB lines, default parse, 4j (shipped): 33.00 MiB, 32.95 MiB, 32.93 MiB
+- bytea, 288 MiB lines, default parse, 4j (0 ms): 29.01 MiB, 30.31 MiB, 30.18 MiB
+- bytea, 288 MiB lines, default parse, 4j (10 ms): 32.47 MiB, 34.59 MiB, 33.45 MiB
+- bytea, 288 MiB lines, default parse, 4j (100 ms): 33.52 MiB, 36.32 MiB, 34.40 MiB
+- bytea, 288 MiB lines, strict parse, 1j (shipped): 30.09 MiB, 30.78 MiB, 30.07 MiB
+- bytea, 288 MiB lines, strict parse, 1j (0 ms): 29.52 MiB, 29.43 MiB, 31.41 MiB
+- bytea, 288 MiB lines, strict parse, 1j (10 ms): 30.62 MiB, 30.36 MiB, 30.59 MiB
+- bytea, 288 MiB lines, strict parse, 1j (100 ms): 30.23 MiB, 30.38 MiB, 30.49 MiB
+- bytea, 288 MiB lines, strict parse, 4j (shipped): 32.62 MiB, 36.65 MiB, 33.38 MiB
+- bytea, 288 MiB lines, strict parse, 4j (0 ms): 31.94 MiB, 29.09 MiB, 30.58 MiB
+- bytea, 288 MiB lines, strict parse, 4j (10 ms): 36.50 MiB, 35.27 MiB, 34.57 MiB
+- bytea, 288 MiB lines, strict parse, 4j (100 ms): 35.08 MiB, 31.89 MiB, 32.24 MiB
+- bytea, 288 MiB lines, query, 1p (shipped): 485.39 MiB, 486.99 MiB, 488.25 MiB
+- bytea, 288 MiB lines, query, 1p (0 ms): 483.86 MiB, 487.11 MiB, 486.55 MiB
+- bytea, 288 MiB lines, query, 1p (10 ms): 484.84 MiB, 486.41 MiB, 486.52 MiB
+- bytea, 288 MiB lines, query, 1p (100 ms): 484.73 MiB, 487.24 MiB, 486.25 MiB
+- bytea, 288 MiB lines, query, 4p (shipped): 1698.01 MiB, 1747.80 MiB, 1723.91 MiB
+- bytea, 288 MiB lines, query, 4p (0 ms): 1753.70 MiB, 1735.00 MiB, 1760.78 MiB
+- bytea, 288 MiB lines, query, 4p (10 ms): 1736.22 MiB, 1755.72 MiB, 1716.71 MiB
+- bytea, 288 MiB lines, query, 4p (100 ms): 1760.81 MiB, 1752.31 MiB, 1737.59 MiB
+- bytea, 512 MiB lines, default parse, 1j (shipped): 32.47 MiB, 32.52 MiB, 32.15 MiB
+- bytea, 512 MiB lines, default parse, 1j (0 ms): 29.56 MiB, 29.99 MiB, 30.10 MiB
+- bytea, 512 MiB lines, default parse, 1j (10 ms): 31.72 MiB, 31.75 MiB, 31.15 MiB
+- bytea, 512 MiB lines, default parse, 1j (100 ms): 31.89 MiB, 31.49 MiB, 31.35 MiB
+- bytea, 512 MiB lines, default parse, 4j (shipped): 39.03 MiB, 35.56 MiB, 36.82 MiB
+- bytea, 512 MiB lines, default parse, 4j (0 ms): 32.22 MiB, 33.13 MiB, 33.54 MiB
+- bytea, 512 MiB lines, default parse, 4j (10 ms): 36.70 MiB, 38.86 MiB, 38.66 MiB
+- bytea, 512 MiB lines, default parse, 4j (100 ms): 38.59 MiB, 38.94 MiB, 38.33 MiB
+- bytea, 512 MiB lines, strict parse, 1j (shipped): 32.10 MiB, 31.93 MiB, 31.86 MiB
+- bytea, 512 MiB lines, strict parse, 1j (0 ms): 30.03 MiB, 29.90 MiB, 29.67 MiB
+- bytea, 512 MiB lines, strict parse, 1j (10 ms): 32.28 MiB, 32.02 MiB, 31.77 MiB
+- bytea, 512 MiB lines, strict parse, 1j (100 ms): 31.76 MiB, 32.27 MiB, 32.06 MiB
+- bytea, 512 MiB lines, strict parse, 4j (shipped): 36.77 MiB, 36.04 MiB, 37.71 MiB
+- bytea, 512 MiB lines, strict parse, 4j (0 ms): 31.16 MiB, 32.48 MiB, 34.12 MiB
+- bytea, 512 MiB lines, strict parse, 4j (10 ms): 38.86 MiB, 38.63 MiB, 38.65 MiB
+- bytea, 512 MiB lines, strict parse, 4j (100 ms): 38.77 MiB, 36.35 MiB, 36.39 MiB
+- bytea, 512 MiB lines, query, 1p (shipped): 822.54 MiB, 824.60 MiB, 824.14 MiB
+- bytea, 512 MiB lines, query, 1p (0 ms): 822.45 MiB, 824.94 MiB, 825.89 MiB
+- bytea, 512 MiB lines, query, 1p (10 ms): 822.05 MiB, 824.23 MiB, 824.61 MiB
+- bytea, 512 MiB lines, query, 1p (100 ms): 822.32 MiB, 825.23 MiB, 823.81 MiB
+- bytea, 512 MiB lines, query, 4p (shipped): 3028.47 MiB, 3111.86 MiB, 2971.13 MiB
+- bytea, 512 MiB lines, query, 4p (0 ms): 3024.33 MiB, 3078.94 MiB, 3065.44 MiB
+- bytea, 512 MiB lines, query, 4p (10 ms): 3055.73 MiB, 3038.39 MiB, 3067.65 MiB
+- bytea, 512 MiB lines, query, 4p (100 ms): 3051.88 MiB, 3045.91 MiB, 3088.85 MiB
+- bytea, lines at the bound, default parse, 1j (shipped): 40.63 MiB, 40.56 MiB, 40.77 MiB
+- bytea, lines at the bound, default parse, 1j (0 ms): 36.38 MiB, 36.11 MiB, 37.08 MiB
+- bytea, lines at the bound, default parse, 1j (10 ms): 40.59 MiB, 40.65 MiB, 40.19 MiB
+- bytea, lines at the bound, default parse, 1j (100 ms): 40.33 MiB, 40.31 MiB, 41.03 MiB
+- bytea, lines at the bound, strict parse, 1j (shipped): 40.49 MiB, 40.44 MiB, 40.50 MiB
+- bytea, lines at the bound, strict parse, 1j (0 ms): 36.44 MiB, 36.91 MiB, 36.95 MiB
+- bytea, lines at the bound, strict parse, 1j (10 ms): 40.63 MiB, 42.56 MiB, 40.36 MiB
+- bytea, lines at the bound, strict parse, 1j (100 ms): 40.55 MiB, 40.38 MiB, 40.16 MiB
+- bytea, lines at the bound, query, 1p (shipped): 1594.05 MiB, 1592.60 MiB, 1592.36 MiB
+- bytea, lines at the bound, query, 1p (0 ms): 1592.08 MiB, 1595.06 MiB, 1592.51 MiB
+- bytea, lines at the bound, query, 1p (10 ms): 1592.33 MiB, 1592.30 MiB, 1593.30 MiB
+- bytea, lines at the bound, query, 1p (100 ms): 1592.52 MiB, 1592.17 MiB, 1592.08 MiB
+- int8array, 32 MiB lines, query, 1p (shipped): 210.90 MiB, 210.18 MiB, 210.88 MiB
+- int8array, 32 MiB lines, query, 1p (0 ms): 210.31 MiB, 212.52 MiB, 210.26 MiB
+- int8array, 32 MiB lines, query, 1p (10 ms): 211.23 MiB, 210.72 MiB, 210.05 MiB
+- int8array, 32 MiB lines, query, 1p (100 ms): 210.34 MiB, 211.42 MiB, 211.47 MiB
+- int8array, 128 MiB lines, query, 1p (shipped): 692.30 MiB, 692.24 MiB, 693.24 MiB
+- int8array, 128 MiB lines, query, 1p (0 ms): 692.19 MiB, 692.30 MiB, 692.41 MiB
+- int8array, 128 MiB lines, query, 1p (10 ms): 691.80 MiB, 691.71 MiB, 693.12 MiB
+- int8array, 128 MiB lines, query, 1p (100 ms): 692.30 MiB, 693.05 MiB, 693.42 MiB
+- int8array, 288 MiB lines, query, 1p (shipped): 1494.39 MiB, 1494.28 MiB, 1494.83 MiB
+- int8array, 288 MiB lines, query, 1p (0 ms): 1493.46 MiB, 1494.43 MiB, 1495.18 MiB
+- int8array, 288 MiB lines, query, 1p (10 ms): 1494.72 MiB, 1495.05 MiB, 1494.22 MiB
+- int8array, 288 MiB lines, query, 1p (100 ms): 1494.95 MiB, 1494.22 MiB, 1495.09 MiB
+- int8array, 512 MiB lines, query, 1p (shipped): 2614.08 MiB, 2614.46 MiB, 2615.32 MiB
+- int8array, 512 MiB lines, query, 1p (0 ms): 2614.51 MiB, 2615.16 MiB, 2616.02 MiB
+- int8array, 512 MiB lines, query, 1p (10 ms): 2614.02 MiB, 2614.24 MiB, 2614.35 MiB
+- int8array, 512 MiB lines, query, 1p (100 ms): 2614.57 MiB, 2614.18 MiB, 2613.75 MiB
+- int8array, lines at the bound, query, 1p (shipped): 5176.02 MiB, 5176.61 MiB, 5176.37 MiB
+- int8array, lines at the bound, query, 1p (0 ms): 5176.55 MiB, 5176.31 MiB, 5176.81 MiB
+- int8array, lines at the bound, query, 1p (10 ms): 5176.56 MiB, 5176.03 MiB, 5176.38 MiB
+- int8array, lines at the bound, query, 1p (100 ms): 5176.37 MiB, 5176.18 MiB, 5176.11 MiB
+- textarray, 32 MiB lines, query, 1p (shipped): 338.32 MiB, 340.25 MiB, 338.48 MiB
+- textarray, 32 MiB lines, query, 1p (0 ms): 339.02 MiB, 338.43 MiB, 338.25 MiB
+- textarray, 32 MiB lines, query, 1p (10 ms): 339.02 MiB, 338.64 MiB, 338.29 MiB
+- textarray, 32 MiB lines, query, 1p (100 ms): 338.86 MiB, 338.99 MiB, 339.06 MiB
+- textarray, 128 MiB lines, query, 1p (shipped): 1206.84 MiB, 1206.17 MiB, 1206.03 MiB
+- textarray, 128 MiB lines, query, 1p (0 ms): 1206.82 MiB, 1207.38 MiB, 1206.41 MiB
+- textarray, 128 MiB lines, query, 1p (10 ms): 1208.54 MiB, 1207.15 MiB, 1206.16 MiB
+- textarray, 128 MiB lines, query, 1p (100 ms): 1206.63 MiB, 1206.65 MiB, 1207.04 MiB
+- textarray, 288 MiB lines, query, 1p (shipped): 2646.40 MiB, 2647.15 MiB, 2646.25 MiB
+- textarray, 288 MiB lines, query, 1p (0 ms): 2646.75 MiB, 2646.43 MiB, 2646.33 MiB
+- textarray, 288 MiB lines, query, 1p (10 ms): 2646.11 MiB, 2646.84 MiB, 2646.68 MiB
+- textarray, 288 MiB lines, query, 1p (100 ms): 2646.79 MiB, 2646.71 MiB, 2647.06 MiB
+- textarray, 512 MiB lines, query, 1p (shipped): 4662.94 MiB, 4662.88 MiB, 4664.40 MiB
+- textarray, 512 MiB lines, query, 1p (0 ms): 4663.19 MiB, 4661.86 MiB, 4664.42 MiB
+- textarray, 512 MiB lines, query, 1p (10 ms): 4663.43 MiB, 4665.39 MiB, 4663.77 MiB
+- textarray, 512 MiB lines, query, 1p (100 ms): 4662.86 MiB, 4664.55 MiB, 4662.93 MiB
+- textarray, lines at the bound, query, 1p (shipped): 9272.82 MiB, 9274.77 MiB, 9272.54 MiB
+- textarray, lines at the bound, query, 1p (0 ms): 9272.90 MiB, 9273.04 MiB, 9274.62 MiB
+- textarray, lines at the bound, query, 1p (10 ms): 9272.87 MiB, 9272.74 MiB, 9272.34 MiB
+- textarray, lines at the bound, query, 1p (100 ms): 9272.70 MiB, 9272.89 MiB, 9273.01 MiB
+- jsonb, 32 MiB lines, ordering filter, 1j (shipped): 84.39 MiB, 84.93 MiB, 83.92 MiB
+- jsonb, 32 MiB lines, ordering filter, 1j (0 ms): 84.20 MiB, 83.68 MiB, 83.16 MiB
+- jsonb, 32 MiB lines, ordering filter, 1j (10 ms): 84.62 MiB, 84.63 MiB, 84.27 MiB
+- jsonb, 32 MiB lines, ordering filter, 1j (100 ms): 84.98 MiB, 84.13 MiB, 84.33 MiB
+- jsonb, 128 MiB lines, ordering filter, 1j (shipped): 258.56 MiB, 258.62 MiB, 258.41 MiB
+- jsonb, 128 MiB lines, ordering filter, 1j (0 ms): 258.12 MiB, 257.77 MiB, 259.93 MiB
+- jsonb, 128 MiB lines, ordering filter, 1j (10 ms): 258.39 MiB, 258.53 MiB, 258.63 MiB
+- jsonb, 128 MiB lines, ordering filter, 1j (100 ms): 258.64 MiB, 258.57 MiB, 258.63 MiB
+- jsonb, 288 MiB lines, ordering filter, 1j (shipped): 548.14 MiB, 550.52 MiB, 548.49 MiB
+- jsonb, 288 MiB lines, ordering filter, 1j (0 ms): 552.36 MiB, 550.60 MiB, 551.48 MiB
+- jsonb, 288 MiB lines, ordering filter, 1j (10 ms): 548.14 MiB, 548.54 MiB, 549.75 MiB
+- jsonb, 288 MiB lines, ordering filter, 1j (100 ms): 548.30 MiB, 550.64 MiB, 548.16 MiB
+- jsonb, 512 MiB lines, ordering filter, 1j (shipped): 952.56 MiB, 950.63 MiB, 950.73 MiB
+- jsonb, 512 MiB lines, ordering filter, 1j (0 ms): 952.64 MiB, 952.94 MiB, 956.35 MiB
+- jsonb, 512 MiB lines, ordering filter, 1j (10 ms): 950.16 MiB, 950.94 MiB, 950.57 MiB
+- jsonb, 512 MiB lines, ordering filter, 1j (100 ms): 950.55 MiB, 950.12 MiB, 953.12 MiB
+- jsonb, lines at the bound, ordering filter, 1j (shipped): 1874.09 MiB, 1876.18 MiB, 1874.39 MiB
+- jsonb, lines at the bound, ordering filter, 1j (0 ms): 1877.39 MiB, 1879.85 MiB, 1876.53 MiB
+- jsonb, lines at the bound, ordering filter, 1j (10 ms): 1876.25 MiB, 1876.80 MiB, 1874.46 MiB
+- jsonb, lines at the bound, ordering filter, 1j (100 ms): 1876.79 MiB, 1874.13 MiB, 1874.36 MiB
+
+Apparatus over every run in this table: CPU stall ≤9.17%, I/O stall ≤6.55%, machine ≤10% busy, steal ≤0.00%, busiest core ≥3.43 GHz, ≤74°C.
+
+**What it says.**
+
+- **Every leg holds `long-line-resident`'s allowance in every rep.** The
+  largest reading at any delay is 9,274.77 MiB, against an allowance of
+  14,784 MiB.
+- **The delay moves a parse and nothing a held line's charge covers.** At 0 ms
+  every parse leg falls by 0.2 to 5.2 MiB. At 10 and 100 ms a parse leg moves
+  by −3.5 to +1.9 MiB, and a one-partition query or filter by −1.4 to
+  +3.0 MiB at any delay. A four-partition query moves by −42 to +94 MiB, where
+  one row's reps at the shipped delay span up to 141 MiB, bytea's at 512 MiB.
+- **The falsifier `run_purge_delay_resident` states fires on 10 of its
+  288 pairs of leg and row**: three reps at a stating delay lie wholly above
+  the shipped leg's three. Nine of them rise by 0.2 to 3.0 MiB. The tenth is
+  escaped text's four-partition query at 512 MiB, where 10 ms is 94 MiB
+  higher in a row whose shipped reps span 110 MiB. Three reps lie wholly
+  above another three by chance one time in twenty, about 14 of 288 pairs if
+  no delay did anything. What chance does not account for is the `jsonb` ordering filter
+  at 0 ms, which sits 2.2 to 3.0 MiB above the shipped leg at 288 MiB, at
+  512 MiB and at the bound. That rise is unattributed; the `introspect`
+  build's block tracker over that filter at both delays would attribute it.
 
 ## koji full scan — the regression check
 
