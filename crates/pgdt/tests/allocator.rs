@@ -25,6 +25,7 @@ fn version_under(delay: Option<&str>) -> String {
 /// variable into its own option, so an index naming another one would read
 /// back the default here, not the value stated. Two stated values, so a
 /// default happening to equal one cannot pass it.
+// upstream: UF6
 #[test]
 fn the_purge_delay_is_pgdt_s_default_unless_the_environment_states_one() {
     let default = version_under(None);

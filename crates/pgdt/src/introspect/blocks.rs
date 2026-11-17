@@ -567,6 +567,7 @@ mod tests {
     #[test]
     fn a_block_is_read_live_then_freed_and_resident_at_line_moments() {
         // SAFETY: an option's setter takes any value; -1 never purges.
+        // upstream: UF6
         #[allow(unsafe_code)]
         unsafe {
             libmimalloc_sys::mi_option_set(crate::alloc::MI_OPTION_PURGE_DELAY, -1)

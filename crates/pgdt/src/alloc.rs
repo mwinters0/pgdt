@@ -107,6 +107,7 @@ mod purge {
     /// mimalloc's own reading of `MIMALLOC_PURGE_DELAY` by
     /// `tests/allocator.rs`: an index naming another option would leave the
     /// variable's value unread here.
+    // upstream: UF6
     pub const MI_OPTION_PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
 
     /// Sets [`PURGE_DELAY_MS`] as the purge delay unless the environment
@@ -162,6 +163,12 @@ pub use purge::configure;
 /// (`scripts/measure.py`, `binary_purge_delay`); `MIMALLOC_VERBOSE` prints
 /// the options as the process loads, before `pgdt` sets its default. Empty on
 /// a build linking another allocator.
+///
+/// The one marker that moves with the environment rather than the build, and
+/// in `--version` all the same: the delay a process runs under moves its
+/// resident peak, so a memory report pasting `--version` should carry it, and
+/// nothing reading the line compares it whole. Rejected: a flag or subcommand
+/// of its own, surface the harness alone would read.
 pub use purge::marker as purge_delay_marker;
 
 /// What `pgdt --version` names of the allocator: `(allocator: <name>)`, and

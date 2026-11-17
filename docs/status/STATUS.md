@@ -172,14 +172,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`pgdt --version` names the purge delay in force, and the option's index is
-  counted by hand** (33.33). The call: the harness needs the delay a binary
-  runs under, and `MIMALLOC_VERBOSE` prints it before `main` sets the default,
-  so `--version` gains ` (purge delay: <ms> ms)`, read back from mimalloc —
-  a version line that now moves with `MIMALLOC_PURGE_DELAY`, as `binary_allocator`
-  reads the allocator there. Setting and reading it take `mi_option_e`'s index,
-  15, which `libmimalloc-sys` does not declare; `tests/allocator.rs` fails on a
-  wrong one, though the P23 inbox's first entry calls a hand count the worse
-  route beside reading options by name (`mi_options_print_out`). Reconsidering
-  moves the marker to a subcommand or flag of its own, or finds the index by
-  name at startup through a hand-declared `mi_options_print_out`.
