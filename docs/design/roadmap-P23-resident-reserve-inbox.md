@@ -78,7 +78,9 @@ under mimalloc and bills or removes `KD111`'s unit. A remedy for the retained
 unit must first be confirmed by switching the candidate off with mimalloc's
 own option, and is chosen in D13's order: a library change suiting both
 allocators first, an option as a default the environment overrides second
-([`decisions.md`](decisions.md), "D13").
+([`decisions.md`](decisions.md), "D13"). P33 sets the purge delay as the
+binary's default, priced first (`../status/STATUS.md`, 33.32 and 33.33), so
+this phase re-fits the constants under the delay that ships.
 
 **Origin.** The diagnostic sitting on the instrument build, 2026-10-05, at `27593d2c`
 ([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md),

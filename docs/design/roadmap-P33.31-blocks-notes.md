@@ -83,7 +83,9 @@ buffers by reference until its output batch fills (arrow-select 59.2.0,
 code: the tracker names a block's allocation, not what holds it. At a zero
 delay the run holds that copy and stays under its `--memory`.
 
-What this leaves 33.32 is under STATUS's "Decisions worth another look".
+What this leaves 33.32 is the spec's "What a held line costs": the retention
+is the allocator's, bounded by its purge delay, and a copy a plan holds past
+its draw is that plan's pool's (`../status/upstream.md`, "UF5").
 
 ## Negative results
 

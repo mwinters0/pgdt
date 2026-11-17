@@ -11,8 +11,8 @@ which keeps the mechanism's detail; this file keeps the upstream side.
 
 Each site to revisit carries an `upstream: UF<k>` comment, and
 `cd scripts && uv run upstream.py` resolves every entry to its markers and
-back. **`UF1`–`UF4` are allocated, and none is reused.**
-<!-- upstream-watermark: UF4 -->
+back. **`UF1`–`UF5` are allocated, and none is reused.**
+<!-- upstream-watermark: UF5 -->
 
 ## UF1 — DataFusion's ungrouped-aggregate dynamic filter loses a column's bounds
 
@@ -157,3 +157,44 @@ back. **`UF1`–`UF4` are allocated, and none is reused.**
   `crates/pgdt-gzip-seek/Cargo.toml` — its `crc32` module is safe already — and let
   `crates/pgdt-gzip-seek/src/lib.rs` `forbid` `unsafe` as `xz-seek` does, above
   the workspace's `deny`.
+
+## UF5 — DataFusion's repartition coalescer holds a batch no reservation bills
+
+- **The issue.** In DataFusion 55.1.0 `RepartitionExec`'s per-partition
+  `SharedCoalescer` (`repartition/mod.rs`, `push_and_drain`) holds each pushed
+  batch until its output batch fills or the last sender finalizes, and
+  `OutputChannel::send` reserves only a completed batch, so what it holds is
+  in no `MemoryReservation`. Over dense view arrays arrow-select 59.2.0 keeps
+  the source's buffers by reference (`coalesce/byte_view.rs`), so a query's
+  drawn line, its batch cut at the line and its draw returned at the yield
+  (`../design/decisions.md`, "D159"), keeps its decoded copy resident past the
+  ledger, up to one per output partition: a plan whose scan exposes fewer
+  partitions than `target_partitions` meets it, as `pgdt sql` over one block
+  did (`../design/roadmap-P33.31-blocks-notes.md`, "The readings").
+- **Upstream.** Issue
+  [apache/datafusion#25904](https://github.com/apache/datafusion/issues/25904),
+  "make `SharedCoalescer` do memory accounting for buffered batches", open,
+  taken by a contributor, no PR linked; issue
+  [#26166](https://github.com/apache/datafusion/issues/26166), the coalescer's
+  in-progress buffers charged to no reservation, open; its PR
+  [#26167](https://github.com/apache/datafusion/pull/26167) closed unmerged on
+  2026-11-02 under the project's AI policy. Both issues read the copying path;
+  neither names the by-reference one. Read 2026-11-17.
+- **Fixed when.** The pinned `datafusion`'s `RepartitionExec` grows its output
+  channel's reservation by what its coalescer holds, by-reference view
+  buffers included, before it emits.
+- **Workaround.** None: the replay returns a draw at the yield, and the margin
+  carved above the ledger absorbs what a plan holds past it. Rejected:
+  returning a draw as its copy's last reference drops, which deadlocks a
+  coalescer waiting for rows the ledger withholds (D159); charging a line once
+  more per plan holder, `target_partitions` copies on a plan holding none;
+  disabling round-robin repartition from the provider, an embedder's session
+  setting that leaves every other holder in place.
+- **Watch.** No test asserts it; `upgrade-deps` reads both issues at each
+  DataFusion bump.
+- **When it lands.** Strike the marker at the replay's draw return
+  (`crates/pgdt-query/src/stream/replay.rs`), D159's `UF5`, and the account in
+  [`../design/roadmap-P33.7-acceptance-notes.md`](../design/roadmap-P33.7-acceptance-notes.md),
+  "The hand runs", of the margin absorbing the copy; a stated pool
+  (`--memory-limit`) is then what bounds it, carved off the scans' allowance
+  (`datafusion-pgdump`'s `pool_limit`).

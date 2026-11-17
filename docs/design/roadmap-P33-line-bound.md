@@ -239,8 +239,9 @@ that allocator keeps — capacity up to twice the line, the outgrown buffer besi
 its successor at the last doubling, and under mimalloc each outgrown buffer
 resident until its purge — a factor of one allocator's habits, over-charging
 every other (`decisions.md`, "D13") and varying with how fast the line grows;
-the binary lowering mimalloc's purge delay, which removes the retention alone,
-for every buffer the process frees, at an unmeasured cost (`KD148`'s class).
+the binary lowering mimalloc's purge delay, which removes the retention alone
+and leaves a doubling's capacity and its outgrown buffer, the delay being
+D13's remedy for what every freed buffer shares (below).
 **It moves there when it outgrows its chunk**, where its draw begins, so a line
 no chunk outgrows never leaves the carry, and **it grows by remapping, never by
 a copy, in huge-page steps, its mapping kept aligned to a huge page** so the
@@ -268,17 +269,30 @@ to 512 MiB of slack a line on a 64 KiB-page kernel; asking for huge pages, which
 under the kernel's default defrag compacts memory at the fault, an unmeasured
 stall on a fragmented host, and overrides a policy that is the host's.
 
-**A held line's decoded copy is given back as its line is**: the ledger lends a
-returned draw's bytes to the next line at once, so what a draw charges past the
-line is resident only while it is live, on every allocator, where through the
-global allocator mimalloc keeps a freed copy resident to its purge beside the
-next line's (`roadmap-P33.7-acceptance-notes.md`, "The hand runs"). **That is
-every buffer a draw charges past the line**: an escaped value's unescaped
-block, a `bytea`'s decoded bytes, a nested value's reserved builders, the
-scalar text a parse collects and a container the census holds whole where it
-is allocated rather than the line. Rejected: lowering mimalloc's purge delay,
-and charging what it keeps, as above; text and `bytea` alone, the nested
-builders failing the same way.
+**What a held line's copy leaves behind once freed is the allocator's
+retention, as every buffer a scan frees at its rate is**: at the resident peak
+of 33.7's query run the freed decoded copy is a few MiB of what the shipped
+purge delay keeps, the rest the view builder's blocks, the decoded-block
+buffers and DataFusion's own (`roadmap-P33.31-blocks-notes.md`, "The
+readings"), so it is bounded where that retention is (`decisions.md`, "D3",
+"D13"), never per buffer. Rejected: a draw's buffers given back outside the
+allocator, which reaches a few MiB at the peak and never DataFusion's buffers;
+every buffer a scan frees moved outside it, which no change of ours reaches
+DataFusion's with either; charging the retention, as above. **That retention
+is bounded by mimalloc's purge delay, set as the binary's default the
+environment overrides** (`decisions.md`, "D13"'s second remedy), **priced
+before it is set**, a delay's cost being the one ground the earlier refusal
+stated: the largest delay holding 33.7's query run and `long-line-resident`
+within their allowance at a cost within the throughput figures' noise, else the
+cheapest that holds, its cost stated. It is `pgdt`'s alone, an embedder's
+allocator being its own (D13), and the manual names the override where it
+describes `--memory`, which an operator setting it changes. No library change suiting both allocators reaches it: the view
+builder's blocks leave with their batch for DataFusion to free, a
+decoded-block buffer is dropped past the pool's free slots once no batch pins
+it, and pooling it longer keeps the same pages live instead. **What a plan holds
+of a batch past its yield is its memory pool's**, a decoded copy included,
+DataFusion's repartition coalescer holding one unreserved today
+([`../status/upstream.md`](../status/upstream.md), "UF5").
 
 **The charge is in bytes, never in blocks.** A held line copies out of the
 chunks it crosses, so on a compressed source it pins only its current chunk's

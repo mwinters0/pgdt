@@ -85,7 +85,10 @@ code.
   buffers for its purge delay. 33.31's block tracker names them: at the peak,
   mostly the view builder's blocks and the compressed source's decoded-block
   buffers rather than a long line's decoded copy
-  (`roadmap-P33.31-blocks-notes.md`, "The readings").
+  (`roadmap-P33.31-blocks-notes.md`, "The readings"). A decoded copy past its
+  draw, held by `RepartitionExec`'s coalescer, is live at the peak beside the
+  longest line, and at a zero delay the margin absorbs it
+  (`../status/upstream.md`, "UF5").
 
 ## What the phase inherits
 

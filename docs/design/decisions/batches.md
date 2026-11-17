@@ -46,9 +46,10 @@ in pgdt-codec. Code: `batch/builder/factor.rs`, `RowBatcher::cuts_before`, `Repl
 A replay draws a line held past its chunk term as a parse does (D158), charged its bytes and its query's factor of them
 (D154). The line's row ends its batch, and every draw is returned before a batch is yielded, a cut before the row
 drawing again. Why: a batch holds the line until it is emitted, and a stream held back at a yield, as a merge in file
-order holds one, must hold nothing an earlier line waits on. Rejected: returning it at the next chunk, which the batch
-outlives; summing a batch's lines on one draw, whose give-up would drop rows already decoded; cutting only under a
-limited ledger, batches varying with the allowance. Code: `stream/replay.rs`, `RowBatcher::holds_drawn_line`.
+order holds one, must hold nothing an earlier line waits on; what a plan holds past it is its pool's (UF5). Rejected:
+returning it at the next chunk, which the batch outlives, or as its copy's last reference drops, which a plan holding
+the batch for later rows deadlocks; one draw for a batch's lines, whose give-up drops decoded rows; cutting only under
+a limited ledger, batches varying with the allowance. Code: `stream/replay.rs`, `RowBatcher::holds_drawn_line`.
 Evidence: `tests/ledger.rs`.
 
 ### D84 The batch span is derived from the budget and the count, and spent before the count is cut

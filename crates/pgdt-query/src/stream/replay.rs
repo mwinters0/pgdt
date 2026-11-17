@@ -73,6 +73,7 @@ use crate::prune::SortedStop;
 /// the line that asked is admitted or its draw returned; it stands aside
 /// before every yield, so a caller holding it back at a batch stalls no line
 /// (`docs/design/decisions.md`, "D163").
+// upstream: UF5 -- a plan may hold a yielded batch, and its line's copy, unreserved.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn replay<'a>(
     source: &'a dyn ByteRangeSource,
