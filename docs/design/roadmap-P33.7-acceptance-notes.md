@@ -82,9 +82,10 @@ code.
   allowance, beside the held line's own mapping (D139) and liblzma's decoders,
   which it does not count; resident at a zero purge delay falls by 480 to
   690 MiB, so what passes the allowance is pages mimalloc keeps of freed
-  buffers for its purge delay. Which buffers is unnamed; the decoded copy of
-  a long line, freed through the allocator where its line is unmapped at
-  once, is the candidate; nothing the instrument reports names a buffer.
+  buffers for its purge delay. 33.31's block tracker names them: at the peak,
+  mostly the view builder's blocks and the compressed source's decoded-block
+  buffers rather than a long line's decoded copy
+  (`roadmap-P33.31-blocks-notes.md`, "The readings").
 
 ## What the phase inherits
 
