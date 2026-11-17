@@ -73,8 +73,24 @@ cheapest that holds, its cost stated.
   other row it is within the noise; 10 ms resolves four rows and 0 ms five. At
   twenty-four partitions the three cost alike, so no holding delay avoids that
   row's cost.
-- **33.33 inherits a thin margin** on the one binding run (above), and 33.7
-  re-takes that run at the new default.
+- **The margin is thin by construction, and 33.7's reps are the rule's
+  evidence**, reviewed with the maintainer (STATUS's "Decisions worth another
+  look", 2026-11-17). The rule takes the largest delay that holds, so it lands
+  where the run stops holding, and the run's `--memory` was chosen to carve
+  eight readers, not to price retention: its margin says how likely 33.7's
+  re-take is to pass, not what a user's run keeps. 100 ms's six reps span ten
+  times its worst margin, so a further rep past the line needs nothing to
+  change. That is no reason for 10 ms, a margin the rule does not state
+  demanded of one arbitrary run at two more resolved rows on every release.
+  33.7's re-take at the new default joins the evidence, three reps as both
+  sittings took, the count stated in its `run.sh` before it runs and every rep
+  counted: a rep past the line means 100 ms no longer holds in every rep, and
+  the grid is read below it (below).
+- **What a user's run keeps is the margin's, not the delay's.** The query run
+  holds past `margin_allowance`'s predicted resident at every delay, the zero
+  one included, so no delay meets `MEMORY_MARGIN_PERCENT` on it; that excess
+  is `KD34`'s, filed in P23's inbox ("33.7's query run holds past the
+  predicted resident at every purge delay").
 
 **The spec's account of the retention is confirmed.** It says why no library
 change suiting both allocators reaches the retention: it is what the allocator
@@ -114,6 +130,12 @@ the maintainer (STATUS's "Decisions worth another look", 2026-11-17).
   round reads candidates above 100 ms on the query run by hand first, adds the
   one it keeps to `PURGE_DELAY_LEGS` in a commit, and re-takes both figures
   from it before the choice, so every table names each candidate.
+- **Below 100 ms the same rule, mirrored**, should 100 ms stop holding a rep:
+  a value between 10 and 100 ms is wanted where 10 ms resolves a cost 100 ms
+  does not, which today's figure shows on two rows. Candidates between them
+  are read on the query run by hand first, the one kept added to
+  `PURGE_DELAY_LEGS` and both figures re-taken before the choice, rather than
+  falling to 10 ms, the grid's next leg rather than the rule's answer.
 - **The parallel rows are where a positive delay's cost shows first**, frees
   crossing threads and purges serialized, and cost minutes of the figure's
   quarter hour; dropping them would hide the one outcome that refines the grid.

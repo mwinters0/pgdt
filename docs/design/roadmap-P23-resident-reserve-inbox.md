@@ -102,3 +102,34 @@ re-setting it against the `reserve` figure (`KD34`) prices the reserve without
 the carried line.
 
 **Origin.** P33's grilling, 2026-10-31; contingent on P33 landing the ledger.
+
+---
+
+## 33.7's query run holds past the predicted resident at every purge delay
+
+**Fact.** `margin_allowance` (`pgdt-io`'s `memory`) holds a run's predicted resident, its charge
+plus `MEMORY_UNPOOLED_BOUND`, to `100 − MEMORY_MARGIN_PERCENT` percent of the
+allowance. 33.7's query run on the reference dump — `pgdt sql` over the `.xz`
+block holding its longest line under `SET pgdump.memory`, eight readers
+carved — peaks past that share at every purge delay read, the zero delay
+included, there by about a quarter of a gigabyte, and at 100 ms within a third
+of a percent of the allowance itself
+(`runs/p33.32-query-delays-20261117-0959/readings.txt`,
+`runs/p33.32-query-above-100-20261117-1334/readings.txt`). Its live Rust heap
+is under the allowance; the rest is the held line's mapping, liblzma's
+decoders and what mimalloc keeps unpurged
+([`roadmap-P33.7-acceptance-notes.md`](roadmap-P33.7-acceptance-notes.md),
+"The hand runs").
+
+**Why P23 cares.** It is `KD34`'s class read on a real dump: what a compressed
+`query` holds past its charge, which `MEMORY_UNPOOLED_BOUND` is meant to
+bound. The re-fit under the delay that ships (above) has this reading beside
+its generated grid, and a bound that covers it lowers the margin's ceiling and
+so this run's carve. The purge delay is chosen against the allowance, no delay
+meeting the margin here
+([`roadmap-P33.32-purge-notes.md`](roadmap-P33.32-purge-notes.md), "The
+choice").
+
+**Origin.** 33.32's readings, reviewed with the maintainer, 2026-11-17.
+*Contingent on* mimalloc 3.3.2 and the ledger's line charge at the plan's
+factor ([`decisions.md`](decisions.md), "D160").

@@ -171,12 +171,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **33.33 is handed 100 ms, which holds 33.7's query run by a thin margin**
-  (`roadmap-P33.32-purge-notes.md`, "The choice"). The call: the spec's rule as written. 100 ms is both the largest delay and the cheapest that holds the run
-  and every resident leg in every rep: all six reps over two sittings are within the stated `--memory`, the worst by
-  about a third of a percent, and 125 ms already fails two reps in three. Deciding: whether six reps is margin enough
-  for 33.7's re-take at the new default, which one rep past the line fails. The alternatives are 10 ms, which holds
-  with a few percent to spare but costs four `purge-delay` rows, or a value between 10 and 100 ms. Neither figure
-  names such a value, so it would be added to `PURGE_DELAY_LEGS` and both figures re-taken.
-
