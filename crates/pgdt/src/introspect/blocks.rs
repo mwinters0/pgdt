@@ -28,8 +28,8 @@
 //!   mapped, is dropped.
 //! * **What it costs**: a stack per tracked block, kept to the report and
 //!   counted in `live_*`, and one `mincore` per tracked range per event, on
-//!   the reader's thread. The build is never timed (`docs/design/decisions.md`,
-//!   "D13"), but a slower run lets mimalloc purge more of what it frees.
+//!   the reader's thread. The build is never timed (`docs/design/roadmap.md`,
+//!   "Attribution is introspective; only the gate is blind"), but a slower run lets mimalloc purge more of what it frees.
 //! * **Blind to** blocks under the size, what C allocates, the held line's
 //!   own mapping (`docs/design/decisions.md`, "D139"), and a `realloc` that
 //!   fails, or shrinks a block in place under the size, whose block it counts

@@ -6,7 +6,7 @@
 //! A reader whose held line grows past its chunk term draws the line's whole
 //! charge here, line by line, through its [`Holder`]. **A draw that cannot be
 //! met waits, and the waiting line earliest in the file is admitted first**:
-//! no draw is met while an earlier line waits, so the leftmost line always
+//! no draw growing a line is met while an earlier line waits, so the leftmost line always
 //! progresses and no pass deadlocks. **When the earliest waiting line cannot
 //! be admitted, the holders of later lines are asked to give theirs up**, the
 //! latest in the file first, until it can be; a holder asked gives its draw up
@@ -24,8 +24,8 @@
 //! **A line one reader could not hold is refused** ([`Admission::Refused`]):
 //! a draw whose charge passes the ledger's [`Floor`] — what the allowance
 //! leaves one reader, whatever the worker count — fails at once, wherever
-//! the line lies in the file, since no wait and no line giving its room up
-//! would admit it (`docs/design/decisions.md`, "D161").
+//! the line lies in the file, since one reader could not hold it whatever
+//! waited or gave its room up (`docs/design/decisions.md`, "D161").
 //!
 //! **A line alone past the room parks the latest readers** ([`Holder::park`]):
 //! where no other line holds and the earliest still does not fit, the readers
@@ -388,7 +388,7 @@ impl Holder {
     /// no read of `source` meanwhile: the park is announced to `source`
     /// ([`ParkedReader`]), so its pools give back the reader's share, and a
     /// line waiting on the park is woken. Returns at once where it is not
-    /// asked; dropped, the reader resumes (`docs/design/decisions.md`,
+    /// asked, the park announced and withdrawn; dropped, the reader resumes (`docs/design/decisions.md`,
     /// "D163").
     pub async fn park(&mut self, source: &dyn ByteRangeSource) {
         let Some(shared) = self.ledger.shared.clone() else { return };

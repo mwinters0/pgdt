@@ -11,8 +11,8 @@ A span is classified by the statement grammar and the TOC comment is enrichment:
 non-`pg_dump` input and a dollar-quoted body can hold a TOC-shaped line (I3), so a TOC block anchors a span where one
 exists and the grammar closes every statement without one. A tiling hole is `TilingBroken`, never a refusal. The
 preamble prepass (byte 0 to the first `COPY` block's TOC comment or header, I1) runs ahead of either mapping entry
-point's pass unless the cache holds it, so a scan stopped anywhere, its first chunk included, still states the first
-database's DDL. Span text is sliced from the file after building, never accumulated, and `Data` spans store none.
+point's pass unless the cache holds it, so a scan stopped anywhere past it, its first chunk included, still states the
+first database's DDL. Span text is sliced from the file after building, never accumulated, and `Data` spans store none.
 Evidence: `preamble-prepass`.
 
 ### D31 `Span::toc` is "belongs to", vetoed after classification; boundary rules that read as bugs
@@ -34,17 +34,18 @@ persisted, but these: a catalog block's recorded rows (D133) and a gathered bloc
 `roles` and `tablespaces` the TOC names. Whole-file facts (roles, tablespaces, a reported schema) are believed only once
 `is_complete`; a streamed schema commits over the blocks it replays, ungated (I2). Statistics sit in their block behind
 an `Arc` (`KD5`), a row group a byte range, so no piece needs a global row index. A back-fill keeps a block's columns,
-and its size unless a stated size or bound it did not record moves it, a maximum it breaks re-reading it at the size its
-groups predict. Rejected: `SparseRowIndex`; padded `character` bounds and entries; a back-fill dropping only re-read
-blocks' columns.
+and its size unless a stated size or bound it did not record moves it, a maximum it breaks at the size a gather starts
+from re-reading it at the size its groups predict. Rejected: `SparseRowIndex`; padded `character` bounds and entries; a
+back-fill dropping only re-read blocks' columns.
 
 ### D35 The census is type-blind, records both dimension bounds, and runs at the data level
 `ArrayShape::observe` reads the leading brace run off still-escaped bytes in the model (I15, I25); min and max depth, or
 `{1,2}` beside `{{1,2}}` resolves to a wrong `List`. A table any column of which is at the data level is censused, and
 so is every block a query's pass maps: gating on a full scan left early blocks uncensused. The metadata level records
-`None` and, but under a strict parse, splits no field; a typed query re-reads such a table for itself, writing nothing,
-and a `Dump`'s plan refuses it. Rejected: degrading to the DDL's `List`; a census-only level a user can reach; the
-census as a `Table`'s own step, which a `Dump`'s would offer. Evidence: `statistics-gathering`, profiled.
+`None` and, but under a strict parse or in a TimescaleDB catalog block (D133), splits no field; a typed query re-reads
+such a table for itself, writing nothing, and a `Dump`'s plan refuses it. Rejected: degrading to the DDL's `List`; a
+census-only level a user can reach; the census as a `Table`'s own step, which a `Dump`'s would offer. Evidence:
+`statistics-gathering`, profiled.
 
 ### D96 The unrepresentable count rides the census, typed by the DDL, in two tiers, under a recorded calendar
 Every census-taking read counts, per block and column, the values the declared type's typed pair (no census) cannot

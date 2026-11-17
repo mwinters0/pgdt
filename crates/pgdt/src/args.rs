@@ -168,9 +168,8 @@ impl ReadFlags {
 /// already-resolved arrangement's parallelism
 /// ([`crate::parallel::Discovered::resolve`]). Every other pass holds lines,
 /// so takes the arrangement itself ([`Resolved::arrangement`]): `parse`'s
-/// mapping pass, and `query`'s, its replay's parallelism going into
-/// [`pgdt_query::QueryOptions`] and its ledger to the plan
-/// ([`crate::parallel::Discovered::resolve_pass`]).
+/// mapping pass, and `query`'s, its replay's arrangement handed whole to
+/// the plan ([`crate::parallel::Discovered::resolve_pass`]).
 ///
 /// **Resolved once per pass and passed in, not re-resolved here.**
 pub(crate) fn scan_options(read: ReadFlags, parallel: &Resolved) -> ScanOptions {

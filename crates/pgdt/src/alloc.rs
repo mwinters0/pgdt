@@ -79,7 +79,7 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 /// them to whichever allocation grew an arena, and runs the threads serially.
 /// That retention is read by the gate's RSS and the `introspect` build's
 /// mimalloc statistics, and by its block tracker (`introspect/blocks.rs`),
-/// which names a block past a size it is told by its allocating stack and
+/// which names a block of at least a size it is told by its allocating stack and
 /// reads its resident pages once freed, at a held line's moments alone.
 #[cfg(all(feature = "mimalloc", not(feature = "introspect")))]
 #[global_allocator]
@@ -88,8 +88,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// mimalloc's purge delay, set as `pgdt`'s default: how long it keeps a page
 /// of freed blocks committed before it purges it. On a build linking mimalloc,
 /// the default, and under `introspect`, whose heap is this one with a counter
-/// in front of it. The shipped binary's one `unsafe` site, two calls into
-/// mimalloc (`docs/design/decisions.md`, "D27").
+/// in front of it. This crate's one `unsafe` site outside `introspect`, two
+/// calls into mimalloc (`docs/design/decisions.md`, "D27").
 #[cfg(all(
     any(feature = "mimalloc", feature = "introspect"),
     not(feature = "jemalloc"),

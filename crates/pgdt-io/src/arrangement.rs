@@ -115,7 +115,8 @@ pub struct ArrangementRequest {
     /// A process hosting more than its scans — DataFusion's operators past
     /// any pool limit they state — sets it, the reserve then standing for
     /// that; `pgdt` holds nothing of the kind and leaves it off, the halving
-    /// being its margin.
+    /// being its margin. Under [`Allowance::NoneFound`] it fits the workers
+    /// to [`DEFAULT_MEMORY_BUDGET`] less what is drawn rather than estimating.
     pub carve_estimate: bool,
     /// **The charge of the longest line a read over mapped blocks will
     /// meet**, carved before its readers so that line is admitted without
@@ -207,7 +208,7 @@ impl Arrangement {
     /// [`DEFAULT_MEMORY_BUDGET`] is the estimate, a cap with no reserve and no
     /// margin as the halved one is, and carved it is drawn down by what is
     /// `drawn` alone, the holdings having no margin to come off
-    /// (`docs/design/decisions.md`, "D11"). A source recommending no cost, under no limit
+    /// (`docs/design/decisions.md`, "D11"). A source recommending no cost (`None`), under no limit
     /// and uncarved, is [`Parallelism::default`] at a serial count and
     /// [`DEFAULT_MEMORY_BUDGET`] above one — **the composition is not a
     /// `min`**, which would collapse a compressed scan to serial on an
@@ -226,7 +227,8 @@ impl Arrangement {
     /// statistics, and whatever else is resident beside a pass, stay drawn
     /// for the run. Under a carved allowance the `line_charge` comes off the
     /// ceiling the count is solved against, so the room holds it past what is
-    /// `held`; under an uncarved estimate it comes off the cap the count is
+    /// `held` wherever the count can fall, the line at one reader being the
+    /// floor's to place; under an uncarved estimate it comes off the cap the count is
     /// fitted to, which leaves that line room beside the readers, and the
     /// ledger, its room still the margin's, places it as the earliest line
     /// alone. What statistics may hold is what the room leaves past the line.

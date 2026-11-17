@@ -42,7 +42,7 @@ spread, never as a re-taken figure. A resolved rise is placed by callgrind's `Ir
 callgrind does not reproduce it or no changed code sits above, then reworked into a shape as clean or accepted. A phase
 adopts the refusal by its spec. Rejected: one count a leg; determinized shapes (a workload never shipped); a sampled
 profile placing it (line tables move the code); a materiality floor; rework resting on codegen
-(`ChunkedScanner::end_pass`), a moved test spelled back as the parent had it among them (`FieldCount::tier`'s `Held`); a
+(`ChunkEvents::end_pass`), a moved test spelled back as the parent had it among them (`FieldCount::tier`'s `Held`); a
 new row for a rise placed off its row's code (the row owns it). Code: `cmd_count_pair`, `callgrind_recipe`. Evidence:
 `test_measure.py`'s `CountPair` and `CallgrindRecipe`.
 

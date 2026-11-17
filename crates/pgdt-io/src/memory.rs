@@ -87,8 +87,8 @@ pub const MEMORY_RESERVE: u64 = 384 << 20;
 ///
 /// **Enforced once, against [`MEMORY_UNPOOLED_BOUND`]**: the predicted
 /// resident a count is held to is `WorkerMemory::at(n)` plus that bound, not
-/// plus [`MEMORY_RESERVE`], which would subtract the margin a second time. So
-/// it binds above `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` and, but for
+/// plus [`MEMORY_RESERVE`], which would subtract the margin a second time. So,
+/// with nothing held and no line charged, it binds above `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` and, but for
 /// the few hundred bytes under it its rounding down reaches, nowhere below.
 ///
 /// **It bounds the count, and so the budget that count spends**:
@@ -149,15 +149,15 @@ pub(super) fn margin_allowance(allowance: u64) -> u64 {
         .saturating_sub(MEMORY_UNPOOLED_BOUND)
 }
 
-/// **What a resolved arrangement leaves its statistics and held lines**: the
-/// room its [`Ledger`](crate::Ledger) lends under `allowance` — any but none
-/// found, half of what is available included — once `budget`, the
-/// read-buffer budget that arrangement resolved to, comes off
-/// [`margin_allowance`]'s ceiling, which already stands
-/// [`MEMORY_UNPOOLED_BOUND`] below its fraction of the allowance. What
-/// `pgdt_mapping`'s `StatisticsAccount` may hold
+/// **What a resolved arrangement leaves its statistics and held lines**
+/// under `allowance` — any but none found, half of what is available
+/// included — once `budget`, the read-buffer budget that arrangement
+/// resolved to, comes off [`margin_allowance`]'s ceiling, which already
+/// stands [`MEMORY_UNPOOLED_BOUND`] below its fraction of the allowance.
+/// Less what others drew it is the room its [`Ledger`](crate::Ledger)
+/// lends, and less a read's longest line too what `pgdt_mapping`'s
+/// `StatisticsAccount` may hold
 /// ([`Arrangement::statistics_allowance`](crate::Arrangement::statistics_allowance))
-/// is that room less what others drew and a read's longest line
 /// (`docs/design/decisions.md`, "D157").
 ///
 /// **It is carved after the workers, never before them**

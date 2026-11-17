@@ -27,7 +27,7 @@ use pgdt_io::{
 pub enum ChunkPass {
     /// The line straddling the chunk's front edge — what was carried over
     /// from the previous chunk, completed by this one's first line-terminated
-    /// prefix. The only bytes a read loop copies.
+    /// prefix. The bytes a read loop copies, beside a field held whole.
     Carry,
     /// The rest of the chunk, scanned where the reader left it.
     InPlace,
@@ -36,7 +36,8 @@ pub enum ChunkPass {
 /// The one line a chunked read loop has to carry across a chunk boundary —
 /// [`ChunkedScanner`]'s, and an interior worker's over its piece
 /// (`pgdt_mapping`'s `scan_partition`), so each reads a line once, read by
-/// read, and never again from its start.
+/// read, and again from its start only where the ledger has it give the line
+/// up ([`give_up`](ChunkCarry::give_up)).
 ///
 /// [`CopyScanner`] consumes whole lines, so whatever a chunk leaves
 /// unconsumed is always a **single unterminated line** — never more, since
@@ -93,12 +94,13 @@ pub enum ChunkPass {
 /// the file's end, hands it to the carry pass in place of a held line. A
 /// reader folding some of its fields ([`FieldFold`]) is handed each run of
 /// a field's bytes as they go by, and a field it holds whole once, grown as
-/// a long line is. So a pass decoding no field holds no line at any length,
+/// a long line is. So a pass decoding no field holds no line once a whole
+/// chunk passes inside it,
 /// and a census holds only the fields it decodes
 /// (`docs/design/decisions.md`, "D138").
 ///
-/// **What it holds past its chunk is drawn from the run's ledger** before
-/// each chunk is absorbed ([`draw_absorbing`]), and dropped and read again
+/// **What it holds past its chunk is drawn from the run's ledger**, where its
+/// read loop is handed one, before each chunk is absorbed ([`draw_absorbing`]), and dropped and read again
 /// where an earlier line needs the room ([`give_up`](Self::give_up))
 /// (`docs/design/decisions.md`, "D157", "D158").
 #[derive(Debug)]
@@ -542,8 +544,8 @@ impl ChunkCarry {
         }
     }
 
-    /// The bytes this carry keeps allocated between two chunks: the buffers
-    /// it reuses, the line it still references and the field it holds.
+    /// The bytes this carry keeps between two chunks: the buffers it reuses,
+    /// the length of the line it still references and the field it holds.
     #[cfg(test)]
     pub(super) fn allocated(&self) -> usize {
         self.line.allocated() + self.tail.capacity() + self.held.len() + self.field.allocated()
@@ -817,6 +819,13 @@ impl ChunkedScanner {
         fold: Option<&mut dyn FieldFold>,
         drawing: Option<Drawing<'_>>,
     ) -> Result<ChunkEvents<'_>> {
+        // deficiency: KD172 — `self.chunk`, the read before this one, is
+        // replaced only by `feed`, after the draw: a reader `draw_absorbing`
+        // parks holds it for the whole park — a plain source's pool slot, or a
+        // view pinning a compressed source's decoded block — so the share
+        // `Terms` credits the park is short by it (`docs/design/decisions.md`,
+        // "D162", "D163"). Its events have run out by here, so nothing borrows
+        // it. **(c) unowned**; promoted by the next slice touching the park.
         let mut bytes = match self.end {
             Some(end) => {
                 let want = self.chunk_size.min((end - self.read_pos) as usize);
@@ -978,8 +987,8 @@ impl<'a> ChunkEvents<'a> {
     /// handing out the streamed row a carry pass stands for first — or say
     /// both have run out.
     ///
-    /// Fallible, a streamed row held to its block's width as it is handed
-    /// out; no further attribute or cold continuation splits the switch, its
+    /// Fallible, a streamed row held to its block's first row's ending as it
+    /// is handed out; no further attribute or cold continuation splits the switch, its
     /// saving resting on inlining (`docs/design/decisions.md`, "D108").
     #[cold]
     fn end_pass(&mut self) -> Result<PassEnd<'a>> {

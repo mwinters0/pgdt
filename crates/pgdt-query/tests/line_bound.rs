@@ -5,8 +5,8 @@
 //! gzip source, a pass resumed from an interrupted cache, and a query's
 //! replay, serial and cut into segments.
 //!
-//! Each is read at a small bound (`ReadOptions::line_bound`, which only a
-//! `test-support` build has) so a dump of a few kilobytes reaches it; the
+//! Each is read at a small bound (`ReadOptions`'s `line_bound` field, which
+//! only a `test-support` build has) so a dump of a few kilobytes reaches it; the
 //! real bound's wiring is `pgdt`'s `tests/line_bound.rs`.
 
 use std::path::{Path, PathBuf};

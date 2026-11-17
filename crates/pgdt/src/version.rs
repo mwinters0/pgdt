@@ -39,8 +39,8 @@ const CHUNK_MARKER: &str =
 /// not. Cargo rebuilds when it changes, as for any variable `option_env!`
 /// reads. Rejected: a `build.rs` reading `git describe`, which re-runs at
 /// every commit and names a dirty tree after a commit it does not match. A
-/// version bump alone invalidates no cache, caches being keyed on
-/// `CACHE_FORMAT_VERSION` alone.
+/// version bump alone invalidates no cache, no cache recording the crate's
+/// version.
 const RELEASE_VARIABLE: Option<&str> = option_env!("PGDT_RELEASE_VERSION");
 
 /// Whether this is a release's build: the variable names this crate's own

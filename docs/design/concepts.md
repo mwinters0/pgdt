@@ -443,8 +443,8 @@ The three subcommands, their flags and what each prints
 
 ## The binary's build
 
-Which allocator and Cargo profile built `pgdt`, and the purge delay it sets
-of mimalloc, as `pgdt --version` names them ([`decisions.md`](decisions.md),
+Which allocator and Cargo profile built `pgdt`, and the purge delay mimalloc
+runs under, as `pgdt --version` names them ([`decisions.md`](decisions.md),
 "D13", "D105").
 
 - **pgdt** — `alloc.rs`, `profile.rs`: the binary's choice, never the

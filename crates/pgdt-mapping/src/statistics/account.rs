@@ -9,7 +9,8 @@ use pgdt_io::Ledger;
 /// The growth an observer holds uncharged before it updates the pass's
 /// [`StatisticsAccount`], which it does, once past it, before it observes
 /// another row — so one wide row can carry it further. A
-/// judgement setting only how often a wide observer updates.
+/// judgement setting how often a wide observer updates, and so how far the
+/// instrument lets the account fall short.
 pub(crate) const STATISTICS_ACCOUNT_CHARGE_STEP: u64 = 64 << 10;
 
 /// Every statistic a mapping pass holds alive, in bytes of heap, by term

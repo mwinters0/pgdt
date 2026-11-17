@@ -68,8 +68,9 @@ use crate::prune::SortedStop;
 /// (`docs/design/decisions.md`, "D159").
 ///
 /// **Its reader parks where the ledger asks it to**, as a parse's does: it
-/// stands where it reads before each read, and one asked emits the batch it
-/// holds rows of, then parks at its next read holding no read, resuming as
+/// stands where it reads before absorbing each read, and one asked emits the
+/// batch it holds rows of, then parks at its next read, dropping that read
+/// (its last one it still holds, `KD172`), resuming as
 /// the line that asked is admitted or its draw returned; it stands aside
 /// before every yield, so a caller holding it back at a batch stalls no line
 /// (`docs/design/decisions.md`, "D163").
@@ -450,6 +451,21 @@ pub(super) fn replay<'a>(
                                         // The row's line, still held, is
                                         // drawn for again; held once, it
                                         // is under the floor.
+                                        //
+                                        // deficiency: KD173 — the flush
+                                        // above cleared the batcher's
+                                        // drawn-line mark and nothing sets
+                                        // it again: a long value pushed
+                                        // into the empty batch sets it, but
+                                        // one its tier test reads as NULL
+                                        // does not, so the batch runs past
+                                        // the row and the draw is returned
+                                        // at the next chunk while the batch
+                                        // still holds it, which
+                                        // `docs/design/decisions.md`, "D159"
+                                        // refuses. **(c) unowned**; promoted
+                                        // by the next slice touching the
+                                        // replay's draw.
                                         if let Some((start, charge)) = drawn
                                             .filter(|&(start, _)| start == row.offset)
                                         {

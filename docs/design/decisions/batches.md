@@ -6,11 +6,12 @@ the span that bounds them, the two passes and the seam between them, the partiti
 DataFusion plan hands a scan, and the three value modes for what a type cannot hold. `pgdt-query`'s `stream`, `batch`
 and `plan`.
 
-### D46 Zero-copy views are top-level `Utf8View` only, and `max_source_span` alone bounds pinned bytes
-Every arm but a top-level `Utf8View` copies, and a batch's views pin the chunks they point into until it flushes, so
-`max_source_span` is the one bound on pinned bytes: `max_rows` and `max_bytes` count selected rows, which a filter makes
-sparse. A source retaining by partition is charged no span (`RetainedUnit`), unsound where a query's cut spans several
-units (`KD23`). Rejected: compacting views past a selectivity threshold. Evidence: `parallel-peak-rss`.
+### D46 Zero-copy views are top-level `Utf8View` only, and `max_source_span` alone bounds a batch in flight's pins
+Every arm but a top-level `Utf8View` copies, and a batch's views pin the chunks they point into, so `max_source_span` is
+the one bound on what a batch in flight pins, an emitted one keeping its chunks for its consumer (`KD171`): `max_rows`
+and `max_bytes` count selected rows, which a filter makes sparse. A source retaining by partition is charged no span
+(`RetainedUnit`), unsound where a query's cut spans several units (`KD23`). Rejected: compacting views past a
+selectivity threshold. Evidence: `parallel-peak-rss`.
 
 ### D141 A long value is decoded once beside its line: a `bytea` into its column, an escaped text as its own block
 A `bytea` is decoded from its field as `Unescaped` reads it, straight into its column's one buffer, and a strict parse

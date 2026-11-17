@@ -62,7 +62,7 @@ pub struct FetchedCompressedSource {
     codec: Arc<dyn Codec>,
     /// The unit the piecewise arm is reading — its fetched window and its
     /// live handle — or `None` where that arm has not run, its last read
-    /// failed, a block-arm read has run since, `complete_reads` has left it,
+    /// failed but on the check of the unit it displaced, a block-arm read has run since, `complete_reads` has left it,
     /// or a piecewise read has it ([`HeldBlock`]). Behind a `Mutex` because
     /// the handle goes forward only and one position cannot serve two readers,
     /// which is why that arm advises a single partition

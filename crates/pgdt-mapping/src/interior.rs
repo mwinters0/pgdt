@@ -10,7 +10,8 @@
 //! terminator. What one piece answers on its own, and how the pieces fold
 //! back into the block's totals, is [`piece`]'s.
 //!
-//! **[`map_forward`](crate::forward::map_forward) is the leader.** Its
+//! **[`map_forward`](crate::forward::map_forward) is a leader, as a
+//! back-fill's or a query's re-read is.** Its
 //! `CopyStart` arm offers each open region but a TimescaleDB catalog
 //! block's (`docs/design/decisions.md`, "D133") to [`scan_region`] and closes one
 //! it took through the same path a serial `CopyEnd` takes, then puts the
@@ -131,7 +132,7 @@ pub(crate) struct Shortfall {
 }
 
 /// Correct `scan started`'s `jobs=` where the leader delivered fewer readers
-/// than the caller asked for, **once per scan**, and say what would buy the
+/// than the caller asked for, **once per pass**, and say what would buy the
 /// arrangement back (`docs/design/decisions.md`, "D64"). `scan started` names
 /// what was asked for, the source's advice not having been read when it fires;
 /// on a query the same fact is a `pgdt_query::PlanNote` on a `TableStream`.
@@ -158,7 +159,7 @@ pub(crate) fn report_shortfall(flag: &mut bool, shortfall: Option<Shortfall>) {
 /// Scan the interior of the `COPY` block that opens at `data_offset` with
 /// concurrent fused workers, and answer the block's totals.
 ///
-/// The caller has just read `COPY … FROM stdin;`, so it knows every byte from
+/// The caller has read `COPY … FROM stdin;`, or the map has, so it knows every byte from
 /// `data_offset` until `\.` is line-structured rows — which is the whole
 /// licence for handing them out to workers that never parse structure
 /// (`docs/design/decisions.md`, "D52").
@@ -180,7 +181,8 @@ pub(crate) fn report_shortfall(flag: &mut bool, shortfall: Option<Shortfall>) {
 /// scanner would have handed it. A declined region leaves it untouched.
 ///
 /// **It reads `partitions()` for the shape of the cut and never for whether
-/// cutting pays**, beyond a source stating one partition at most. That is the
+/// cutting pays**, beyond a source stating one partition at most and a
+/// region too short for one of its partitions. That is the
 /// caller's economics, stated as
 /// `ScanOptions::parallelism` — which is why a plain file is cut here exactly
 /// as a compressed one is, and why the refusal of parallel plain-file
@@ -244,8 +246,8 @@ pub(crate) async fn scan_region(
     let partition_bytes = advice.partition_bytes();
     let workers = worker_count(options.parallelism, advice.worker_memory());
     // Whether this region could hold one of the source's own partitions — the
-    // floor above, and the one refusal about *this* block rather than about
-    // the arrangement. A source stating no cost fails it always, and is never
+    // floor above, and with a region the source advises one partition of,
+    // the refusals about *this* block rather than about the arrangement. A source stating no cost fails it always, and is never
     // cut — which every such source's `max_partitions() == Some(1)` also says.
     let region_fits = partition_bytes > 0 && size.saturating_sub(data_offset) >= partition_bytes;
     let shortfall = shortfall(source, options, &advice, workers, size);
@@ -334,9 +336,9 @@ fn shortfall(
 /// terminator, which [`scan_region`] tells apart.
 ///
 /// **A window is `workers` partitions wide**, so the memory the region holds
-/// at its peak is the worker count times what the source said one costs — the
-/// per-worker term `Parallelism::memory_bytes` was solved against to reach
-/// that count — while no line outgrows its chunk, a worker's carried line
+/// at its peak is what the source said that many workers cost — the
+/// `WorkerMemory` `Parallelism::memory_bytes` was solved against to reach
+/// that count, a block pool's retention included — while no line outgrows its chunk, a worker's carried line
 /// drawing on the run's ledger where one does (`docs/design/decisions.md`,
 /// "D157"). **On a boundaried source, wide in the source's partitions, not
 /// in its charge** (`Partitioning::window_end`, and
@@ -488,13 +490,14 @@ async fn run_region(
 /// plain file is read [`pgdt_io::PartitionRead::Chunked`], so
 /// `pgdt_io`'s `BufferPool` pools every buffer a worker takes; a
 /// block-decoding file is read [`pgdt_io::PartitionRead::Whole`], whose
-/// *first* read of a piece is one of that source's own units; each
+/// *first* read of a piece is one of that source's own units at most,
+/// capped by the line bound too; each
 /// continuation read is a chunk, so the unit bounds the whole piece only
 /// while a chunk is no larger, which nothing here enforces. Both halves are
 /// asserted rather than argued: [`no_read_a_worker_makes_exceeds_the_chunk_size`] and
 /// [`no_read_a_worker_makes_exceeds_the_stated_unit`].
 ///
-/// **`Whole` is `min(piece, unit)`, not the piece**, so a cut wider than one
+/// **`Whole` is `min(piece, unit, line_bound)`, not the piece**, so a cut wider than one
 /// unit caps the body read at a unit rather than growing it with the width.
 /// That bounds the buffer; it does not make a wider cut safe, which wants a
 /// read clipped to the next boundary (`docs/design/decisions.md`, "D8").

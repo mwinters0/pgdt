@@ -12,7 +12,8 @@ use arrow::buffer::Buffer;
 use bytes::Bytes;
 
 /// A read chunk retained only long enough for zero-copy views to be taken
-/// into it. Dropped once the scanner has moved past it for good.
+/// into it. Dropped once its read loop's events run out
+/// ([`RetainedChunks::release_through`]).
 struct SourceChunk {
     /// Absolute file offset of `buffer[0]`.
     start: u64,
@@ -120,8 +121,10 @@ impl RetainedChunks {
 
 /// Arrow's largest data block, `GenericByteViewBuilder`'s private
 /// `MAX_BLOCK_SIZE`: a value longer is given a block of its own by
-/// `append_value` too, so handing it the decoded text as that block changes
-/// no layout and drops a copy (`docs/design/decisions.md`, "D141").
+/// `append_value` too, so handing it the decoded text as that block keeps
+/// that value alone in its block and drops a copy, though the block keeps
+/// the text's spare capacity and the builder's next block is sized as if no
+/// value had been appended (`docs/design/decisions.md`, "D141").
 const OWN_BLOCK_PAST: usize = 2 << 20;
 
 /// Append one already-decoded field to a `Utf8View` column, beside the raw

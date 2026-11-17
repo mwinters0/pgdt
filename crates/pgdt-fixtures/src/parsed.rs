@@ -20,8 +20,9 @@ use tokio_util::sync::CancellationToken;
 /// (`pgdt_mapping::map_file`) reads under where it states no allowance of
 /// its own — the serial path stating no budget at one, the library's default
 /// budget above it, and a statistics allowance declining nothing
-/// (`docs/design/decisions.md`, "D1"). The arrangement's only constructor is
-/// its resolution, so this is one, of `Allowance::NoneFound`.
+/// (`docs/design/decisions.md`, "D1"). Outside test support the
+/// arrangement's only constructor is its resolution, so this is one, of
+/// `Allowance::NoneFound`.
 pub fn arranged(jobs: usize) -> Arrangement {
     let request = ArrangementRequest {
         jobs: Jobs::Stated(jobs),
@@ -32,8 +33,9 @@ pub fn arranged(jobs: usize) -> Arrangement {
 
 /// One reader stated under a gibibyte other scans drew enough of: **a ledger
 /// refusing a line past `holds` bytes** — its floor
-/// (`docs/design/decisions.md`, "D161") — with no room to lend, so every
-/// line it admits is the earliest, alone. `holds` is at most what the
+/// (`docs/design/decisions.md`, "D161") — its room `holds` less the cap's
+/// lead over the margin's ceiling, none at the `holds` a test states, so
+/// every line it admits is the earliest, alone. `holds` is at most what the
 /// gibibyte leaves one reader with nothing drawn.
 pub fn floored(holds: u64) -> Arrangement {
     let allowance = Allowance::Stated(1 << 30);

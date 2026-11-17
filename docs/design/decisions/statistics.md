@@ -30,12 +30,12 @@ unrepresentable values, still unescapes, its values written by no `pg_dump` with
 (`LongRead`), `value/text.rs` (`TextFold`). Evidence: `tests/decoded_copies.rs`, `gather/tests.rs`, `streamed_line.rs`.
 
 ### D77 The statistics request is the mapping pass's argument, and the metadata level is a selection
-`map_file` takes a `&StatisticsRequest` and no query entry point does, as with the cancellation (D26), so no option a
-query is handed reads as a request it ignores; a query's pass censuses every block and gathers nothing, which no
-selection spells. A selection is a default level and overrides, the most specific winning, so the type's `Default` is
-the data level everywhere. Rejected: a `ScanOptions` field; `Option<&StatisticsRequest>`, whose `None` contradicts that
-default or spells it twice; refusing a size beside `METADATA`, or two equally specific entries, in the library (the CLI
-refuses both, a person's intent being ambiguous there). Code: `statistics::StatisticsRequest`.
+`map_file` takes a `&StatisticsRequest` and no query entry point does, so no option a query is handed reads as a request
+it ignores; a query's pass censuses every block and gathers nothing, which no selection spells. A selection is a default
+level and overrides, the most specific winning, so the type's `Default` is the data level everywhere. Rejected: a
+`ScanOptions` field; `Option<&StatisticsRequest>`, whose `None` contradicts that default or spells it twice; refusing a
+size beside `METADATA`, or two equally specific entries, in the library (the CLI refuses both, a person's intent being
+ambiguous there). Code: `statistics::StatisticsRequest`.
 
 ### D78 Statistics share the cache file, its identity and its `CACHE_FORMAT_VERSION`
 None is believed from a cache sized unlike the live source (D20); the mtime stays advisory (D21), so a same-size rewrite

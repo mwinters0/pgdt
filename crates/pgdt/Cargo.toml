@@ -65,7 +65,7 @@ clap = { workspace = true, features = ["derive", "string", "wrap_help"] }
 datafusion-cli-pgdump = { path = "../datafusion-cli-pgdump" }
 futures = { workspace = true }
 # `introspect` only: `mallinfo2`, `malloc_info` and the `open_memstream` the
-# second one writes into. A default build does not depend on it directly.
+# second one writes into, and the block tracker's `sysconf` and `mincore`. A default build does not depend on it directly.
 libc = { workspace = true, optional = true }
 # `mi_option_set_default` and `mi_option_get`, behind `extended`, for the
 # purge delay `src/alloc.rs` sets; and under `introspect`, `mi_stats_get_json`
@@ -121,8 +121,7 @@ tokio-util = { workspace = true }
 tracing = { workspace = true }
 # `fmt` for the subscriber itself; `time` for RFC3339 timestamps
 # (`tracing_subscriber::fmt::time::UtcTime::rfc_3339`), the convention the
-# koji orchestrator logs already use
-# (`docs/design/decisions.md`, "D67"). No `ansi`: these lines are as likely to land
+# koji orchestrator logs already use. No `ansi`: these lines are as likely to land
 # in a redirected log file as a terminal.
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "time"] }
 

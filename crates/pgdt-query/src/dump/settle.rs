@@ -36,7 +36,7 @@ impl Table {
     /// map reached selects no table, and [`Error::AmbiguousTable`] where it
     /// selects several, naming each.
     ///
-    /// **It maps and reads no row**: rows come from the plan's streams, the
+    /// **It maps and yields no row**: rows come from the plan's streams, the
     /// table's bytes read again there (`docs/design/decisions.md`, "D48").
     /// The first database's preamble is captured first, whatever is selected
     /// (`docs/design/decisions.md`, "D30"). Under [`ScanExtent::UntilTargetSettled`]

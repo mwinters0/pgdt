@@ -147,7 +147,8 @@ fn bytes(key: &str, value: &str, zero: &str) -> Result<u64> {
     }
 }
 
-/// Whether `key` is on, spelled as DataFusion spells a boolean setting.
+/// Whether `key` is on, spelled as DataFusion spells a boolean setting, and
+/// surrounding spaces allowed, which DataFusion refuses.
 fn boolean(key: &str, value: &str) -> Result<bool> {
     match value.trim().to_lowercase().parse::<bool>() {
         Ok(on) => Ok(on),

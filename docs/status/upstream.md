@@ -192,7 +192,7 @@ back. **`UF1`–`UF6` are allocated, and none is reused.**
   setting that leaves every other holder in place.
 - **Watch.** No test asserts it; `upgrade-deps` reads both issues at each
   DataFusion bump.
-- **When it lands.** Strike the marker at the replay's draw return
+- **When it lands.** Strike the marker at `replay`
   (`crates/pgdt-query/src/stream/replay.rs`), D159's `UF5`, and the account in
   [`../design/roadmap-P33.7-acceptance-notes.md`](../design/roadmap-P33.7-acceptance-notes.md),
   "The hand runs", of the margin absorbing the copy; a stated pool

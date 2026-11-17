@@ -15,8 +15,9 @@ use pgdt_io::{Allowance, Arrangement, ArrangementRequest, ByteRangeSource, Paral
 #[derive(Args)]
 pub(crate) struct ParallelArgs {
     /// How many workers pgdt may ask for. Left unstated, the file decides: a
-    /// plain dump reads serially, and an `.xz` one takes the CPUs this process
-    /// was given, or its own block count where that is smaller — lowered again
+    /// plain dump reads serially, and a local `.xz` one takes the CPUs this
+    /// process was given, or its own block count where that is smaller, a
+    /// fetched one a single worker — lowered again
     /// to the number of readers the memory allowance can pay for, where that is
     /// fewer, whether that allowance was discovered or stated with `--memory`,
     /// or is the library's default where no available memory can be read.
@@ -207,9 +208,9 @@ impl Discovered<'_> {
     /// **A carved budget reaches the library at every worker count**, the
     /// serial state carrying one of its own
     /// (`docs/design/decisions.md`, "I/O, memory and parallelism"). Only a
-    /// resolved-serial arrangement can state no budget, which is what lets the
-    /// status line say `(default)` truthfully: `Workers::memory_bytes` is not
-    /// an `Option`, so that variant carries `DEFAULT_MEMORY_BUDGET` bare.
+    /// resolved-serial arrangement can state no budget: `Workers::memory_bytes`
+    /// is not an `Option`, so that variant carries `DEFAULT_MEMORY_BUDGET`
+    /// bare.
     ///
     /// **`held` is what the pass keeps resident besides its workers while
     /// they are carved**: the heap a cache's statistics hold once a pass loads

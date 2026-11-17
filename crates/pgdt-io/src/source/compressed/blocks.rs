@@ -405,8 +405,8 @@ impl BlockCache {
 
     /// Drop least-recently-used blocks down to one below the slot count —
     /// the drain a decode makes before it takes its slot, made **at once**
-    /// where a reader parks, so the block it last decoded and its share of
-    /// the list are returned when it parks rather than at the next decode
+    /// where a reader parks, so its share of the list, counted and not its
+    /// own blocks, is returned when it parks rather than at the next decode
     /// (`docs/design/decisions.md`, "D162").
     ///
     /// What a reader still views stays alive until its view drops, as with
@@ -465,8 +465,9 @@ pub(crate) struct DecodeBudget {
     /// either order, and [`DecodeBudget::apportion`] recomputes from this on both
     /// announcements.
     budget: AtomicUsize,
-    /// The worker ceiling the caller stated — 1 until one is announced. It is
-    /// the **block** pool's depth: one retained block per concurrent reader,
+    /// The worker ceiling the caller stated — 1 until one is announced. Less
+    /// the readers parked, it is the **block** pool's depth: one retained
+    /// block per concurrent reader,
     /// where a chunk buffer is taken by one read and returned when its bytes
     /// are dropped, and wants the replay path's depth instead
     /// (`LocalFileSource::hint_parallelism`).
@@ -540,7 +541,7 @@ impl DecodeBudget {
             // stated budget. **(c) unowned**; closing it means telling the
             // pool the *delivered* count, or [`BufferPool::slots`] reserving
             // for the decodes in flight — either reworks a pool's sizing rule.
-            // A reader parking there gives back no retention either: its
+            // A reader parking there lowers no slot count either: its
             // depth comes off the announced count, under which the budget
             // still binds — so the ledger credits a park only the budget's
             // fall (`Terms`), nothing until the readers left reading are
@@ -648,8 +649,8 @@ impl DecodeBudget {
     /// **One stated budget, divided between two read units.** The chunk pool
     /// takes its own ceiling and the block pool takes the rest, so the number
     /// a caller states bounds the source rather than each of its pools; the
-    /// worker count is the block pool's depth, one retained block per
-    /// concurrent reader.
+    /// worker count less those parked is the block pool's depth, one
+    /// retained block per concurrent reader.
     ///
     /// A budget too small for a whole block sends every read through the
     /// piecewise arm ([`BlockCache::affordable`]) — the budget is honoured
@@ -662,9 +663,9 @@ impl DecodeBudget {
 
     /// **A reader parks, or a parked one resumes**
     /// ([`ByteRangeSource::hint_parked`](crate::ByteRangeSource::hint_parked)).
-    /// Parking takes it off the block pool's depth and drops the retained
-    /// blocks over what the readers still reading keep, the block it last
-    /// decoded among them ([`BlockCache::give_back`]); resuming puts the
+    /// Parking takes it off the block pool's depth and drops the
+    /// least-recently-used retained blocks over what the readers still
+    /// reading keep ([`BlockCache::give_back`]); resuming puts the
     /// depth back, and the list regrows as decodes land.
     ///
     /// **Only the pools move**: the stated budget is untouched, so which arm

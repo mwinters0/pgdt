@@ -51,8 +51,8 @@ pub(crate) enum Backfill {
 }
 
 /// Re-read every block of a map that has reached EOF which lacks what
-/// `statistics` asks for ([`Backfill::Lacking`]), or only those no strict
-/// parse checked ([`Backfill::Unchecked`]), in file order, storing each block's statistics as it
+/// `statistics` asks for ([`Backfill::Lacking`]), or of a map short of it
+/// only those no strict parse checked ([`Backfill::Unchecked`]), in file order, storing each block's statistics as it
 /// closes and saving through a [`SaveThrottle`] as [`map_forward`](crate::forward::map_forward) does; an
 /// interrupt saves and stops. Announces how many blocks lacked them and, once
 /// every one is re-read, how many were — and nothing at all when none did. A
@@ -176,8 +176,9 @@ pub(crate) async fn backfill_statistics(
 /// **Say which blocks still hold more rows than a stated maximum asks for**,
 /// one line each: a block too dense for it is re-read at the size its own
 /// groups predicted, and one whose rows cluster can miss it there. Nothing
-/// reads such a block again, so every run under that maximum says what it
-/// keeps rather than what it will fix.
+/// reads such a block again but one whose finer read declined, which a run
+/// under a larger allowance re-reads, so every run under that maximum says
+/// what it keeps rather than what it will fix.
 pub(crate) fn report_density_shortfall(statistics: &StatisticsRequest, index: &DumpIndex) {
     let Some(max_rows) = statistics.density_max_rows() else { return };
     for block in index.blocks() {

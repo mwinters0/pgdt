@@ -12,8 +12,8 @@ use pgdt_io::{Allowance, Arrangement, ArrangementRequest, Jobs, WorkerMemory};
 /// them, and how much of it the scans running now have drawn.
 ///
 /// **One object per session**, set on its [`datafusion::prelude::SessionConfig`]
-/// as an extension — a session built without one sharing the process's
-/// (`ScanBudget::of`) — the way DataFusion holds its own bounded shared objects:
+/// as an extension — a provider registered by hand into a session without one
+/// sharing the process's (`ScanBudget::of`) — the way DataFusion holds its own bounded shared objects:
 /// a scan planned while others are live draws what they leave rather than the
 /// whole, so a join of two dumps' tables is bounded by one number.
 /// *Rejected: a budget per registered table*, which no DataFusion source has
@@ -39,7 +39,7 @@ use pgdt_io::{Allowance, Arrangement, ArrangementRequest, Jobs, WorkerMemory};
 /// ceiling alone, as [`ArrangementRequest::held`]; with none found there is no
 /// margin and they come off nothing:
 /// the cap is the reserve's, standing for the scans' own excess over their
-/// budgets, and neither holding is any of it. So they lower a scan's count
+/// budgets, and none of them is any of it. So they lower a scan's count
 /// first, and whatever of them the ceiling's room cannot absorb at that count
 /// comes off its budget — a plain dump's scan, or one reader, whose count
 /// cannot fall, still leaves the margin, or where one reader alone overruns it,
@@ -118,9 +118,8 @@ impl ScanBudget {
     /// with no reserve and no margin ([`Arrangement::resolve`]).
     ///
     /// **The halved figure is carved as an allowance, reserve and margin
-    /// included** ([`ArrangementRequest::carve_estimate`]), where `pgdt` caps
-    /// its buffers at it with neither, so the provider's budget there is the
-    /// smaller: the reserve here stands for what DataFusion holds resident
+    /// included** ([`ArrangementRequest::carve_estimate`]), where `pgdt`
+    /// leaves it uncarved: the reserve here stands for what DataFusion holds resident
     /// beyond any pool limit it states, which a `pgdt` process does not hold.
     pub fn discover() -> Self {
         Self { allowance: Allowance::discover(), held: Mutex::default() }

@@ -70,7 +70,7 @@ async fn render(path: &Path, chunk_size: usize) -> String {
                 );
             }
             // DDL/comment/meta-command lines outside a COPY block —
-            // `crate::map::Builder`'s input, not the scanner's own concern.
+            // `pgdt_dump`'s map `Builder`'s input, not the scanner's own concern.
             Event::Line(_) | Event::DollarQuoteEnd(_) => {}
             Event::StreamedRow(_) => unreachable!("this scan streams no row"),
             Event::LargeObjectStart(start) => {
@@ -540,7 +540,7 @@ async fn unterminated_large_object_region_is_an_error() {
 /// Real `pg_dump` v17+ output splits large-object data into one `BLOBS`
 /// archive entry per object, each with its own `BEGIN;`/`COMMIT;` (I12) — the
 /// scanner reports both pairs, not one merged region: merging them into one
-/// `Data` span is `crate::map`'s job (`tests/map.rs`), not the scanner's.
+/// `Data` span is `pgdt_dump`'s map's job, not the scanner's.
 #[tokio::test]
 async fn v17_plus_reports_one_large_object_region_per_blobs_entry() {
     let source = LocalFileSource::open(fixture18_objects("default")).unwrap();

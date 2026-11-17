@@ -16,8 +16,8 @@
 //!    or a cold query's pass ([`Table::settle`](crate::Table::settle)),
 //!    stopping as soon as the selected table is settled — and **yields no
 //!    rows**.
-//! 2. Every block the table holds is then replayed for its rows, in file
-//!    order.
+//! 2. Every block the query's inheritance reads is then replayed for its
+//!    rows.
 //!
 //! So the queried block's bytes are read twice, and a [`ResumeToken`] can only
 //! ever point inside already-mapped territory.

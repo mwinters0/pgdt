@@ -546,13 +546,13 @@ fn unlisted_labels(unlisted: usize) -> String {
     }
 }
 
-/// [`Error::LineOutgrowsMemory`]'s clause naming what came off one reader's
-/// share as staying beside the line, where anything did.
 /// [`Error::LineTooLong`]'s table, where its reader knew one.
 fn in_copy(table: Option<&str>) -> String {
     table.map_or_else(String::new, |table| format!(" (`COPY {table}`)"))
 }
 
+/// [`Error::LineOutgrowsMemory`]'s clause naming what came off one reader's
+/// share as staying beside the line, where anything did.
 fn held_beside(beside: u64) -> String {
     match beside {
         0 => String::new(),

@@ -98,7 +98,7 @@ are `docs/process.md`, "The decision register".
 
 ## Batches, streams and the leader
 [`decisions/batches.md`](decisions/batches.md)
-- **D46** Zero-copy views are top-level `Utf8View` only, and `max_source_span` alone bounds pinned bytes
+- **D46** Zero-copy views are top-level `Utf8View` only, and `max_source_span` alone bounds a batch in flight's pins
 - **D141** A long value is decoded once beside its line: a `bytea` into its column, an escaped text as its own block
 - **D153** A nested value is decoded into its builders as the output grammars' walk reads it, its tier tested by a walk of its own
 - **D154** A decode factor is what a column's reserved builders and walk hold per text byte; a query's, its largest

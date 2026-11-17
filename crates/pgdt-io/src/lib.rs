@@ -2,7 +2,7 @@
 //! parallelism (`docs/design/decisions.md`, "D68"). The `http` feature is
 //! this crate's.
 //!
-//! Two concepts, one tree each: the byte sources, `source` and the arms
+//! Two concepts: the byte sources, `source` and the arms
 //! nested under its read contract; and memory and parallelism — the allowance
 //! and its discovery (`memory`), its resolution into what a pass runs under
 //! (`arrangement`), the arrangement and what a worker holds (`parallelism`),

@@ -1179,7 +1179,7 @@ and nowhere else; only the two allocators' sum is the heap. A report labelling
 glibc `whole-process` was taken with the counter over glibc, the Rust heap
 inside it, and is read as one heap. How to build it and what each
 line means is `crates/pgdt/src/introspect.rs`; why a build whose `--version` names it
-is never timed is [`decisions.md`](decisions.md), "D13". **The counter also attributes
+is never timed is [`roadmap.md`](roadmap.md), "Attribution is introspective; only the gate is blind". **The counter also attributes
 statistics**: what a thread allocates inside the library's statistics scope is
 counted apart, and a `parse` reports it beside the library's own account of the
 same bytes as `statistics_*` lines ([`decisions.md`](decisions.md), "D81").
@@ -3557,7 +3557,7 @@ Each provider leg, at every count, reads a cache one untimed `pgdt parse` statin
 
 **The last column is the plain typed provider scan again, every rep cold off the NVMe** (`cold-nvme-parallel`), at 1, 2, 4 partitions: the one leg the regime test admits on a real device ("Scan throughput by input shape"), each row read against its own one-partition row, and the device's floor being `scan-throughput-nvme`'s `dd`. The page cache is dropped before every rep, and the cache it reads is written by the same untimed `parse` once a sitting, in a container of its own, and mounted read-only beside the dump, so the dump and the cache both come off the device inside the timer. Every other column reads tmpfs.
 
-**`PARALLEL_BUDGET` is 2.00 GiB so that no `.xz` row is budget-clamped;** a plain source stays on the library's default budget whatever is stated (`docs/design/decisions.md`, "D83"), which is the clamp the counts above state. A compressed reader is charged its block, the chunk buffer and the decoder's own retention, and the readers together the block pool's retention list (`docs/design/decisions.md`, "I/O, memory and parallelism"), so a smaller budget would hold the widest `.xz` rows below the twenty-four they are labelled.
+**`PARALLEL_BUDGET` is 2.00 GiB so that no `.xz` row is budget-clamped;** no stated allowance raises a plain source past the library's default budget (`docs/design/decisions.md`, "D83"), which is the clamp the counts above state. A compressed reader is charged its block, the chunk buffer and the decoder's own retention, and the readers together the block pool's retention list (`docs/design/decisions.md`, "I/O, memory and parallelism"), so a smaller budget would hold the widest `.xz` rows below the twenty-four they are labelled.
 
 Per-rep readings (s):
 - Plain, `parse`, 1j: 0.452, 0.912, 0.462, 0.463, 0.468

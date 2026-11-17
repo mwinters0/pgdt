@@ -156,7 +156,7 @@ impl WorkerMemory {
 /// every pool and every affordability test reads
 /// (`docs/design/decisions.md`, "D83").
 ///
-/// **Three ways to one**: [`Arrangement::resolve`](crate::Arrangement::resolve), which carves an
+/// **Three constructors**: [`Arrangement::resolve`](crate::Arrangement::resolve), which carves an
 /// allowance; [`Parallelism::workers`], for a caller stating both numbers
 /// already resolved; and [`Parallelism::default`], the serial path stating
 /// nothing.

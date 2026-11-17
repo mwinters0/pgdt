@@ -216,7 +216,7 @@ impl UncollatedColumns {
 /// half, as `pgdt`'s `plan_note_origin` is `pgdt`'s.
 ///
 /// **Its message is the note's followed by one clause**: the allowance and
-/// its origin and the three holdings that came off it — or, where no
+/// its origin and the four holdings that came off it — or, where no
 /// allowance was found, the library's default the budget was drawn from and
 /// what the live scans drew of it — and the settings that
 /// would move what the note reports — each a key a user types as it stands,

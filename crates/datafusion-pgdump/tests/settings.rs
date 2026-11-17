@@ -1,6 +1,6 @@
-//! The `pgdump.` session settings: what `pgdt query` takes as `--memory`,
-//! `--chunk-size` and `--max-line-bytes`, set with `SET` and read when a scan
-//! is planned.
+//! The `pgdump.` session settings: what `pgdt query` takes as `--memory` and
+//! `--chunk-size`, and whether a dynamic filter's rows are evaluated, set with
+//! `SET` and read when a scan is planned.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -173,8 +173,8 @@ async fn the_read_settings_reach_the_scan() {
 /// **The settings are the session's, listed by `SHOW ALL`, and a value
 /// `pgdt` would refuse is refused by `SET`**, save the `0` that un-states an
 /// allowance — as is a key that is none of them, the line limit the bound
-/// replaced among them, a `STORED AS PGDUMP` option as that statement's. `STORED AS PGDUMP` alone
-/// installs them too.
+/// replaced among them, a `STORED AS PGDUMP` option as that statement's. Registering the factory
+/// `STORED AS PGDUMP` reads installs them too.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_settings_are_listed_and_checked() {
     let ctx = SessionContext::new_with_config(SessionConfig::new().with_information_schema(true));

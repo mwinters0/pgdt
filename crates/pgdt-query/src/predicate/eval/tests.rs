@@ -187,7 +187,7 @@ fn and_or_and_not_are_three_valued() {
     }
 }
 
-/// Every tree of height at most three over the three truth values, with
+/// Every tree of at most `height` edges over the three truth values, with
 /// `And`/`Or` arity two.
 fn trees(height: usize) -> Vec<ResolvedExpr> {
     let mut out: Vec<ResolvedExpr> = VALUES.iter().copied().map(leaf).collect();

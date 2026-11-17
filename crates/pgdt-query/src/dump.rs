@@ -408,7 +408,8 @@ impl Table {
     /// before resolving the arrangement it plans under ([`Self::plan`]), so
     /// that line is admitted without waiting on the readers carved beside it
     /// (`docs/design/decisions.md`, "D157", "D160"). Reads no byte of the
-    /// dump; refuses what [`Self::schema`] refuses.
+    /// dump; refuses what [`Self::schema`] refuses over the table's own
+    /// blocks, and answers zero for a table reading none of its own.
     pub fn line_charge(&self, read: ReadOptions, options: &QueryOptions) -> Result<u64> {
         let blocks = self.read(options)?;
         if blocks.is_empty() {

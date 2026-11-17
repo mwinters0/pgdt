@@ -313,7 +313,7 @@ pub struct CopyBlock {
     /// What a pass reading every row of this block found — its array-shape
     /// census and its unrepresentable count — and `None` for a block mapped
     /// at the [`pgdt_mapping::statistics::StatisticsLevel::Metadata`] level,
-    /// which records nothing drawn from its rows
+    /// which records no census of its rows
     /// (`docs/design/decisions.md`, "D35", "D96"). Recording one puts the
     /// block at the data level.
     pub census: Option<BlockCensus>,

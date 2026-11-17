@@ -8,8 +8,8 @@ these entries rest on are `measurements.md`'s `scan-throughput-*`, `reserve` and
 
 ### D1 The library never spawns threads by surprise
 `Parallelism::default()` is `Serial`; discovery is opt-in, asked for by the CLI and by the DataFusion provider's
-`ScanBudget` where no allowance is stated. Rejected: `default_workers` read in the library, so silence means
-concurrency.
+`ScanBudget` unless built with an allowance (`ScanBudget::new`). Rejected: `default_workers` read in the library, so
+silence means concurrency.
 
 ### D2 A plain file recommends one worker; a local compressed one the machine's cores
 A plain file recommends one: a serial plain `parse` is device-bound wherever a split reaches, a `COPY` block's interior
@@ -79,14 +79,14 @@ sets, which concurrent parkers overwrite. Code: `DecodeBudget::hint_parked`, `Bl
 `blocks/tests.rs`, `pool/tests.rs`.
 
 ### D163 A line alone past the room parks the latest readers, and is admitted once they have
-A reader stands before a read, a sub-stream aside as it yields. Where the earliest line alone holds or waits past the
-room, the standing readers after it holding and awaiting no line park, latest first, as few as the carve's fall covers
-(`Terms`), admitted once they have parked or left; they park holding no read (D162), a sub-stream's batch emitted first,
-resuming as the excess falls. Why: the floor is the room and what others free (D161). Rejected: admitting it first;
-asking a reader whose line waits, which waits on it, or one at a yield, unpolled under a merge; parking with a batch,
-its views pinning what no carve states (`KD23`); never asking one holding rows, cut alike each run but passing the room;
-crediting an unscaled term (`KD21`). Code: `ledger/park.rs`, `draw_absorbing`, `replay`. Evidence: `ledger/tests.rs`,
-`tests/ledger.rs`.
+A reader stands before absorbing a read, a sub-stream aside as it yields. Where the earliest line alone holds or waits
+past the room, the standing readers after it holding and awaiting no line park, latest first, as few as the carve's fall
+covers (`Terms`), admitted once they have parked or left; they park dropping the read in hand (D162, `KD172`), a
+sub-stream's batch emitted first, resuming as the excess falls. Why: the floor is the room and what others free (D161).
+Rejected: admitting it first; asking a reader whose line waits, which waits on it, or one at a yield, unpolled under a
+merge; parking with a batch, its views pinning what no carve states (`KD23`); never asking one holding rows, cut alike
+each run but passing the room; crediting an unscaled term (`KD21`). Code: `ledger/park.rs`, `draw_absorbing`, `replay`.
+Evidence: `ledger/tests.rs`, `tests/ledger.rs`.
 
 ### D4 A budget is solved against a source's cost, never divided by it
 `WorkerMemory` carries a per-worker term and a shared pool term (`affords`, `at`): the block pool's retention list is

@@ -7,7 +7,7 @@
 //! **Only with the instrument**: a shipped build neither computes an event nor
 //! keeps an observer, the ledger's calls being behind the same feature. The
 //! observer runs on the reader's thread, outside the ledger's lock, as the
-//! draw returns.
+//! draw returns or the line is released.
 
 #[cfg(feature = "introspect")]
 pub use enabled::{LineEvent, LineMoment, line_moment, observe_lines};

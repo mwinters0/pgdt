@@ -2,18 +2,18 @@
 
 Part of the decision register, [`../decisions.md`](../decisions.md), whose rules are `docs/process.md`, "The decision
 register"; an entry is cited by its `D<k>` against that index. The `COPY` scanner: what it treats as structure, why it
-owns no bytes and validates UTF-8 once per chunk, how a scan is cancelled, and the row-path optimizations measured and
+owns no bytes, why UTF-8 is validated once per chunk, how a scan is cancelled, and the row-path optimizations measured and
 refused. `pgdt-dump`'s `scan` and `pgdt-query`'s batch path.
 
 ### D23 The scanner never owns the bytes it scans, and only the whole `COPY` grammar is structural
 `CopyScanner` is a synchronous state machine over a caller-owned buffer, so a chunk is scanned where it lies, only the
 line straddling its edge copied (rejected: a growing buffer, copying every byte twice), and that line frozen for its
-row, a replay's block, then dropped (rejected: reusing its buffer, holding the longest line's bytes all pass). Past
-the line bound a line errors, never truncates (D164). Only a line matching the whole `COPY … FROM stdin;` grammar,
-or a bare `BEGIN;` (D33), is structural; inside a block only an exact `\.` line and a row's ending are read (I7, I91).
-Outside one and the large-object region a line is lexed as psql lexes it (I50), one beginning inside a string,
-identifier, comment or dollar-quoted body never structure (I1). Rejected: tracking `$` alone, or quotes too (a `$$` in a
-name or comment hid every block).
+row, a replay's block, then dropped (rejected: reusing its buffer, holding the longest line's bytes all pass). Past the
+line bound a line errors, never truncates (D164). Only a line matching the whole `COPY … FROM stdin;` grammar, or a bare
+`BEGIN;` and the `COMMIT;` ending its region (D33), is structural; inside a block only an exact `\.` line and a row's
+ending are read (I7, I91). Outside one and the large-object region a line is lexed as psql lexes it (I50), one beginning
+inside a string, identifier, comment or dollar-quoted body never structure (I1). Rejected: tracking `$` alone, or quotes
+too (a `$$` in a name or comment hid every block).
 
 ### D138 A row its reader holds no byte of is streamed once a whole chunk passes inside it
 A block whose rows nothing reads whole streams them: a row no chunk ends is handed out as a `StreamedLine`. A census and
@@ -35,13 +35,14 @@ its block's longest; I71's bound reserved per line, counted whole by an address-
 `the_carry_keeps_no_line_past_its_row`.
 
 ### D158 A reader draws what its carry will hold before absorbing a chunk, holding no read while it waits
-Each read loop draws on its run's ledger (D157) what its carry would hold past its chunk once it absorbs the chunk in
-hand — a line completed or joined, or a held field grown to its next delimiter — keyed by where that starts
+A read loop handed its run's ledger draws on it (D157) what its carry would hold past its chunk once it absorbs the
+chunk in hand — a line completed or joined, or a held field grown to its next delimiter — keyed by where that starts
 (`draw_absorbing`). A waiting draw drops the chunk, read again once admitted; one told to give up drops what it holds
-and reads it again from its start. Why: the charge is exact before the copy, and a waiter keeping a pooled read could
-starve the earliest line's (D5). Rejected: drawing before the read (every carried tail charged a chunk); after
-absorbing (a field ending in the chunk grows uncharged); keying a field by its row (a later field keeps the largest
-draw); holding the chunk while waiting. Code: `scan/chunked.rs`. Evidence: `chunked/tests.rs`, `tests/ledger.rs`.
+and reads it again from its start. Why: the charge is known before the copy, an upper bound where the row then streams
+(`KD170`), and a waiter keeping a pooled read could starve the earliest line's (D5). Rejected: drawing before the read
+(every carried tail charged a chunk); after absorbing (a field ending in the chunk grows uncharged); keying a field by
+its row (a later field keeps the largest draw); holding the chunk while waiting. Code: `scan/chunked.rs`. Evidence:
+`chunked/tests.rs`, `tests/ledger.rs`.
 
 ### D164 A line is held to I71's bound, a constant measured before each read is absorbed
 Every read loop holds a line, its terminator included, to `LINE_BOUND` (I71), measured before a read is drawn for or

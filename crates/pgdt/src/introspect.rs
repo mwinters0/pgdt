@@ -10,14 +10,14 @@
 //! This is the introspective half of `docs/design/roadmap.md`, "Attribution is
 //! introspective; only the gate is blind". What each instrument sees, what it
 //! is blind to and what it costs is `docs/design/measurements.md`, "What an
-//! instrument can see"; the mechanism's entry is
-//! `docs/design/decisions.md`, "D13".
+//! instrument can see".
 //!
 //! # What it reports
 //!
-//! A snapshot, and no sampler: a quantity whose peak is reported carries its
-//! own high-water, `statistics_*` are read as the pass returned them, and the
-//! rest as they stand at exit:
+//! A snapshot, and no sampler but `blocks_*`'s, read at a held line's
+//! moments: a quantity whose peak is reported carries its own high-water, or
+//! there the largest of those readings, `statistics_*` are read as the pass
+//! returned them, and the rest as they stand at exit:
 //!
 //! * **`live_bytes` / `live_peak_bytes`** — exact bytes the *program* asked
 //!   for and had not freed, and the largest that figure ever reached, kept by
@@ -67,7 +67,7 @@
 //!   that grows with its line (`docs/design/decisions.md`, "D154"); absent
 //!   where none was planned.
 //! * **`blocks_*`** — where `PGDT_INTROSPECT_BLOCKS_FROM` states a size: each
-//!   Rust heap block past it, live or freed, whose pages are resident at each
+//!   Rust heap block at least that size, live or freed, whose pages are resident at each
 //!   moment a held line's draw is first admitted or returned, named by the
 //!   stack that allocated it, after glibc's lines (`introspect/blocks.rs`).
 //! * **`evaluation_*`** — where `pgdt sql` ran: what
@@ -158,7 +158,7 @@ impl Drop for AtExit {
 ///
 /// A write that fails says so on stderr — an error, not the report: a silent
 /// failure is the one outcome a reader cannot tell from a build without the
-/// feature (`docs/design/decisions.md`, "D13").
+/// feature.
 pub fn report(sections: Sections) {
     #[cfg(feature = "introspect")]
     enabled::write_report(sections);
@@ -622,9 +622,9 @@ mod instrumented_tests {
         assert!(committed_peak.is_some_and(|b| b > 0), "{text}");
     }
 
-    /// Every line that is not one of the report's own readings must be
+    /// Mimalloc's verbatim JSON, not one of the report's own readings, must be
     /// invisible to `measure.parse_reported`, whose grammar is
-    /// `^[a-z_]+=\S+$`: mimalloc's verbatim JSON included.
+    /// `^[a-z_]+=\S+$`.
     #[test]
     fn only_the_readings_parse_as_readings() {
         let text = report_text();

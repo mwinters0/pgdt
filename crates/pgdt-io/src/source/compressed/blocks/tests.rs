@@ -293,8 +293,8 @@ fn a_parked_reader_gives_back_its_retained_blocks_and_takes_them_again() {
 }
 
 /// **At or below [`POOL_DEPTH`] readers a park keeps the depth and still
-/// drains the list to one below it**, so the block the parked reader last
-/// decoded is not kept for it; a resume past every park is no resume.
+/// drains the list to one below it**, so a block is given back at the park
+/// rather than at the next decode; a resume past every park is no resume.
 #[test]
 fn a_parked_reader_under_the_pool_depth_gives_back_its_last_block() {
     let budget = DecodeBudget::over(4096, 0);

@@ -187,7 +187,8 @@ pub(in crate::stream) fn charged(factor: Option<Factor>, held: u64) -> u64 {
     held.saturating_add(factor.map_or(0, |f| f.of(held)))
 }
 
-/// **The charge of the longest line a read of `matches` holds**, its pieces
+/// **The charge of the longest line of the blocks a read of `matches`
+/// reaches** — a block's own longest, whatever of it the pruning keeps — its pieces
 /// read `chunk` bytes at a time, under the factor `blocks` — `matches`
 /// planned for its query — fold to: what that line draws once it outgrows its
 /// chunk, its length as I71 measures it held whole, and nothing where every

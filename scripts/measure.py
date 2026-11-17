@@ -10366,8 +10366,8 @@ def run_parallel_scan_throughput(session: Session) -> str:
         "the cache both come off the device inside the timer. Every other column reads "
         "tmpfs.\n\n"
         f"**`PARALLEL_BUDGET` is {_fmt_bytes(PARALLEL_BUDGET)} so that no `.xz` row is "
-        "budget-clamped;** a plain source stays on the library's default budget whatever is "
-        'stated (`docs/design/decisions.md`, "D83"), which is the clamp the counts above '
+        "budget-clamped;** no stated allowance raises a plain source past the library's default "
+        'budget (`docs/design/decisions.md`, "D83"), which is the clamp the counts above '
         "state. A compressed reader is charged its block, the chunk buffer and the "
         "decoder's own retention, and the readers together the block pool's retention list "
         '(`docs/design/decisions.md`, "I/O, memory and parallelism"), so a smaller '

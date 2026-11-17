@@ -200,7 +200,7 @@ pub(super) fn two_blocks(dir: &std::path::Path) -> std::path::PathBuf {
     path
 }
 
-/// **A replay keeps no block's statistics**: once its plan and segments
+/// **A replay's plan and segments keep no block's statistics**: once they
 /// exist, the matched blocks the map handed over are the only holders of
 /// each block's `Arc`, so dropping them frees the statistics before a row
 /// is read, on the partitioned path and the serial resume alike.

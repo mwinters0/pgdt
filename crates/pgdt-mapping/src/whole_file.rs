@@ -258,7 +258,7 @@ impl Mapped {
 ///
 /// **It records what `statistics`' levels ask for**, over the blocks this run
 /// maps — a data-level table's census and its data-level columns' statistics,
-/// and of a metadata-level table nothing drawn from its rows — and then
+/// and of a metadata-level table no census — and then
 /// **re-reads every block that lacks it** — one the cache already held,
 /// a metadata-level one among them, or one this run gathered too coarsely for
 /// a stated maximum ([`backfill_block`](crate::backfill_block)) — never replacing what a

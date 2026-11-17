@@ -169,7 +169,8 @@ pub trait ByteRangeSource: Send + Sync {
     /// One reader's charge *plus the retention list it leaves behind*, which
     /// is the line [`BlockCache::affordable`](crate::source::compressed::blocks::BlockCache::affordable) draws: a pool serving one reader
     /// still holds [`POOL_DEPTH`](crate::source::pool::POOL_DEPTH) slots. `None` for a source with no such path
-    /// to take, which is every source but a compressed one.
+    /// to take: every source but a compressed one, and a compressed one with
+    /// no block unit, a gzip first pass's before its hand-over included.
     ///
     /// Whether the path was declined is read off
     /// [`ByteRangeSource::partitions`]; this is only the number the message
@@ -206,8 +207,8 @@ pub trait ByteRangeSource: Send + Sync {
     /// **The default is `None`: no recommendation at all**, which leaves a
     /// caller on [`DEFAULT_MEMORY_BUDGET`](crate::DEFAULT_MEMORY_BUDGET), capped at the discovered allowance
     /// less [`MEMORY_RESERVE`](crate::internal::MEMORY_RESERVE) where one was found. It is what keeps "no
-    /// limit found" from meaning "serial", that constant affording no
-    /// block-decoding reader (`docs/design/decisions.md`, "D3").
+    /// limit found" from meaning "serial", that constant declining an
+    /// ordinary `.xz`'s block-decoding reader (`docs/design/decisions.md`, "D3").
     ///
     /// **The arrangement carves by it** ([`ArrangementRequest::of`](crate::ArrangementRequest::of)),
     /// solving the worker count and the budget against it, and a plan's notes

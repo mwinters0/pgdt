@@ -111,7 +111,7 @@ pub(crate) struct BufferPool {
     /// The ceiling on the free list in slots, whatever the budget affords:
     /// [`POOL_DEPTH`], which every chunk pool keeps whatever count is
     /// announced, and which [`DecodeBudget::apportion`](crate::source::compressed::blocks::DecodeBudget::apportion) raises on the block pool
-    /// alone to one slot per announced reader above it.
+    /// alone to one slot per announced reader still reading above it.
     depth: AtomicUsize,
     /// How many of [`BufferPool::slots`] are held by a holder outside the free
     /// list — `0` for every pool but [`BlockCache`](crate::source::compressed::blocks::BlockCache)'s, whose retained blocks
@@ -278,9 +278,9 @@ impl BufferPool {
 
     /// State the budget and the slot ceiling this pool is to work inside.
     ///
-    /// Both at once, because they are two halves of one sizing decision and a
-    /// pool caught between an old depth and a new budget would report a count
-    /// neither caller asked for.
+    /// Both in one call, because they are two halves of one sizing decision;
+    /// they are stored apart, so a [`BufferPool::slots`] racing the call may
+    /// read the new budget beside the old depth.
     /// A raised ceiling wakes every waiter, since one of them may now fit
     /// under it — the only other thing that can release a waiting acquisition
     /// is a charged buffer coming back.
@@ -357,7 +357,8 @@ impl BufferPool {
     ///
     /// **What it costs is a second *pooled* read unit**, which the plain path
     /// does not have: it reads [`PartitionRead::Chunked`](crate::PartitionRead::Chunked), so every buffer its
-    /// read loop takes is the announced length. It does take one other length
+    /// read loop takes is the announced length but the one reading to the
+    /// source's end, shorter. It does take one other length
     /// — `pgdt_dump::attach_text`'s run read, which is bounded by the spans
     /// it is filling rather than by the hint — and this rule drops that buffer
     /// instead of pooling it wherever it is longer than a slot. The two-unit sources are the

@@ -11,8 +11,9 @@ No `LIKE` (collation-dependent folding), `BETWEEN` (`And`), or column-to-column;
 three-valued logic forces, `IS [NOT] UNREPRESENTABLE` what the null mode forces (D101). `IN` and `NOT IN` are
 `PredicateOp`s holding their list, `NULL` included: one column against literals, as PostgreSQL parses `= ANY` and `<>
 ALL` over consts (`transformAExprIn`), answering as the `Or` of `=` (or its negation) but decoding and looking up once a
-row, where that `Or` costs per term (`dynamic-filter-join`). Rejected: `Expr::In`, a second kind of leaf for an embedder
-to build; recognizing the `Or`, every front end emitting `In`. Evidence: `tests/membership.rs`.
+row, where that `Or` costs per term (`dynamic-filter-join`), save an ordered `=`, asked term by term (`Lookup::Each`).
+Rejected: `Expr::In`, a second kind of leaf for an embedder to build; recognizing the `Or`, every front end emitting
+`In`. Evidence: `tests/membership.rs`.
 
 ### D54 One tree, no planner yet, short-circuit defined against the root
 `filter` is one n-ary `Expr`, by default the empty conjunction. `And` may stop at the first `Unknown` except beneath
@@ -82,9 +83,10 @@ recursive query's next iteration needs rows the last ruled out). Reopens: a rele
 equal, then an `RT<n>`. Code: `filter::dynamic::loosened`.
 
 ### D150 A filter term reads an escaped field off its bytes; a list collects it no further than its longest literal
-A text, `character` or `bytea` ordering, an `=` against a literal's `*_out` spellings or trimmed, and a NULL test read an
-escaped field as `Unescape` hands its runs, checked UTF-8 as they go, with no copy made; an `IN` list over the same
-collects its text to the longest literal, past which none is it. Why: a query holds its line and one decoded copy
+A text, `character` or `bytea` ordering, an `=` against a literal's `*_out` spellings or trimmed, and a NULL test read
+an escaped field as `Unescape` hands its runs, checked UTF-8 as they go, with no copy made; an `IN` list over the same
+collects its text to the longest literal, past which none is it. The `=`, NULL test and list read a field whole where
+its block's column holds an unrepresentable value under the null mode. Why: a query holds its line and one decoded copy
 (D141). Rejected: unescaping per term, a copy as long as the value; hashing the field a run at a time, binding a set to
 its hasher's chunking; reading a keyed scalar so, which its slice reader reads whole (D144). Code: `predicate/eval.rs`,
 `key/runs.rs` (`FieldOrder`). Evidence: `eval/tests.rs`, `tests/decoded_copies.rs`.

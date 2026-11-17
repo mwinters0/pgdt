@@ -114,14 +114,14 @@ Options:
                                         cache found at the start: a dump that changes while it is
                                         being read still stops the run (`--strict-identity`)
       --jobs <N>                        How many workers pgdt may ask for. Left unstated, the file
-                                        decides: a plain dump reads serially, and an `.xz` one takes
-                                        the CPUs this process was given, or its own block count
-                                        where that is smaller — lowered again to the number of
-                                        readers the memory allowance can pay for, where that is
-                                        fewer, whether that allowance was discovered or stated with
-                                        `--memory`, or is the library's default where no available
-                                        memory can be read. A count stated here is never lowered
-                                        that way
+                                        decides: a plain dump reads serially, and a local `.xz` one
+                                        takes the CPUs this process was given, or its own block
+                                        count where that is smaller, a fetched one a single worker —
+                                        lowered again to the number of readers the memory allowance
+                                        can pay for, where that is fewer, whether that allowance was
+                                        discovered or stated with `--memory`, or is the library's
+                                        default where no available memory can be read. A count
+                                        stated here is never lowered that way
       --memory <BYTES>                  How much memory pgdt may hold resident in total, in bytes —
                                         the number you would give the container. Left unstated, pgdt
                                         reads the memory limit it is running under — the smallest
