@@ -268,6 +268,18 @@ to 512 MiB of slack a line on a 64 KiB-page kernel; asking for huge pages, which
 under the kernel's default defrag compacts memory at the fault, an unmeasured
 stall on a fragmented host, and overrides a policy that is the host's.
 
+**A held line's decoded copy is given back as its line is**: the ledger lends a
+returned draw's bytes to the next line at once, so what a draw charges past the
+line is resident only while it is live, on every allocator, where through the
+global allocator mimalloc keeps a freed copy resident to its purge beside the
+next line's (`roadmap-P33.7-acceptance-notes.md`, "The hand runs"). **That is
+every buffer a draw charges past the line**: an escaped value's unescaped
+block, a `bytea`'s decoded bytes, a nested value's reserved builders, the
+scalar text a parse collects and a container the census holds whole where it
+is allocated rather than the line. Rejected: lowering mimalloc's purge delay,
+and charging what it keeps, as above; text and `bytea` alone, the nested
+builders failing the same way.
+
 **The charge is in bytes, never in blocks.** A held line copies out of the
 chunks it crosses, so on a compressed source it pins only its current chunk's
 block, whose retention the block pool already bills; a line spanning many of a
@@ -437,9 +449,13 @@ carving two readers or more below what the lines its clusters hold at once
 charge, so its arrangement rather than its timing makes readers wait and give
 up their lines, read as not refused, its peak resident within that `--memory`
 and its rows an unlimited run's, the one reading of the ledger over a real
-dump.
+dump. **That query is `pgdt sql` over the one block holding the dump's longest
+line, under `SET pgdump.memory`**, so a block's cluster is cut across readers.
 Rejected: a `--memory` only below what its clusters hold at once, which may
-carve one reader, where nothing waits or parks; a count of waits and parks,
+carve one reader, where nothing waits or parks; a whole-table read, whose
+sub-streams take a block's pieces contiguously, so a cluster falls to one
+reader and its lines meet only by timing; `pgdt query`, whose in-order merge
+reads one sub-stream at a time past its first round (`KD57`); a count of waits and parks,
 user surface no user needs, or an `introspect` count the shipped build's run
 cannot read; a park read over a real dump, which only an uncarved estimate
 outside a container's limit makes, the ledger's tests reading parks. The
