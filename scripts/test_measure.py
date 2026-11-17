@@ -1749,6 +1749,203 @@ class ReleaseProfile(unittest.TestCase):
         )
 
 
+class PurgeDelay(unittest.TestCase):
+    """`purge-delay` and `purge-delay-resident`: the shipped binary under
+    each leg's `MIMALLOC_PURGE_DELAY`, timed on the throughput shapes and
+    read for peak resident over `long-line-resident`'s legs.
+
+    Each assertion is a way to publish a plausible table of the wrong
+    comparison: a leg whose variable never reached the container or
+    mimalloc, a shipped leg stating a value, two legs sharing a key, or a
+    resident leg read in another arrangement than `long-line-resident`'s."""
+
+    FIGURES = ("purge-delay", "purge-delay-resident")
+
+    def test_both_are_built_untaken_and_borrow_nothing(self):
+        # Untaken until a commit carries them; standing in no sharing edge
+        # lets each publish outside a sweep.
+        for figure in self.FIGURES:
+            with self.subTest(figure=figure):
+                fig = measure.SELECTABLE_BY_ID[figure]
+                self.assertIn(fig, measure.UNTAKEN)
+                self.assertNotIn(fig, measure.FIGURES)
+                self.assertEqual(fig.shares, ())
+                self.assertEqual(measure.entangled_with(figure), [])
+                self.assertIn("Cargo.lock", fig.depends)
+                self.assertIn("crates/pgdt/Cargo.toml", fig.depends)
+
+    def test_the_shipped_leg_states_nothing_and_each_other_its_delay(self):
+        self.assertEqual(measure.purge_delay_legs(), (None, *measure.PURGE_DELAY_LEGS))
+        self.assertIsNone(measure.purge_delay_env(None))
+        for delay in measure.PURGE_DELAY_LEGS:
+            with self.subTest(delay=delay):
+                self.assertEqual(
+                    measure.purge_delay_env(delay), f"{measure.PURGE_DELAY_VAR}={delay}"
+                )
+        # Below the shipped default, distinct, zero among them.
+        self.assertIn(0, measure.PURGE_DELAY_LEGS)
+        self.assertEqual(len(set(measure.PURGE_DELAY_LEGS)), len(measure.PURGE_DELAY_LEGS))
+        self.assertTrue(
+            all(d < measure.MIMALLOC_DEFAULT_PURGE_DELAY for d in measure.PURGE_DELAY_LEGS)
+        )
+
+    def test_a_spec_s_environment_keys_it_only_where_stated(self):
+        # An unstated environment keys as before, so every earlier sitting
+        # still renders; a stated one is a reading of its own.
+        plain = measure.RunSpec("pgdt", "control", "parse", "warm", "")
+        self.assertEqual(plain.key("f"), "f/pgdt/control/parse/warm")
+        stated = dataclasses.replace(plain, env="MIMALLOC_PURGE_DELAY=10")
+        self.assertEqual(stated.key("f"), "f/pgdt/control/parse/warm/env=MIMALLOC_PURGE_DELAY=10")
+
+    def test_every_shape_is_read_at_every_leg_under_one_key_each(self):
+        specs = measure._purge_delay_specs()
+        timed = [s for s in specs if s.binary != "none"]
+        self.assertEqual(
+            len(timed), len(measure.PURGE_DELAY_SHAPES) * len(measure.purge_delay_legs())
+        )
+        self.assertEqual(len({s.key("purge-delay") for s in specs}), len(specs))
+        self.assertEqual([s.command for s in specs].count("dd"), 1)
+        self.assertEqual(
+            [(c, l) for c, l, _, _ in measure.PURGE_DELAY_SHAPES][: len(measure.RELEASE_PROFILE_SHAPES)],
+            list(measure.RELEASE_PROFILE_SHAPES),
+        )
+        for spec in timed:
+            with self.subTest(spec=spec.label):
+                self.assertIn(spec.binary, measure.SHIPPED_BINARIES)
+                self.assertEqual(spec.input, "control")
+                if "-jobs-" in spec.command:
+                    self.assertEqual(
+                        (spec.regime, spec.memory), ("warm-parallel", measure.PARALLEL_MEMORY)
+                    )
+                else:
+                    self.assertEqual((spec.regime, spec.memory), ("warm", None))
+        self.assertEqual(
+            {s.command.rpartition("-jobs-")[2] for s in timed if "-jobs-" in s.command},
+            {"4", "24"},
+        )
+
+    def _logged_run(self, spec):
+        cfg = measure.Config(dry_run=True)
+        logged: list[str] = []
+        session = measure.Session(cfg, measure.Stager(cfg, lambda _m: None), logged.append)
+        session.input_path = lambda name, regime: Path("/dev/null")
+        session.binary_path = lambda which: Path("/dev/null")
+        session.figure_id = "purge-delay"
+        session.time_run(spec)
+        (run,) = [line for line in logged if " run --rm " in line]
+        return run
+
+    def test_a_leg_s_container_is_given_its_variable_outside_the_shape(self):
+        shipped, ms0 = measure._purge_delay_specs()[:2]
+        self.assertIsNone(shipped.env)
+        self.assertEqual(ms0.env, f"{measure.PURGE_DELAY_VAR}=0")
+        run = self._logged_run(ms0)
+        image, _, script = run.partition(measure.Config(dry_run=True).image)
+        self.assertIn(f"-e {measure.PURGE_DELAY_VAR}=0", image)
+        self.assertNotIn(measure.PURGE_DELAY_VAR, script)
+        self.assertNotIn(measure.PURGE_DELAY_VAR, self._logged_run(shipped))
+
+    def test_mimalloc_s_answer_is_read_and_a_leg_it_did_not_reach_refused(self):
+        def answering(delay: str):
+            out = f"option 'verbose': 1 \noption 'purge_delay': {delay} \npgdt 0.3.0\n"
+            return unittest.mock.patch.object(measure, "run", return_value=out)
+
+        cfg = measure.Config()
+        with answering("1000") as run:
+            self.assertEqual(measure.binary_purge_delay(cfg, Path("/pgdt"), None), 1000)
+        argv = run.call_args.args[0]
+        self.assertIn("MIMALLOC_VERBOSE=1", argv)
+        self.assertFalse(any(a.startswith(measure.PURGE_DELAY_VAR) for a in argv))
+        self.assertIn("-m", argv)
+        with answering("10") as run:
+            self.assertEqual(measure.binary_purge_delay(cfg, Path("/pgdt"), 10), 10)
+        self.assertIn(f"{measure.PURGE_DELAY_VAR}=10", run.call_args.args[0])
+        with answering("1000"), self.assertRaises(RuntimeError):
+            measure.binary_purge_delay(cfg, Path("/pgdt"), 10)
+        with unittest.mock.patch.object(measure, "run", return_value="pgdt 0.3.0\n"):
+            with self.assertRaises(RuntimeError):
+                measure.binary_purge_delay(cfg, Path("/pgdt"), None)
+
+    def test_a_cost_is_named_resolved_only_where_the_readings_part(self):
+        self.assertIn("slower, resolved", measure.purge_delay_cost([1.2, 1.3], [1.0, 1.1]))
+        self.assertIn("faster, resolved", measure.purge_delay_cost([1.0, 1.1], [1.2, 1.3]))
+        self.assertIn("within the noise", measure.purge_delay_cost([1.0, 1.2], [1.1, 1.3]))
+
+    def _render(self, asked: bool):
+        figure = "purge-delay"
+        specs = measure._purge_delay_specs()
+        reported = {
+            s.key(figure): {"result_rows": "1", "result_first": "100", "result_digest": "ab"}
+            for s in specs
+            if s.binary == "dfcli"
+        }
+        if asked:
+            for delay in measure.purge_delay_legs():
+                got = measure.MIMALLOC_DEFAULT_PURGE_DELAY if delay is None else delay
+                reported[f"{figure}/purge-delay/{measure.purge_delay_caption(delay)}"] = {
+                    "purge_delay": str(got)
+                }
+        raw = {
+            "readings": {
+                s.key(figure): [2.0 if s.env and s.command == "parse" else 1.0] * 5 for s in specs
+            },
+            "reported": reported,
+            "input_sizes": {"control": 3221227790},
+            "runs": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(
+                measure.Config(dry_run=True), raw, Path(tmp), lambda _m: None
+            )
+            session.figure_id = figure
+            return measure.run_purge_delay(session)
+
+    def test_a_render_names_what_the_sitting_asked_and_asks_nothing(self):
+        body = self._render(asked=True)
+        self.assertIn("the shipped leg 1000 ms", body)
+        for _, label, _, _ in measure.PURGE_DELAY_SHAPES:
+            with self.subTest(row=label):
+                self.assertIn(f"| {label} |", body)
+        # Every stating leg's `parse` doubled: resolved there alone.
+        self.assertEqual(body.count("**slower, resolved**"), len(measure.PURGE_DELAY_LEGS))
+        self.assertIn("asked none", self._render(asked=False))
+
+    def test_the_resident_legs_are_long_line_resident_s_but_its_anchors_at_every_leg(self):
+        allowance = 1 << 34
+        base = [s for s in measure._long_line_specs(allowance) if s.sweep is None]
+        self.assertLess(len(base), len(measure._long_line_specs(allowance)))
+        specs = measure._purge_delay_resident_specs(allowance)
+        self.assertEqual(len(specs), len(base) * len(measure.purge_delay_legs()))
+        self.assertEqual(
+            {dataclasses.replace(s, env=None, label="") for s in specs},
+            {dataclasses.replace(s, label="") for s in base},
+        )
+        self.assertEqual(len({s.key("purge-delay-resident") for s in specs}), len(specs))
+        for spec in specs:
+            with self.subTest(spec=spec.label):
+                self.assertEqual(spec.allowance, allowance)
+                self.assertIsNone(spec.sweep)
+        for spec in measure._long_factor_specs():
+            self.assertIsNone(spec.env)
+
+    def test_the_resident_groups_stage_every_input_read_once(self):
+        fig = measure.SELECTABLE_BY_ID["purge-delay-resident"]
+        self.assertEqual(fig.memory, measure.LONG_LINE_MEMORY)
+        staged = [name for group in fig.warm_groups for name in group]
+        self.assertEqual(sorted(staged), sorted(measure.LONG_LINE_INPUTS))
+        specs = [*measure._long_factor_specs(), *measure._purge_delay_resident_specs(1 << 34)]
+        parts = measure.split_specs("purge-delay-resident", specs, fig.warm_groups)
+        self.assertEqual(sum(len(part) for _, part in parts), len(specs))
+
+    def test_a_leg_past_its_allowance_is_named(self):
+        kib = [1024.0, 2048.0]
+        within = measure.purge_delay_allowance_line(10, kib, 4 << 20)
+        self.assertIn("every rep within it", within)
+        past = measure.purge_delay_allowance_line(10, kib, 1536 << 10)
+        self.assertIn("**1 reps past it**", past)
+        self.assertIn("no rep was read", measure.purge_delay_allowance_line(None, [], 1))
+
+
 class CountPair(unittest.TestCase):
     """`--count-pair`: one slice's change priced in `instructions:u`, the
     shipped build at the tree's parent against the tree, and refused for any
@@ -5063,6 +5260,8 @@ class XzDecodeScaling(unittest.TestCase):
         # Four workers each holding a long line and its copies, which no
         # allowance charges (`LONG_LINE_MEMORY`).
         "long-line-resident",
+        # The same legs, at each purge delay.
+        "purge-delay-resident",
     }
 
     def test_every_other_figure_runs_under_the_recorded_memory(self):
@@ -7884,6 +8083,16 @@ class WarmBound(unittest.TestCase):
                     for group in (
                         tuple(f"long_{kind}_{length}" for length in ("32", "128", "288", "512")),
                         (f"long_{kind}_512", f"long_{kind}_bound"),
+                    )
+                ),
+                # The same lengths, and the bound alone: nothing subtracts
+                # across the two.
+                "purge-delay-resident": tuple(
+                    group
+                    for kind in ("text", "escaped", "bytea", "int8array", "textarray", "jsonb")
+                    for group in (
+                        tuple(f"long_{kind}_{length}" for length in ("32", "128", "288", "512")),
+                        (f"long_{kind}_bound",),
                     )
                 ),
             },
