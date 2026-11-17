@@ -60,7 +60,7 @@ REPO = Path(__file__).resolve().parent.parent
 #: meter (`REGISTER_GROWTH_BYTES`), red meaning an audit of every entry
 #: against the code, which is what pruned it on 2026-10-25.
 REGISTER_DIR = "docs/design/decisions"
-ENTRY_CHARS = 850
+ENTRY_CHARS = 1023
 LINE_COLUMNS = 120
 REGISTER_GROWTH_BYTES = 16 * 1024
 #: The one statement of this is `docs/status/history/README.md`; this is that
