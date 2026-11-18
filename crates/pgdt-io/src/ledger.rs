@@ -19,7 +19,8 @@
 //! for a line, and lines are admitted from what it leaves, so what a block's
 //! statistics hold never depends on when a long line was held. A draw passing
 //! the room asks the holders of lines to give theirs up, the latest first, as
-//! the earliest waiting line does; the earliest line is never asked.
+//! the earliest waiting line does, and the readers after the earliest line to
+//! park, as below; the earliest line is never asked.
 //!
 //! **A line one reader could not hold is refused** ([`Admission::Refused`]):
 //! a draw whose charge passes the ledger's [`Floor`] — what the allowance
@@ -27,11 +28,12 @@
 //! the line lies in the file, since one reader could not hold it whatever
 //! waited or gave its room up (`docs/design/decisions.md`, "D161").
 //!
-//! **A line alone past the room parks the latest readers** ([`Holder::park`]):
-//! where no other line holds and the earliest still does not fit, the readers
-//! later in the file than it are asked to park, the latest first, until what
-//! their parking gives back covers it, and it is admitted once they have, or
-//! once none is left reading to ask; they resume as its draw is returned
+//! **Lines and statistics past the room park the latest readers**
+//! ([`Holder::park`]): the readers later in the file than the earliest line
+//! are asked to park, the latest first, until what their parking gives back
+//! covers the excess, and resume as it falls. Only a line alone is admitted on
+//! their parking: where no other line holds and the earliest still does not
+//! fit, it is admitted once they have, or once none is left reading to ask
 //! (`docs/design/decisions.md`, "D163").
 //!
 //! **A ledger without limit** ([`Ledger::unlimited`]) meets every draw at once:
@@ -208,7 +210,10 @@ impl Ledger {
     /// each when it next draws; **the earliest line is never asked**, being
     /// admitted past the capacity where no other line holds, so asking it
     /// would buy a re-read and no room (`docs/design/decisions.md`, "D157").
-    /// A draw falling wakes every waiting line, which may now be admitted.
+    /// The readers after the earliest line are asked to park meanwhile, as
+    /// the lines give theirs up only when they next draw
+    /// (`docs/design/decisions.md`, "D163"). A draw falling wakes every
+    /// waiting line, which may now be admitted.
     pub fn draw_statistics(&self, total: u64) {
         let Some(shared) = &self.shared else { return };
         let mut woken = Vec::new();
@@ -600,12 +605,13 @@ impl State {
         woken.extend(self.lines.values_mut().filter_map(|line| line.waker.take()));
     }
 
-    /// **Ask the readers the line alone past the capacity needs to park**,
-    /// the latest in the file first, and let every other reader resume —
-    /// gathering into `woken` the parked readers let go and, where any
-    /// reader's ask moved, every waiting line — and answer what the lines
-    /// and statistics hold past the capacity, that line's waiting charge
-    /// included (`docs/design/decisions.md`, "D163").
+    /// **Ask the readers after the earliest busy line to park as the lines
+    /// and statistics pass the capacity**, the latest in the file first, and
+    /// let every other reader resume — gathering into `woken` the parked
+    /// readers let go and, where any reader's ask moved, every waiting line —
+    /// and answer what they hold past the capacity, the earliest line's
+    /// waiting charge included where it is alone
+    /// (`docs/design/decisions.md`, "D163").
     fn rebalance(&mut self, limits: &Limits, woken: &mut Vec<Waker>) -> u64 {
         let busy = |line: &Line| line.held > 0 || line.wants.is_some();
         let first = self.lines.iter().find(|(_, line)| busy(line));

@@ -19,7 +19,7 @@ are `docs/process.md`, "The decision register".
 - **D160** A read over mapped blocks carves its longest line at its query's factor, then plans under that arrangement
 - **D161** A line one reader cannot hold is refused at the floor, whatever the count, a mapped read before its first byte
 - **D162** A parked reader's pool share is given back as it parks; the budget and the arm stand
-- **D163** A line alone past the room parks the latest readers, and is admitted once they have
+- **D163** Lines and statistics past the room park the latest readers; a line alone is admitted once they have
 - **D4** A budget is solved against a source's cost, never divided by it
 - **D5** A wait is a permission the read loop grants
 - **D6** `ByteRangeSource` mirrors `object_store` and is dyn-compatible

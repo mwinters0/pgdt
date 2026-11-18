@@ -1,14 +1,15 @@
 //! **Parking**: which of a ledger's readers are asked to stop reading, the
-//! latest in the file first, and what their parking gives back, so a line
-//! alone past its room is held in it (`docs/design/decisions.md`, "D163").
+//! latest in the file first, and what their parking gives back, so lines and
+//! statistics past the room, a line alone past it among them, are held in it
+//! (`docs/design/decisions.md`, "D163").
 //!
-//! The ledger decides when a line needs parks and how many ([`Terms`]); this
+//! The ledger decides when parks are needed and how many ([`Terms`]); this
 //! keeps where each reader last stood and which are asked and parked
 //! ([`Readers`]). **The readers asked are those reading later in the file
-//! than the line**, holding no line and waiting on none — a reader whose line
-//! waits reads nothing already, nor does one standing aside at a yield — the
-//! latest first, and as the line's excess falls the earliest of them are let
-//! go first.
+//! than the earliest line**, holding no line and waiting on none — a reader
+//! whose line waits reads nothing already, nor does one standing aside at a
+//! yield — the latest first, and as the excess falls the earliest of them are
+//! let go first.
 
 use std::collections::BTreeMap;
 use std::task::Waker;

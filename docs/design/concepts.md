@@ -63,8 +63,8 @@ partition advice a source gives and the cut
   `cores.rs`, `partition.rs`: a source says what a worker holds, so sizing sits
   beside it (D68), and the one resolution every embedder calls with it, carrying
   where the allowance came from beside the `Parallelism` that never does (D64),
-  and carving the ledger a run's held lines draw from (D157) and the readers a
-  line alone parks (D163); the partition advice and the cut read a worker's
+  and carving the ledger a run's held lines draw from (D157) and the readers
+  its lines and statistics past the room park (D163); the partition advice and the cut read a worker's
   cost, and nothing in sizing reads them.
 - **datafusion-pgdump** — `budget.rs`: the one allowance every scan a session
   runs draws from, and what the session holds against it.
