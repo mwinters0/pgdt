@@ -183,8 +183,13 @@ back. **`UF1`–`UF6` are allocated, and none is reused.**
 - **Fixed when.** The pinned `datafusion`'s `RepartitionExec` grows its output
   channel's reservation by what its coalescer holds, by-reference view
   buffers included, before it emits.
-- **Workaround.** None: the replay returns a draw at the yield, and the margin
-  carved above the ledger absorbs what a plan holds past it. Rejected:
+- **Workaround.** None: the replay returns a draw at the yield, and what a plan
+  holds past it is past the ledger, which the margin carved above it absorbs
+  on some cuts and not others: 33.7's query run at a zero purge delay holds its
+  `--memory` at eight readers, passes it at one, two, six and seven, by most
+  at one, and holds at each with no repartition above the scan
+  ([`../design/roadmap-P33.34-kept-notes.md`](../design/roadmap-P33.34-kept-notes.md),
+  "The zero delay passes the allowance where the repartition holds copies"). Rejected:
   returning a draw as its copy's last reference drops, which deadlocks a
   coalescer waiting for rows the ledger withholds (D159); charging a line once
   more per plan holder, `target_partitions` copies on a plan holding none;
@@ -195,7 +200,9 @@ back. **`UF1`–`UF6` are allocated, and none is reused.**
 - **When it lands.** Strike the marker at `replay`
   (`crates/pgdt-query/src/stream/replay.rs`), D159's `UF5`, and the account in
   [`../design/roadmap-P33.7-acceptance-notes.md`](../design/roadmap-P33.7-acceptance-notes.md),
-  "The hand runs", of the margin absorbing the copy; a stated pool
+  "The hand runs", of the margin absorbing the copy, and re-read
+  [`../design/roadmap-P33.34-kept-notes.md`](../design/roadmap-P33.34-kept-notes.md)'s
+  zero-delay readings; a stated pool
   (`--memory-limit`) is then what bounds it, carved off the scans' allowance
   (`datafusion-pgdump`'s `pool_limit`).
 
