@@ -146,8 +146,9 @@ a thread pool of our own; `rayon`. Consequence: cancellation is cooperative (D26
 No `#[global_allocator]` in a library. `pgdt` is the one binary, composing `datafusion-cli-pgdump` as `sql`
 unconditionally so every figure times what ships, and links mimalloc as that CLI does, without `override`: C keeps
 libc's `malloc` (`KD109`). It sets mimalloc's purge delay (`PURGE_DELAY_MS`) as a default `MIMALLOC_PURGE_DELAY`
-overrides, an embedder keeping its own: the cheapest holding a long-line query within its allowance. Rejected: the
+overrides, an embedder keeping its own, chosen on throughput: leaving zero buys back most of the speed. Rejected: the
 platform allocator, or `override`, off DataFusion's path; `mallopt(M_ARENA_MAX)`, binding C's arenas alone (RT10) and
 overwriting `MALLOC_ARENA_MAX`; DataFusion behind a feature, or a second binary; a library constant re-set for a term
-one allocator alone holds. Reopens: a contention figure; a longer delay holding at no cost; a mimalloc-only gate failure
-no library change or option reaches. Evidence: `allocator`, `purge-delay`, `purge-delay-resident`.
+one allocator alone holds; a delay fitted under one run's allowance. Reopens: a contention figure; a figure where
+another delay's speed outweighs what it keeps; a mimalloc-only gate failure no library change or option reaches.
+Evidence: `allocator`, `purge-delay`, `purge-delay-resident`.

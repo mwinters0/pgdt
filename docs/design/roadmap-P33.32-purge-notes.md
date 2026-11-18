@@ -1,7 +1,7 @@
 # P33.32 notes — mimalloc's purge delay priced
 
-**100 ms, chosen as the cheapest delay holding every rep, holds no longer**
-under the spec's rule as amended ("The choice"). The slice landed the two figures
+**100 ms is the delay, chosen on throughput, and what it keeps is billed
+rather than fitted out** ("The choice"). The slice landed the two figures
 that price the delay, then took them and 33.7's query run at each delay from a
 later commit, a figure being taken from a commit and never from a tree carrying
 its own apparatus (`measurements.md`, "A figure may be published outside the
@@ -61,14 +61,12 @@ others within it: 0 ms at most 1,952,428, 10 ms 2,021,064, and 100 ms
 
 ## The choice
 
-**By the spec's rule** ("What a held line costs"): the largest delay, the
-shipped one included, whose query runs and resident legs hold their allowance
-in every rep at a cost within the noise on every `purge-delay` row; else the
-cheapest that holds, its cost stated.
+**100 ms, on throughput** (the spec's "What a held line costs"), what it keeps
+resident billed rather than fitted out under one run's allowance.
 
 - **The shipped delay fails the query run; 0, 10 and 100 ms hold it and every
-  resident leg in every rep.** None of the three is within the noise on every
-  `purge-delay` row, so the rule's second branch applies.
+  resident leg in this slice's reps.** None of the three is within the noise
+  on every `purge-delay` row.
 - **100 ms is the cheapest**, its cost resolved on two rows: the serial
   `pgdt sql -c` scan and the twenty-four-partition one (`measurements.md`,
   "What mimalloc's purge delay costs, and what it leaves resident"). On every
@@ -85,10 +83,9 @@ cheapest that holds, its cost stated.
   change. That is no reason for 10 ms, a margin the rule does not state
   demanded of one arbitrary run at two more resolved rows on every release.
   33.7's re-take at the new default put one rep of three past the line, and
-  the spec's rule now asks a holding delay for headroom at least its reps'
-  spread, the reps pooled (the spec's "What a held line costs"): 100 ms's nine
-  span 88,504 KiB with one past the line, so it no longer holds and the choice
-  is re-made.
+  fitting the delay under the run was then given up: 100 ms stays, chosen on
+  throughput, and what it keeps is a term the binary states (the spec's "What
+  a held line costs"), read by 33.34 and billed by 33.35.
 - **What a user's run keeps is the margin's, not the delay's.** The query run
   holds past `margin_allowance`'s predicted resident at every delay, the zero
   one included, so no delay meets `MEMORY_MARGIN_PERCENT` on it; that excess
@@ -107,13 +104,10 @@ charge covers.
 ## The leg grid
 
 **The grid stops at 100 ms, the four parallel rows stay**, reviewed with
-the maintainer (STATUS's "Decisions worth another look", 2026-11-17).
+the maintainer (STATUS's "Decisions worth another look", 2026-11-17). No
+reading fits the delay under 33.7's query run any more ("The choice"), so a
+leg is added only where the choice moves.
 
-- **Only 33.7's query run can reject a delay.** `long-line-resident`'s
-  allowance is one number, the widest leg's, and its last take at the shipped
-  delay holds every leg under it by gigabytes (`measurements.md`, "What a held
-  line holds resident"). So `purge-delay-resident` reads what each delay
-  leaves resident and narrows nothing, which its readings bore out.
 - **Where the query run stops holding is at most about a quarter to a third of
   a second.** mimalloc v3 (`libmimalloc-sys` 0.1.49, `v3/src/arena.c`,
   `mi_arena_schedule_purge`, `mi_arenas_try_purge`) arms an arena's expiry
@@ -126,20 +120,6 @@ the maintainer (STATUS's "Decisions worth another look", 2026-11-17).
   `--memory` runs out at 230–370 ms, an upper bound, reuse within a window
   only raising the rate. Read by hand, the edge is between 100 and 125 ms
   (above).
-- **So a value between 100 ms and that edge is wanted only where 100 ms
-  resolves a cost on a `purge-delay` row yet holds the query run.** Where
-  100 ms is within the noise, a larger delay buys purges no row resolves and
-  spends the one binding run's margin. Where it resolves one, the readings
-  round reads candidates above 100 ms on the query run by hand first, adds the
-  one it keeps to `PURGE_DELAY_LEGS` in a commit, and re-takes both figures
-  from it before the choice, so every table names each candidate.
-- **Below 100 ms the same rule, mirrored**, 100 ms holding no longer: a value
-  between 10 and 100 ms is wanted where 10 ms resolves a cost 100 ms does not,
-  which today's figure shows on two rows. Candidates between them are read on
-  the query run by hand first, six reps each over two interleaved sittings,
-  candidates and count fixed in `run.sh` before it runs, the one kept added to
-  `PURGE_DELAY_LEGS` and both figures re-taken before the choice, rather than
-  falling to 10 ms, the grid's next leg rather than the rule's answer (33.32.1).
 - **The parallel rows are where a positive delay's cost shows first**, frees
   crossing threads and purges serialized, and cost minutes of the figure's
   quarter hour; dropping them would hide the one outcome that refines the grid.

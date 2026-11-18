@@ -1,9 +1,10 @@
 # P33.32.1 notes — the purge delay read between 10 and 100 ms
 
-**Under the spec's rule as amended ("What a held line costs"), no delay from
-10 to 100 ms holds 33.7's query run, and 0 ms does.** That is the grid's next
-leg, not the rule's answer, so the choice waits on 33.32.2, which reads
-candidates between 0 and 10 ms. No production code.
+**Under a test asking the worst rep's headroom to cover the reps' spread, no
+delay from 10 to 100 ms holds 33.7's query run, and 0 ms does.** Fitting the
+delay under that run was then given up: 100 ms stays, chosen on throughput,
+and what it keeps is billed (the spec's "What a held line costs"), so these
+readings price what each delay keeps on that run. No production code.
 
 ## The readings
 
@@ -31,30 +32,15 @@ Every run exited 0 with no refusal and the unlimited run's rows.
   pool can only raise its largest or lower its smallest, so a further sitting
   can never turn a failing delay into a holding one.
 
-## Where the choice stands
+## What 33.34 inherits
 
-**The grid's rule, mirrored a second time, wants a value between 0 and
-10 ms** (`roadmap-P33.32-purge-notes.md`, "The leg grid"). Its condition is
-that 0 ms resolves a cost on a `purge-delay` row where 10 ms does not, and the
-`query --schema-mode strings` row shows exactly that (`measurements.md`,
-"What mimalloc's purge delay costs, and what it leaves resident"). Falling to
-0 ms now would repeat what that section refuses for 10 ms: taking the grid's
-next leg in place of the rule's answer. So the slice was split
-(`../status/history/2026-11-18.md`, "33.32.1 split: the grid is read below
-10 ms"). 33.32.2 reads candidates between 0 and 10 ms the way this slice read
-its own, then makes the choice, and 33.33.1 sets whatever it chooses.
-
-- **If no candidate holds, the choice is 0 ms**, the cheapest delay that
-  holds, and its cost is `purge-delay`'s 0 ms column: five of eight rows
-  resolved slower, all of them system time, and no `parse` row among them.
-- **None of 20 to 75 ms joins `PURGE_DELAY_LEGS`, and neither figure is
-  re-taken**, because none of them holds.
-- **`long-line-resident` has three reps of 0 ms**, all from
-  `purge-delay-resident`'s one sitting, where the rule asks for six from two.
-  On every leg the headroom under the allowance is gigabytes and the spread a
-  few MiB, and only the query run can reject a delay
-  (`roadmap-P33.32-purge-notes.md`, "The leg grid"). Whether three reps are
-  enough there is for 33.32.2 to settle when it chooses.
+- **What a delay keeps is mostly the step off zero.** Over 0 ms's median rep,
+  10 ms keeps most of what 100 ms does, and the delays between add little
+  more (`readings.txt`), as mimalloc's purge inside the free at zero and on a
+  timer above it predicts (`roadmap-P33.32-purge-notes.md`, "The leg grid").
+- **Every reading is one shape**, eight readers under 2 GiB, so nothing here
+  says whether what a delay keeps grows with the readers or is the process's;
+  that is 33.34's question.
 
 ## Negative results
 

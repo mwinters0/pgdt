@@ -9423,13 +9423,10 @@ PURGE_DELAY_VAR = "MIMALLOC_PURGE_DELAY"
 #: milliseconds, beside the shipped leg stating none (`purge_delay_legs`):
 #: zero, purging as a page empties, and two between it and mimalloc v3's
 #: default of 1000, a decade apart. **The value `pgdt` sets is one of these**
-#: (the spec's "What a held line costs": the largest holding both readings at
-#: a cost within the throughput figures' noise, else the cheapest holding),
-#: so this tuple is the choice's resolution, and the shipped leg now runs at
-#: its last. **It stops at 100 ms on purpose**: a value above it is gained
-#: only where 100 ms resolves a cost on a `purge-delay` row yet holds 33.7's
-#: query run, and is then added here before the choice is moved
-#: (`roadmap-P33.32-purge-notes.md`, "The leg grid").
+#: (the spec's "What a held line costs": chosen on throughput, what it keeps
+#: billed), so this tuple is the choice's resolution, and the shipped leg now
+#: runs at its last. A value the choice moves to is added here first, so
+#: every table names it.
 PURGE_DELAY_LEGS: tuple[int, ...] = (0, 10, 100)
 
 #: Where `pgdt --version` names the purge delay mimalloc runs under once
@@ -9582,8 +9579,8 @@ def run_purge_delay(session: Session) -> str:
     **The figure's question is the spec's** (`roadmap-P33-line-bound.md`,
     "What a held line costs"): which delays cost nothing the throughput
     figures resolve. Its verdict lines say, per leg and row, whether the
-    gap is resolved; `purge-delay-resident` and 33.7's query run say which
-    delays hold their allowance, and the choice reads all three.
+    gap is resolved, which the choice reads; `purge-delay-resident` and
+    33.7's query run say what each delay keeps resident.
 
     **What would falsify "a lower delay is free"**, written before any
     reading: a leg's readings lying wholly above the shipped leg's on any

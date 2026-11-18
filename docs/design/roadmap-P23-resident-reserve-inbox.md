@@ -125,10 +125,10 @@ decoders and what mimalloc keeps unpurged
 `query` holds past its charge, which `MEMORY_UNPOOLED_BOUND` is meant to
 bound. The re-fit under the delay that ships (above) has this reading beside
 its generated grid, and a bound that covers it lowers the margin's ceiling and
-so this run's carve. The purge delay is chosen against the allowance, no delay
-meeting the margin here
-([`roadmap-P33.32-purge-notes.md`](roadmap-P33.32-purge-notes.md), "The
-choice").
+so this run's carve. The purge delay is chosen on throughput and what it keeps
+is a term the binary states, P33's to bill
+([`roadmap-P33-line-bound.md`](roadmap-P33-line-bound.md), "What a held line
+costs"), so a bound re-fit here reads what is left past it.
 
 **Origin.** 33.32's readings, reviewed with the maintainer, 2026-11-17.
 *Contingent on* mimalloc 3.3.2 and the ledger's line charge at the plan's

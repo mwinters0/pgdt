@@ -67,9 +67,9 @@ code.
   (`runs/p33.7-query-default-20261118/`, `readings.txt`, each rep's `.csv`
   and `.err`, `version.txt` naming the 100 ms delay): each exit 0, no
   refusal, the unlimited run's rows, peaking at 2,081,420, 2,104,304 and
-  2,090,480 KiB against the 2,097,152 stated. By the spec's rule as amended
-  ("What a held line costs") 100 ms no longer holds, so the figure and the
-  strict run wait on the delay 33.32.2 chooses and 33.33.1 sets.
+  2,090,480 KiB against the 2,097,152 stated. 100 ms stays, chosen on
+  throughput, and what it keeps is billed (the spec's "What a held line
+  costs"), so the query run, the figure and the strict run wait on 33.35.
 - **Why that `--memory`**: the read's line charge is its longest line,
   462,157,089 bytes, at the plan's factor of one, 924,314,178 bytes (D160),
   which `Arrangement::resolve` takes off the margin's ceiling before solving

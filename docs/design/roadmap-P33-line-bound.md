@@ -278,23 +278,23 @@ readings"), so it is bounded where that retention is (`decisions.md`, "D3",
 "D13"), never per buffer. Rejected: a draw's buffers given back outside the
 allocator, which reaches a few MiB at the peak and never DataFusion's buffers;
 every buffer a scan frees moved outside it, which no change of ours reaches
-DataFusion's with either; charging the retention, as above. **That retention
-is bounded by mimalloc's purge delay, set as the binary's default the
-environment overrides** (`decisions.md`, "D13"'s second remedy), **priced
-before it is set**, a delay's cost being the one ground the earlier refusal
-stated: the largest delay holding 33.7's query run and `long-line-resident`
-within their allowance at a cost within the throughput figures' noise, else the
-cheapest that holds, its cost stated. **A delay holds** when every rep at it is
-within the allowance with its worst rep's headroom at least the spread of its
-reps, largest peak less smallest — a margin read off the run's own noise, so a
-re-take tests the choice rather than re-drawing it — every rep the same build
-took at that delay counted, sittings pooled, and at least six from two
-interleaved sittings before it is chosen. 33.7's re-take counts among the
-chosen delay's reps, and only a rep of it past the allowance re-makes the
-choice, the headroom being the choice's test and not the acceptance's.
-Rejected: every rep within the line
-alone, which lands the choice at the edge, where any further rep can flip it;
-a margin stated apart from the readings. It is `pgdt`'s alone, an embedder's
+DataFusion's with either; charging the retention as a line's factor, as above.
+**That retention is bounded by mimalloc's purge delay, set as the binary's
+default the environment overrides** (`decisions.md`, "D13"'s second remedy),
+**chosen on its throughput, and what it keeps is accounted rather than fitted
+out**: 100 ms, priced by `purge-delay` against mimalloc's own default and zero
+(`measurements.md`, "What mimalloc's purge delay costs, and what it leaves
+resident"), leaving zero buying back most of the speed. **What the delay keeps
+resident is a term the binary states**, the allocator and its delay being the
+binary's (D13): per reader or for the process, as 33.7's query run read across
+reader counts at the delay and at zero shows, and `Arrangement::resolve` carves
+the count around it as it does what else is held; an embedder states its own
+allocator's, or none. Rejected: the delay fitted under one run's `--memory`,
+which lands wherever that run stops holding and chases the margin's own
+shortfall (`KD34`), the run's allowance chosen to carve readers rather than to
+price retention; a library constant carrying it, billing every embedder
+mimalloc's term (D13); leaving it to the margin, which the run already
+overruns. It is `pgdt`'s alone, an embedder's
 allocator being its own (D13), and the manual names the override where it
 describes `--memory`, which an operator setting it changes. No library change suiting both allocators reaches it: the view
 builder's blocks leave with their batch for DataFusion to free, a
@@ -398,6 +398,10 @@ edge, pgdt-dump depending on pgdt-io already.
   hands `Arrangement::resolve` one number beside the longest line, a parse
   handing none. Rejected: a per-type table in pgdt-codec, stating a fact about
   pgdt-query's builders a crate away.
+- **What the purge delay keeps** — stated by `pgdt`'s `alloc.rs` beside the
+  delay ("The binary's build"), carried to `Arrangement::resolve` by its
+  request ("Memory and parallelism"), and by datafusion-pgdump's session
+  budget for the scans `pgdt sql` draws, pgdt-io knowing no allocator.
 - **The refusals** — pgdt-core's `error.rs`: `LineTooLong` loses its limit and
   names I71's bound; a line outgrowing the allowance is a refusal of its own,
   naming the line's start, the bytes it needs, the allowance and what stays
