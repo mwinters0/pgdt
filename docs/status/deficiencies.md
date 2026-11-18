@@ -24,7 +24,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD173 -->
+rather than being deleted. <!-- deficiency-watermark: KD174 -->
 **Every number up to that watermark is allocated, and none is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -610,3 +610,11 @@ than reading as a phase nobody has sliced.
   its draw is returned at the next chunk while that batch still holds the
   row. **(c) unowned**; promoted by the next slice touching the replay's
   draw. Detail: `crates/pgdt-query/src/stream/replay.rs`.
+
+- **KD174** — a `pgdt sql` scan exposing fewer partitions than
+  `target_partitions` passes its `--memory`: DataFusion's round-robin
+  repartition holds a drawn line's decoded copy past the ledger for each output
+  partition (UF5), so the process holds up to a long line more per output
+  partition than the arrangement carved. **(c) unowned**; promoted by UF5's fix
+  landing or a phase taking up `pgdt sql`'s resident. Detail:
+  `crates/pgdt-query/src/stream/replay.rs`.

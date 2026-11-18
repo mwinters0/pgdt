@@ -75,6 +75,15 @@ use crate::prune::SortedStop;
 /// before every yield, so a caller holding it back at a batch stalls no line
 /// (`docs/design/decisions.md`, "D163").
 // upstream: UF5 -- a plan may hold a yielded batch, and its line's copy, unreserved.
+// deficiency: KD174 — the draw returned at the yield, a round-robin
+// repartition above the scan keeps the batch's decoded copy of the line in
+// its coalescer, one per output partition, until its output batch fills; at
+// fewer scan partitions than `target_partitions` that is several long lines
+// held at once outside every reservation and every carve, past what the
+// margin absorbs on some cuts, so the process passes the allowance the
+// arrangement was carved from. Billing every plan for `target_partitions`
+// copies charges one holding none (UF5's rejections). **(c) unowned**;
+// promoted by UF5's fix landing or a phase taking up `pgdt sql`'s resident.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn replay<'a>(
     source: &'a dyn ByteRangeSource,

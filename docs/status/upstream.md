@@ -170,7 +170,7 @@ back. **`UF1`–`UF6` are allocated, and none is reused.**
   (`../design/decisions.md`, "D159"), keeps its decoded copy resident past the
   ledger, up to one per output partition: a plan whose scan exposes fewer
   partitions than `target_partitions` meets it, as `pgdt sql` over one block
-  did (`../design/roadmap-P33.31-blocks-notes.md`, "The readings").
+  did (`../design/roadmap-P33.31-blocks-notes.md`, "The readings"): `KD174`.
 - **Upstream.** Issue
   [apache/datafusion#25904](https://github.com/apache/datafusion/issues/25904),
   "make `SharedCoalescer` do memory accounting for buffered batches", open,
@@ -189,7 +189,9 @@ back. **`UF1`–`UF6` are allocated, and none is reused.**
   `--memory` at eight readers, passes it at one, two, six and seven, by most
   at one, and holds at each with no repartition above the scan
   ([`../design/roadmap-P33.34-kept-notes.md`](../design/roadmap-P33.34-kept-notes.md),
-  "The zero delay passes the allowance where the repartition holds copies"). Rejected:
+  "The zero delay passes the allowance where the repartition holds copies"). The
+  manual tells a user so, and that a `target_partitions` at the carved
+  count leaves no repartition (`../manual/pgdt-sql.md`, "Memory"). Rejected:
   returning a draw as its copy's last reference drops, which deadlocks a
   coalescer waiting for rows the ledger withholds (D159); charging a line once
   more per plan holder, `target_partitions` copies on a plan holding none;
@@ -198,7 +200,8 @@ back. **`UF1`–`UF6` are allocated, and none is reused.**
 - **Watch.** No test asserts it; `upgrade-deps` reads both issues at each
   DataFusion bump.
 - **When it lands.** Strike the marker at `replay`
-  (`crates/pgdt-query/src/stream/replay.rs`), D159's `UF5`, and the account in
+  (`crates/pgdt-query/src/stream/replay.rs`) with `KD174` and the manual's
+  account of it (`../manual/pgdt-sql.md`, "Memory"), D159's `UF5`, and the account in
   [`../design/roadmap-P33.7-acceptance-notes.md`](../design/roadmap-P33.7-acceptance-notes.md),
   "The hand runs", of the margin absorbing the copy, and re-read
   [`../design/roadmap-P33.34-kept-notes.md`](../design/roadmap-P33.34-kept-notes.md)'s

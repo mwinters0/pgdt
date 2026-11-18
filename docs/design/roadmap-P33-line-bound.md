@@ -286,15 +286,19 @@ out**: 100 ms, priced by `purge-delay` against mimalloc's own default and zero
 (`measurements.md`, "What mimalloc's purge delay costs, and what it leaves
 resident"), leaving zero buying back most of the speed. **What the delay keeps
 resident is a term the binary states**, the allocator and its delay being the
-binary's (D13): per reader or for the process, as 33.7's query run read across
-reader counts at the delay and at zero shows, and `Arrangement::resolve` carves
-the count around it as it does what else is held; an embedder states its own
-allocator's, or none. Rejected: the delay fitted under one run's `--memory`,
-which lands wherever that run stops holding and chases the margin's own
-shortfall (`KD34`), the run's allowance chosen to carve readers rather than to
-price retention; a library constant carrying it, billing every embedder
-mimalloc's term (D13); leaving it to the margin, which the run already
-overruns. It is `pgdt`'s alone, an embedder's
+binary's (D13): **one bound for the process, read off a grid of reader
+counts as `MEMORY_UNPOOLED_BOUND` is** (D3) — the smallest step covering the
+largest median the delay keeps over the zero delay's across 33.7's query run's
+counts, the worst rep being the margin's — and `Arrangement::resolve` carves
+the count around it as it does what else is held, off the margin's ceiling; an
+embedder states its own allocator's, or none. Rejected: the delay fitted under
+one run's `--memory`, which lands wherever that run stops holding and chases
+the margin's own shortfall (`KD34`), the run's allowance chosen to carve
+readers rather than to price retention; a term per reader, what the delay keeps
+rising and falling with the cut rather than the count; the bound read at the
+count the acceptance's allowance carves, sized by the run it is to pass; a
+library constant carrying it, billing every embedder mimalloc's term (D13);
+leaving it to the margin, which the run already overruns. It is `pgdt`'s alone, an embedder's
 allocator being its own (D13), and the manual names the override where it
 describes `--memory`, which an operator setting it changes. No library change suiting both allocators reaches it: the view
 builder's blocks leave with their batch for DataFusion to free, a
@@ -486,7 +490,10 @@ reader and its lines meet only by timing; `pgdt query`, whose in-order merge
 reads one sub-stream at a time past its first round (`KD57`); a count of waits and parks,
 user surface no user needs, or an `introspect` count the shipped build's run
 cannot read; a park read over a real dump, which only an uncarved estimate
-outside a container's limit makes, the ledger's tests reading parks. The
+outside a container's limit makes, the ledger's tests reading parks; the
+query run read with `target_partitions` at the carved count, which reads a
+session no user runs, the repartition's copies past the ledger being
+`KD174`'s. The
 dump is machine-local and not ours, so it is never in `measure.py`. Today's
 uncharged outcome to set it against is a whole data-level parse at 24 workers
 under a 12 GiB container limit with the limit raised to 512 MiB, read without

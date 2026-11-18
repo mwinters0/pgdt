@@ -276,6 +276,13 @@ statistics and the longest lines of the queries still running are set
 aside, though not the `--memory-limit` — is refused before it reads, naming
 where the line starts, the bytes it needs and what was set aside.
 
+**A query reading long lines through fewer readers than `target_partitions`
+can hold more than that allowance**: DataFusion's repartitioning above the scan
+keeps a copy of a long value for each partition it feeds, outside every
+budget, so the process can pass the allowance by up to one such line per
+partition. Setting `datafusion.execution.target_partitions` to the readers
+the planning warning names takes that repartitioning out of the plan.
+
 ## Scan settings
 
 What `pgdt query` takes as flags, this shell takes as settings, set with `SET`

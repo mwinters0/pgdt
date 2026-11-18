@@ -62,14 +62,17 @@ copies held at once. UF5's workaround says so now.
 - **The shape is the process's**, as the rule reads it. Its size on this run
   is at most the five-reader median, about 273 MiB, and a single 100 ms rep
   keeps more than its median.
-- **Billing the delay alone does not decide 33.7's clause.** At 2 GiB a bill
-  carves fewer than eight readers. A bill of about 150 MiB, eight's kept, lands
-  on six. At six, the zero delay already passes its allowance by UF5's copies,
-  and every 100 ms rep peaks past 2 GiB. A bill of about 273 MiB lands on five,
-  where every 100 ms rep here peaks under 2 GiB, though past its own edge's
-  allowance. That is an extrapolation: no cut under 2 GiB less a bill was
-  read. So which count the bill lands on decides 33.7, through UF5 rather than
-  through the delay (STATUS, "Decisions worth another look").
+- **Billing the delay alone does not decide 33.7's clause.** A bill comes off
+  the margin's ceiling, so it costs a quarter more than its size in allowance
+  (`pgdt-io`'s `Parallelism::within_shared`). At 2 GiB eight's kept, about
+  145 to 165 MiB by which eight-reader reading, lands on six or on five, the
+  six-reader edge falling between them. At six the zero delay already passes
+  its allowance by UF5's copies, and every 100 ms rep peaks past 2 GiB. The
+  five-reader median, about 273 MiB, lands on four, where every rep at either
+  delay peaks under 2 GiB. That is an extrapolation: no cut under 2 GiB less a
+  bill was read. So where the bill lands decides 33.7 through UF5 (`KD174`)
+  rather than through the delay, and the bill is sized as the spec's "What a
+  held line costs" states, never by where it lands.
 - **A cleaner reading of kept** would subtract the two delays at
   `target_partitions` equal to the carved count, the repartition gone from both
   sides. It was not fixed before this run and was not taken.
