@@ -148,7 +148,7 @@ fn a_declined_block_path_is_announced_once_on_stderr() {
 
     // A budget that affords a whole block says nothing at all about the read
     // path.
-    let quiet = query(&compressed, "public.widgets", &["--jobs", "2", "--memory", "536870912"]);
+    let quiet = query(&compressed, "public.widgets", &["--jobs", "2", "--memory", "1073741824"]);
     assert!(quiet.status.success(), "{}", stderr_of(&quiet));
     assert!(!stderr_of(&quiet).contains("streaming decoder"), "{}", stderr_of(&quiet));
 
@@ -220,7 +220,7 @@ fn a_stated_budget_decides_the_read_path_with_no_jobs_flag() {
 
     // And raising it alone takes the block path back — the recourse the
     // message names, with nothing else stated beside it.
-    let quiet = query(&compressed, "public.widgets", &["--memory", "536870912"]);
+    let quiet = query(&compressed, "public.widgets", &["--memory", "1073741824"]);
     assert!(quiet.status.success(), "{}", stderr_of(&quiet));
     assert!(!stderr_of(&quiet).contains("streaming decoder"), "{}", stderr_of(&quiet));
 

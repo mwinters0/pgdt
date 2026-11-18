@@ -152,3 +152,14 @@ overwriting `MALLOC_ARENA_MAX`; DataFusion behind a feature, or a second binary;
 one allocator alone holds; a delay fitted under one run's allowance. Reopens: a contention figure; a figure where
 another delay's speed outweighs what it keeps; a mimalloc-only gate failure no library change or option reaches.
 Evidence: `allocator`, `purge-delay`, `purge-delay-resident`.
+
+### D165 What the allocator keeps of what it frees is one bound the binary states, held beside every arrangement
+`pgdt` states what mimalloc keeps under its purge delay (`RETAINED_BOUND`) as `ArrangementRequest::retained` on every
+pass, and `pgdt sql` as `ScanBudget::retaining`; an embedder states its allocator's, or none. It comes off the margin's
+ceiling, off the ledger's room, never a statistics draw an account replaces, and off the floor as beside a line. It is
+read off a grid of reader counts as `MEMORY_UNPOOLED_BOUND` is (D3), that bound's smallest step covering the largest
+median the delay keeps over a zero delay's, the worst rep the margin's. Why: the allocator is the binary's (D13), and
+what it keeps moves with the cut, not the count. Rejected: a term per reader; the count one run's allowance carves; a
+library constant; the margin, which the run overruns; off the count alone, as a grant, a holding ignored at the floor
+being an OOM kill (D161). Reopens: a workload keeping more; P23 re-fitting `MEMORY_UNPOOLED_BOUND` net of it.
+Code: `alloc.rs`. Evidence: `runs/p33.34-delay-readers-20261118/`, `arrangement/tests.rs`.

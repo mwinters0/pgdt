@@ -68,7 +68,8 @@ pub enum Error {
     /// whole — and by a read over mapped blocks before it reads a byte,
     /// `offset` the start of the longest line its blocks hold. `beside` is
     /// what came off `holds` as staying beside the line: the statistics the
-    /// run keeps and other live scans' line charges.
+    /// run keeps, other live scans' line charges and what the allocator
+    /// retains.
     #[error(
         "the line at offset {offset} needs {needs} byte(s) held, and one reader is left {holds} of an allowance of {allowance} resident byte(s){} — read it under a larger allowance",
         held_beside(*.beside)
@@ -557,7 +558,7 @@ fn held_beside(beside: u64) -> String {
     match beside {
         0 => String::new(),
         n => format!(
-            ", once the {n} byte(s) of statistics and other scans' lines held beside it come off"
+            ", once the {n} byte(s) of statistics, other scans' lines and the allocator's retention held beside it come off"
         ),
     }
 }

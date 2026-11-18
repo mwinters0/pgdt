@@ -115,7 +115,7 @@ fn main() -> Result<ExitCode> {
             // An `introspect` build's report: the allocator's sections and
             // the shell's own, written once `run` has returned.
             let _instrument = introspect::at_exit(introspect::Sections::AllocatorAndEvaluation);
-            Ok(datafusion_cli_pgdump::run(args))
+            Ok(datafusion_cli_pgdump::run(args, alloc::RETAINED_BOUND))
         }
         // Each library refusal says its remedy in `pgdt`'s flags, however
         // it reached here (`docs/design/decisions.md`, "D107").

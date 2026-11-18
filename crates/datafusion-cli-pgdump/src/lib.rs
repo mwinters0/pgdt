@@ -226,9 +226,11 @@ impl Args {
 #[tokio::main]
 /// Calls [`main_inner`], then handles printing errors and returning the correct exit code
 // pgdump: upstream's `main`, handed its arguments already parsed, and renamed
-// pgdump: since `#[tokio::main]` refuses arguments on a function named `main`.
-pub async fn run(args: Args) -> ExitCode {
-    if let Err(e) = main_inner(args).await {
+// pgdump: since `#[tokio::main]` refuses arguments on a function named `main`;
+// pgdump: `retained` is what the caller's allocator keeps of what it frees,
+// pgdump: billed to every scan's budget (`ScanBudget::retaining`), `0` for none.
+pub async fn run(args: Args, retained: u64) -> ExitCode {
+    if let Err(e) = main_inner(args, retained).await {
         // pgdump: to stderr where upstream's `main` prints to stdout, as every
         // pgdump: `pgdt` command, this shell's findings and upstream's `exec`
         // pgdump: write errors, so a redirected run's output holds no error.
@@ -241,7 +243,7 @@ pub async fn run(args: Args) -> ExitCode {
 
 /// Main CLI entrypoint
 // pgdump: `args` parsed by the caller.
-async fn main_inner(args: Args) -> Result<()> {
+async fn main_inner(args: Args, retained: u64) -> Result<()> {
     env_logger::init();
     // pgdump: as a PID namespace's init, end on the signals that end it elsewhere.
     pgdump::end_as_namespace_init(args.repl_mode())?;
@@ -255,7 +257,9 @@ async fn main_inner(args: Args) -> Result<()> {
         env::set_current_dir(p).unwrap();
     };
 
-    let session_config = get_session_config(&args)?;
+    // pgdump: the session's scan budget, billing what the allocator keeps.
+    let budget = datafusion_pgdump::ScanBudget::discover().retaining(retained);
+    let session_config = get_session_config(&args)?.with_extension(Arc::new(budget));
 
     let mut rt_builder = RuntimeEnvBuilder::new();
     // set memory pool size

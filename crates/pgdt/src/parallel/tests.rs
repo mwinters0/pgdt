@@ -734,3 +734,30 @@ fn a_carved_budget_reaches_the_library_at_a_serial_job_count() {
     let jobs_only = ParallelArgs { jobs: Some(1), memory: None };
     assert_eq!(jobs_only.resolve(&serial).parallelism().memory_bytes(), flagless_budget());
 }
+
+/// **A run bills what the allocator retains on every pass it carves**
+/// (`docs/design/decisions.md`, "D165"): discovery hands
+/// `alloc::RETAINED_BOUND` to each request, so a pass is carved exactly as
+/// the library carves a request retaining it — its count, its ledger's room
+/// and its floor, which names the bill beside the line.
+#[test]
+fn a_run_bills_what_the_allocator_retains() {
+    let flagless = ParallelArgs { jobs: None, memory: None };
+    assert_eq!(flagless.discover().retained, RETAINED_BOUND);
+
+    let allowance = limit(8 << 30, "/sys/fs/cgroup/pgdt/memory.max");
+    let reader = Recommends::reader(24, READER);
+    let billed = Discovered { args: &flagless, found: allowance.clone(), retained: RETAINED_BOUND }
+        .resolve(&reader, 0);
+    let request =
+        ArrangementRequest { retained: RETAINED_BOUND, ..ArrangementRequest::of(&reader, None) };
+    let library = Arrangement::resolve(&allowance, request);
+    assert_eq!(billed.parallelism(), library.parallelism());
+    let ledger = |arrangement: &Arrangement| {
+        let ledger = arrangement.ledger();
+        (ledger.capacity(), ledger.statistics(), ledger.floor())
+    };
+    assert_eq!(ledger(&billed.arrangement), ledger(&library));
+    let floor = billed.arrangement.ledger().floor().unwrap();
+    assert_eq!(floor.beside, RETAINED_BOUND);
+}

@@ -826,8 +826,10 @@ carved up in exactly the same way, so the two are one setting reached two ways:
   the **read-buffer budget**, and that is the number every message below and
   every `memory_bytes=` on stderr names.
 - **The worker count is then held so that a fifth of the whole allowance, plus
-  a further 256 MiB, is predicted to stay unspent**, because what kills a
-  container is one run's peak.
+  a further 256 MiB and the 320 MiB set aside for what the allocator keeps of
+  what pgdt frees (below), is predicted to stay unspent**, because what kills
+  a container is one run's peak. That 320 MiB also comes off what one reader
+  may hold of a long line.
 - **pgdt takes inside that what the *file* asks for**, not the whole of it —
   one reader's worth for each worker it would run.
 - **The statistics a cache already holds are counted before the workers**: a
@@ -844,9 +846,10 @@ carved up in exactly the same way, so the two are one setting reached two ways:
 
 So `--memory 1073741824` in a 1 GiB container asks for exactly what that
 container already told pgdt, and the read-buffer budget that follows is
-640 MiB at most. A stated allowance is not a promise of extra room: it is the
-same carve, which is what makes it a number an operator can size a container
-from.
+about 243 MiB at most: 640 MiB is left after the reserve, and the margin and
+the allocator's 320 MiB leave less than that. A stated allowance is not a
+promise of extra room: it is the same carve, which is what makes it a number
+an operator can size a container from.
 
 The one place the read-buffer budget bites is compressed input — an `.xz`
 file, or a gzip file once its index is built, whose units are its blocks here;
@@ -879,12 +882,12 @@ came from, the stated allowance included, since the budget is never the number
 you typed:
 
 ```
-warning: this .xz source has 5700 block(s) to seek by, but its largest is 134217728 byte(s) and a memory budget of 67108864 byte(s) leaves no room for one reader of it — so it is read through the streaming decoder and every backward read decodes forward from its block's start; raise the memory budget to 547391264 byte(s) or more to read it a block at a time — the budget in force is 67108864 (discovered: /sys/fs/cgroup/memory.max states a limit of 469762048 byte(s))
+warning: this .xz source has 5700 block(s) to seek by, but its largest is 134217728 byte(s) and a memory budget of 67108864 byte(s) leaves no room for one reader of it — so it is read through the streaming decoder and every backward read decodes forward from its block's start; raise the memory budget to 547391264 byte(s) or more to read it a block at a time — the budget in force is 67108864 (discovered: /sys/fs/cgroup/memory.max states a limit of 838860800 byte(s))
 ```
 
-If you have the memory, `--memory 1073741824` buys the block path back: 1 GiB
-leaves 640 MiB of read buffers, which clears the 547391264 the message asks
-for. That is the whole of it: the allowance is a separate number from `--jobs`,
+If you have the memory, `--memory 1610612736` buys the block path back:
+1.5 GiB leaves about 653 MiB of read buffers once the margin is left (below),
+which clears the 547391264 the message asks for. That is the whole of it: the allowance is a separate number from `--jobs`,
 so raising it works at any worker count and you do not have to ask for a second
 worker to make it count. If you do not have the memory, nothing is wrong —
 the file reads fine, just with more decoding on backward reads.
@@ -892,38 +895,40 @@ the file reads fine, just with more decoding on backward reads.
 **Where the default comes from, when you state nothing.** pgdt reads the
 cgroup limit a container or a systemd unit sets, taking the smallest that
 binds, including limits set above you that your own cgroup does not show, and
-carves it exactly as above. So a container given 512 MiB has 128 MiB to read
-inside, and one given 3 GiB has 2.625 GiB, without you restating on the
-command line what you already told the orchestrator.
+carves it exactly as above. So a container given 1 GiB has about 243 MiB to
+read inside, one given 3 GiB about 1.84 GiB, and one given 720 MiB or less
+nothing at all, without you restating on the command line what you already
+told the orchestrator.
 
 **That number is a ceiling, not the budget.** What pgdt takes inside it is what
 the *file* asks for — one reader's worth for each worker it would run, which is
 about 1.3 GiB for a 24 MiB-block `.xz` on a 24-core host, so that file in the
-3 GiB container reads at about 1.3 GiB and not at 2.625. **A plain dump asks
+3 GiB container reads at about 1.3 GiB and not at 1.84. **A plain dump asks
 for nothing of its own and gets the 64 MiB pgdt has always used**, or the
 ceiling where that is smaller — and that is true of a stated allowance as much
 as a discovered limit, so `--memory` does not buy a plain dump larger read
 buffers. `--chunk-size` is what changes what a plain read holds. And where the
 ceiling affords fewer readers than the file
 would have run, **the worker count comes down with the budget** instead of being
-asked for and left undelivered: the same compressed file in a 512 MiB container
-has a 128 MiB ceiling, which affords the 106 one block-decoding reader wants and
-not the 140 two of them do, so it reads a block at a time with a single worker
-and a budget of 106 MiB — and the run says as much before it starts (below,
-"Status on stderr").
+asked for and left undelivered: the same compressed file in a 1 GiB container
+has a ceiling of about 243 MiB, which affords the 208 four block-decoding
+readers want and not the 266 five of them do, so it reads a block at a time
+with four workers and a budget of 208 MiB — and the run says as much before it
+starts (below, "Status on stderr").
 
 **The fifth left free is a second thing the worker count answers to.** pgdt
 takes the largest worker count whose predicted total — the readers' own
 buffers, plus 256 MiB for everything a scan holds outside them, plus the
+320 MiB set aside for what the allocator keeps of what pgdt frees, plus the
 statistics the cache holds — still fits in four fifths of the allowance, and reads with that many. The
 256 MiB is an estimate rather than a limit pgdt enforces, and a 128 MiB-block
 `.xz` read by four or five workers holds more than that outside its buffers,
 so it can leave well under a fifth free. In a 1 GiB container a
-24 MiB-block `.xz` reads with ten readers rather than the eleven the ceiling
-alone would buy. **Below about 640 MiB the fifth costs you nothing**, because
-the 384 MiB already taken off the top is the tighter of the two; above it, it
-is what stops a wider machine reading the same allocation with more readers and
-less room. It never costs you the last reader: one worker runs at any allowance,
+24 MiB-block `.xz` reads with four readers rather than the eleven the 640 MiB
+left after the reserve would buy. **The fifth is the tighter of the two at
+every allowance**, the allocator's 320 MiB beside it taking it below what the
+384 MiB off the top leaves, and it is what stops a wider machine reading the
+same allocation with more readers and less room. It never costs you the last reader: one worker runs at any allowance,
 however small, and the budget reported is never more than that many workers
 would hold — though where the ceiling cannot hold even one block-decoding
 reader, the file is read through the streaming decoder and holds far less than
@@ -974,7 +979,7 @@ worker. **How many of those workers actually read is then bounded by
 streaming decoder. Left unstated the budget is chosen to afford the count, and
 where the allocation cannot afford it the count itself is lowered to what can
 be paid for. **An allowance you state lowers a count the file recommended in
-exactly the same way** — `--memory 469762048` on that dump leaves 64 MiB of
+exactly the same way** — `--memory 838860800` on that dump leaves 64 MiB of
 read buffers and reports one worker, not twenty-four, because one is what it
 will get. Whatever the file would choose, a
 `--jobs` you type wins outright, in both directions: `--jobs 1` reads a
@@ -1075,9 +1080,10 @@ with no room to hold what they decode buys less than either number suggests.
 > holds on to some of what is freed for a while rather than returning it at
 > once — 100 ms by default in pgdt, a tenth of mimalloc's own default, which
 > `MIMALLOC_PURGE_DELAY=<milliseconds>` overrides and `pgdt --version` names
-> as `(purge delay: … ms)`. A longer delay holds more of what a scan frees past
-> what `--memory` carves, and a run reading long values can then outgrow a
-> container sized at `--memory`; a shorter one costs a little time. An `.xz`
+> as `(purge delay: … ms)`. What the default delay keeps is set aside under
+> `--memory`, 320 MiB whatever the delay; a longer delay holds more than that,
+> and a run reading long values can then outgrow a container sized at
+> `--memory`; a shorter one costs a little time. An `.xz`
 > file's decoder allocates through the C library instead, which
 > on glibc gives each such thread an arena of its own and keeps it. pgdt runs
 > a thread for each piece of work it has in flight, so raising `--jobs` raises

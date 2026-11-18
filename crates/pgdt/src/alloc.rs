@@ -1,5 +1,5 @@
-//! Which allocator `pgdt` links against, and the one default it sets of it,
-//! mimalloc's purge delay.
+//! Which allocator `pgdt` links against, the one default it sets of it,
+//! mimalloc's purge delay, and what that delay keeps billed.
 //!
 //! The choice is the binary's, never the library's: see
 //! `docs/design/decisions.md`, "D13". The consequence is that every figure in
@@ -102,6 +102,16 @@ mod purge {
     /// (`docs/design/decisions.md`, "D13").
     pub const PURGE_DELAY_MS: std::ffi::c_long = 100;
 
+    /// **What mimalloc keeps resident of what it frees under
+    /// [`PURGE_DELAY_MS`]**, in bytes: one bound for the process, billed to
+    /// every arrangement `pgdt` resolves and every scan `pgdt sql` draws as
+    /// held beside its readers and its lines (`pgdt_io::ArrangementRequest::retained`,
+    /// `docs/design/decisions.md`, "D165"). Read off one workload's grid of
+    /// reader counts; a run keeping more over a zero delay than this moves it.
+    /// It bounds this delay alone: a delay the environment states is billed
+    /// this all the same.
+    pub const RETAINED_BOUND: u64 = 320 << 20;
+
     /// `mi_option_purge_delay`'s place in `mimalloc.h`'s `mi_option_e`, which
     /// `libmimalloc-sys` does not declare. Counted by hand, so held to
     /// mimalloc's own reading of `MIMALLOC_PURGE_DELAY` by
@@ -143,6 +153,10 @@ mod purge {
     not(feature = "system")
 )))]
 mod purge {
+    /// Nothing billed: no reading prices what this allocator keeps
+    /// (`docs/design/decisions.md`, "D165").
+    pub const RETAINED_BOUND: u64 = 0;
+
     pub fn configure() {}
 
     pub fn marker() -> String {
@@ -157,6 +171,10 @@ pub use purge::MI_OPTION_PURGE_DELAY;
 /// Sets the allocator's defaults: mimalloc's purge delay (`purge`), first
 /// thing in `main`.
 pub use purge::configure;
+
+/// What the allocator is billed for keeping of what it frees, beside every
+/// arrangement's readers (`purge`'s `RETAINED_BOUND`).
+pub use purge::RETAINED_BOUND;
 
 /// What `pgdt --version` names of the purge delay mimalloc runs under, so the
 /// harness asks the binary rather than trusting the variable it set

@@ -4,6 +4,8 @@
 use clap::Args;
 use pgdt_io::{Allowance, Arrangement, ArrangementRequest, ByteRangeSource, Parallelism};
 
+use crate::alloc::RETAINED_BOUND;
+
 /// The two numbers a caller states its parallelism in, shared by the two
 /// scanning commands (`docs/design/decisions.md`, "I/O, memory and parallelism").
 ///
@@ -58,7 +60,8 @@ pub(crate) struct ParallelArgs {
     /// compressed source keeps outside its pools, the binary itself. What is
     /// left is what the read buffers may hold, and the buffer budget is what
     /// as many workers spend as leave a fifth of the whole number, plus a
-    /// further 256 MiB, unspent — the worker count itself lowered to that
+    /// further 256 MiB and what the allocator is billed for keeping of the
+    /// memory pgdt frees, unspent — the worker count itself lowered to that
     /// where the source states a charge and `--jobs` did not. So the buffer
     /// budget a run reports is always smaller than what you typed, and the
     /// `resolved the arrangement` line on stderr names both.
@@ -105,10 +108,11 @@ pub(crate) struct ParallelArgs {
 impl ParallelArgs {
     /// [`Discovered::resolve`] over the allowance this process runs under,
     /// composing both halves in one call — what a test wants and production
-    /// cannot use, a run having a line to print between them.
+    /// cannot use, a run having a line to print between them — billing no
+    /// retention, as [`ParallelArgs::found`].
     #[cfg(test)]
     fn resolve(&self, source: &dyn ByteRangeSource) -> Resolved {
-        self.discover().resolve(source, 0)
+        self.found(Allowance::discover()).resolve(source, 0)
     }
 
     /// [`ParallelArgs::resolve`] as though discovery had found `found`: no
@@ -129,13 +133,21 @@ impl ParallelArgs {
     /// **Read once, even where `--memory` was stated**: the mode is a fact
     /// about the run, not the flag, and every pass the run carves resolves
     /// from this one reading, so the limit announced is the limit carved.
+    ///
+    /// **What the allocator retains is billed on every pass it carves**
+    /// (`crate::alloc::RETAINED_BOUND`; `docs/design/decisions.md`, "D165").
     pub(crate) fn discover(&self) -> Discovered<'_> {
-        self.found(Allowance::discover())
+        Discovered { args: self, found: Allowance::discover(), retained: RETAINED_BOUND }
     }
 
-    /// What a run knows once discovery has found `found`.
+    /// What a run knows once discovery has found `found`, **billing no
+    /// retention**: the tests pin how `pgdt` composes its flags with what
+    /// discovery found, the bill's arithmetic being `pgdt_io`'s
+    /// (`arrangement/tests.rs`), and `a_run_bills_what_the_allocator_retains`
+    /// that [`ParallelArgs::discover`] hands the bill to every pass.
+    #[cfg(test)]
     fn found(&self, found: Allowance) -> Discovered<'_> {
-        Discovered { args: self, found }
+        Discovered { args: self, found, retained: 0 }
     }
 }
 
@@ -149,6 +161,9 @@ pub(crate) struct Discovered<'a> {
     args: &'a ParallelArgs,
     /// What discovery found, whether or not `--memory` replaces it.
     found: Allowance,
+    /// What the allocator retains of what it frees, held beside every pass
+    /// (`pgdt_io::ArrangementRequest::retained`).
+    retained: u64,
 }
 
 impl Discovered<'_> {
@@ -222,6 +237,8 @@ impl Discovered<'_> {
     /// (`pgdt_io::ArrangementRequest::statistics`; `docs/design/decisions.md`,
     /// "D85"); under either it comes off what one reader may hold of a line
     /// ("D161"). A pass holding none passes `0` ([`Discovered::resolve_pass`]).
+    /// What the allocator retains is held beside it on every pass
+    /// ([`ParallelArgs::discover`]).
     pub(crate) fn resolve(&self, source: &dyn ByteRangeSource, held: u64) -> Resolved {
         self.resolve_carving(source, held, 0)
     }
@@ -246,6 +263,7 @@ impl Discovered<'_> {
         let request = ArrangementRequest {
             statistics: held,
             line_charge,
+            retained: self.retained,
             ..ArrangementRequest::of(source, self.args.jobs)
         };
         let arrangement = Arrangement::resolve(&allowance, request);

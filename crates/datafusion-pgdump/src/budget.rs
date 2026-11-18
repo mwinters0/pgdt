@@ -35,16 +35,19 @@ use pgdt_io::{Allowance, Arrangement, ArrangementRequest, Jobs, WorkerMemory};
 /// pass ([`pgdt_model::DumpIndex::statistics_heap_bytes`]), and each live
 /// scan's longest line, which its own ledger keeps room for
 /// (`docs/design/decisions.md`, "D160"), so no later scan's ledger lends it
-/// again. Where an allowance was found, all three come off the margin's
-/// ceiling alone, as [`ArrangementRequest::held`]; with none found there is no
+/// again, and what the process's allocator keeps of what it frees, where the
+/// binary choosing it states that ([`ScanBudget::retaining`],
+/// `docs/design/decisions.md`, "D165"). Where an allowance was found, all
+/// four come off the margin's ceiling alone, as [`ArrangementRequest::held`]; with none found there is no
 /// margin and they come off nothing:
 /// the cap is the reserve's, standing for the scans' own excess over their
 /// budgets, and none of them is any of it. So they lower a scan's count
 /// first, and whatever of them the ceiling's room cannot absorb at that count
 /// comes off its budget — a plain dump's scan, or one reader, whose count
 /// cannot fall, still leaves the margin, or where one reader alone overruns it,
-/// overruns it no further. The statistics and the line charges come off what
-/// a scan's ledger leaves one reader too, the pool's grant never
+/// overruns it no further. The statistics, the line charges and the
+/// allocator's retention come off what a scan's ledger leaves one reader
+/// too, the pool's grant never
 /// (`docs/design/decisions.md`, "D161"). *Rejected: taking them off the
 /// allowance the margin is a fraction of*: the container's limit is still the
 /// whole allowance, and a margin taken of less would let the predicted
@@ -69,6 +72,9 @@ use pgdt_io::{Allowance, Arrangement, ArrangementRequest, Jobs, WorkerMemory};
 #[derive(Debug)]
 pub struct ScanBudget {
     allowance: Allowance,
+    /// What the process's allocator keeps of what it frees, as its binary
+    /// states it ([`ScanBudget::retaining`]).
+    retained: u64,
     held: Mutex<Held>,
 }
 
@@ -76,7 +82,7 @@ pub struct ScanBudget {
 /// allowance and where it came from — the half of a budget-quoting plan note
 /// the library does not tell, provenance being the caller's fact
 /// (`docs/design/decisions.md`, "D64"), and what [`crate::BudgetedPlanNote`]
-/// names — and the four holdings that came off it ([`ScanBudget::draw`]'s
+/// names — and the holdings that came off it ([`ScanBudget::draw`]'s
 /// terms).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BudgetAccount {
@@ -95,6 +101,9 @@ pub struct BudgetAccount {
     /// (`pgdt_query::Table::line_charge`), each held off the margin's
     /// ceiling for as long as its scan lives.
     pub lines: u64,
+    /// What the process's allocator is billed for keeping of what it frees
+    /// ([`ScanBudget::retaining`]), `0` where its binary states none.
+    pub retained: u64,
 }
 
 /// What a [`ScanBudget`]'s holders have taken of it.
@@ -122,13 +131,34 @@ impl ScanBudget {
     /// leaves it uncarved: the reserve here stands for what DataFusion holds resident
     /// beyond any pool limit it states, which a `pgdt` process does not hold.
     pub fn discover() -> Self {
-        Self { allowance: Allowance::discover(), held: Mutex::default() }
+        Self::of_allowance(Allowance::discover())
     }
 
     /// A stated resident allowance, in bytes, carved exactly as a discovered
     /// one is.
     pub fn new(allowance: u64) -> Self {
-        Self { allowance: Allowance::Stated(allowance), held: Mutex::default() }
+        Self::of_allowance(Allowance::Stated(allowance))
+    }
+
+    fn of_allowance(allowance: Allowance) -> Self {
+        Self { allowance, retained: 0, held: Mutex::default() }
+    }
+
+    /// **This budget, billing every scan `bytes` the process's allocator
+    /// keeps resident of what it frees**: held beside the scans for the
+    /// session's whole life, off the margin's ceiling and off what a scan's
+    /// ledger leaves one reader, as a resident map is. The binary that chose
+    /// the allocator states it — `pgdt sql` for mimalloc's purge delay — and
+    /// an embedder states its own allocator's, or nothing, which bills
+    /// nothing (`docs/design/decisions.md`, "D13", "D165").
+    pub fn retaining(self, bytes: u64) -> Self {
+        Self { retained: bytes, ..self }
+    }
+
+    /// What every scan is billed for the allocator's retention
+    /// ([`ScanBudget::retaining`]).
+    pub fn retained(&self) -> u64 {
+        self.retained
     }
 
     /// The resident allowance, and where it came from.
@@ -155,7 +185,8 @@ impl ScanBudget {
     }
 
     /// The arrangement one more scan takes: as many of `jobs` workers as what
-    /// the live scans' budgets and line charges, the billed maps and `pool` —
+    /// the live scans' budgets and line charges, the billed maps, the
+    /// allocator's retention ([`ScanBudget::retaining`]) and `pool` —
     /// the session's memory pool's finite limit, [`pool_limit`] — leave of
     /// `stated`, else of this
     /// budget's own allowance, affords, at what that many spend less whatever
@@ -195,6 +226,7 @@ impl ScanBudget {
             statistics: held.maps,
             granted: pool,
             lines: held.lines,
+            retained: self.retained,
             carve_estimate: true,
             line_charge,
         };
@@ -208,6 +240,7 @@ impl ScanBudget {
             resident: held.maps,
             drawn: held.scans,
             lines: held.lines,
+            retained: self.retained,
         };
         held.scans += bytes;
         held.lines += line_charge;
@@ -374,8 +407,7 @@ mod tests {
         assert_eq!(budget.draw(24, memory, 0, None, 0).parallelism().jobs(), 4);
         assert_eq!(budget.allowance(), &Allowance::Stated(10 << 30));
 
-        let unfound =
-            Arc::new(ScanBudget { allowance: Allowance::NoneFound, held: Mutex::default() });
+        let unfound = Arc::new(ScanBudget::of_allowance(Allowance::NoneFound));
         let stated = unfound.draw(24, memory, 0, Some(10 << 30), 0);
         assert_eq!(stated.parallelism().jobs(), 7);
         assert_eq!(unfound.drawn(), 7 * per_worker);
@@ -392,8 +424,7 @@ mod tests {
         use pgdt_io::DEFAULT_MEMORY_BUDGET;
         let per_worker = 24u64 << 20;
         let memory = Some(WorkerMemory::per_worker(per_worker));
-        let unfound =
-            Arc::new(ScanBudget { allowance: Allowance::NoneFound, held: Mutex::default() });
+        let unfound = Arc::new(ScanBudget::of_allowance(Allowance::NoneFound));
         let _map = unfound.hold(1 << 30);
 
         let first = unfound.draw(24, memory, 1 << 30, None, 0);
@@ -445,6 +476,7 @@ mod tests {
                 resident: 1 << 20,
                 drawn: 0,
                 lines: 0,
+                retained: 0,
             }
         );
         let second = budget.draw(2, memory, 128 << 20, None, 0);
@@ -531,6 +563,38 @@ mod tests {
         let second = budget.draw(8, memory, 1 << 30, None, 0);
         let expected = bare.holds - first_budget - map - line;
         assert_eq!((floor(&second).holds, floor(&second).beside), (expected, map + line));
+    }
+
+    /// **The allocator's retention is held as a resident map is**
+    /// (`docs/design/decisions.md`, "D165"): a budget retaining some bytes
+    /// carves every scan as one holding a map of them does — its count, what
+    /// its ledger lends and its floor, `Floor::beside` naming them — and each
+    /// draw's account names it; a budget stating none bills nothing.
+    #[test]
+    fn the_allocator_s_retention_is_held_as_a_resident_map_is() {
+        let memory = Some(WorkerMemory::per_worker(512 << 20));
+        let allowance = 10u64 << 30;
+        let retained = 320u64 << 20;
+        let mapped = Arc::new(ScanBudget::new(allowance));
+        let _map = mapped.hold(retained);
+        let held = mapped.draw(24, memory, 0, None, 1 << 30);
+
+        let retaining = Arc::new(ScanBudget::new(allowance).retaining(retained));
+        assert_eq!(retaining.retained(), retained);
+        let draw = retaining.draw(24, memory, 0, None, 1 << 30);
+        assert_eq!(draw.parallelism(), held.parallelism());
+        let ledger = |draw: &Draw| {
+            let ledger = draw.arrangement().ledger();
+            (ledger.capacity().unwrap() - ledger.statistics(), ledger.floor())
+        };
+        assert_eq!(ledger(&draw), ledger(&held), "it lends what a map leaves, at its floor");
+        assert_eq!(draw.arrangement().ledger().floor().unwrap().beside, retained);
+        assert_eq!(draw.account().retained, retained);
+        assert_eq!(draw.account().resident, 0, "no map is billed for it");
+
+        let none = Arc::new(ScanBudget::new(allowance)).draw(24, memory, 0, None, 1 << 30);
+        assert_eq!(none.account().retained, 0);
+        assert!(none.parallelism().jobs() > draw.parallelism().jobs());
     }
 
     /// A pool stating a `Finite` limit bills that limit; the default,

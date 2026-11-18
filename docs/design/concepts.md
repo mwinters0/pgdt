@@ -67,7 +67,8 @@ partition advice a source gives and the cut
   its lines and statistics past the room park (D163); the partition advice and the cut read a worker's
   cost, and nothing in sizing reads them.
 - **datafusion-pgdump** — `budget.rs`: the one allowance every scan a session
-  runs draws from, and what the session holds against it.
+  runs draws from, and what the session holds against it, the retention its
+  binary states for its allocator among it (D165).
 - **pgdt** — `parallel.rs`: `--jobs` and `--memory` as a front end spells
   them, and each resolved number's provenance as its status lines spell it.
 
@@ -444,8 +445,9 @@ The three subcommands, their flags and what each prints
 ## The binary's build
 
 Which allocator and Cargo profile built `pgdt`, and the purge delay mimalloc
-runs under, as `pgdt --version` names them ([`decisions.md`](decisions.md),
-"D13", "D105").
+runs under, as `pgdt --version` names them, and what that delay keeps, which
+every arrangement `pgdt` resolves holds beside its readers
+([`decisions.md`](decisions.md), "D13", "D105", "D165").
 
 - **pgdt** — `alloc.rs`, `profile.rs`: the binary's choice, never the
   library's.

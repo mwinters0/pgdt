@@ -126,12 +126,13 @@ decoders and what mimalloc keeps unpurged
 bound. The re-fit under the delay that ships (above) has this reading beside
 its generated grid, and a bound that covers it lowers the margin's ceiling and
 so this run's carve. The purge delay is chosen on throughput and what it keeps
-is a term the binary states, P33's to bill
-([`roadmap-P33-line-bound.md`](roadmap-P33-line-bound.md), "What a held line
-costs"), so a bound re-fit here reads what is left past it: the remainder net
-of that stated term, which is part of the predicted resident beside the
-charge, and never the term again under "the allocators' per-thread
-retention" the bound's rustdoc names. Nor is a run's excess where its scan
+is a term the binary states and bills, `pgdt`'s `RETAINED_BOUND`
+([`decisions.md`](decisions.md), "D165"), so a bound re-fit here reads what is
+left past it: the remainder net of that stated term, which is part of the
+predicted resident beside the charge, and never the term again under "the
+allocators' per-thread retention" the bound's rustdoc names. `measure.py`'s
+`charge_model_problem` still reads a cell's remainder against the bound with
+that term in it. Nor is a run's excess where its scan
 exposes fewer partitions than `target_partitions` the bound's to cover: that is
 the repartition's copies, `KD174`.
 

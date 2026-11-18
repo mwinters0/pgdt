@@ -86,7 +86,8 @@ pub struct Floor {
     /// The bytes one line may hold at most.
     pub holds: u64,
     /// The bytes that came off it as staying beside the line: the statistics
-    /// the run keeps and other live scans' line charges.
+    /// the run keeps, other live scans' line charges and what the allocator
+    /// retains.
     pub beside: u64,
     /// The resident allowance the floor was carved from, in bytes.
     pub allowance: u64,

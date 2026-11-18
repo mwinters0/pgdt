@@ -211,10 +211,11 @@ Options:
           that no buffer accounts for — the runtime's threads, the allocator's per-thread arenas,
           the decoder state a compressed source keeps outside its pools, the binary itself. What is
           left is what the read buffers may hold, and the buffer budget is what as many workers
-          spend as leave a fifth of the whole number, plus a further 256 MiB, unspent — the worker
-          count itself lowered to that where the source states a charge and `--jobs` did not. So the
-          buffer budget a run reports is always smaller than what you typed, and the `resolved the
-          arrangement` line on stderr names both.
+          spend as leave a fifth of the whole number, plus a further 256 MiB and what the allocator
+          is billed for keeping of the memory pgdt frees, unspent — the worker count itself lowered
+          to that where the source states a charge and `--jobs` did not. So the buffer budget a run
+          reports is always smaller than what you typed, and the `resolved the arrangement` line on
+          stderr names both.
           
           **What is left under that margin is what a gathering `parse`'s statistics may hold**,
           named as `statistics_bytes=` on the same line. A block whose statistics will not fit it is

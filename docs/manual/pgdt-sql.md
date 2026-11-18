@@ -169,7 +169,8 @@ warning: shop.logs.events: a memory budget of 0 byte(s) is less than the 8388608
 **A warning that quotes a memory budget says where that budget came from**:
 the allowance and whether `pgdump.memory` stated it, a memory limit's file
 did, or half of what was free; what `--memory-limit` granted DataFusion's own
-operators; what the attached dumps' caches hold; and what queries still
+operators; what is set aside for the allocator; what the attached dumps'
+caches hold; and what queries still
 running had taken, and kept for the longest line each reads. Then it names
 the settings that would change what the warning reports for this dump and
 this budget, each as you would `SET` it, and no other: `pgdump.memory` where a larger allowance raises the budget, with
@@ -267,13 +268,15 @@ The same query refuses on every run, or answers on every run.
 Every dump's scans share one budget, carved from the memory limit the process
 runs under — a container's or a cgroup's — or, where nothing limits it, from
 half of what is free. A `--memory-limit` given to DataFusion's own operators
-comes off it, as does what each attached dump's cache holds in memory and
-the longest line each running query keeps room for, so the scans never count
-on memory already spoken for. `SET pgdump.memory` states
+comes off it, as does what each attached dump's cache holds in memory, the
+longest line each running query keeps room for and the 320 MiB pgdt sets
+aside for what its allocator keeps of what it frees
+([`--memory`](dump-inspection.md#--jobs-and---memory-the-workers-and-the-allowance)),
+so the scans never count on memory already spoken for. `SET pgdump.memory` states
 the allowance instead ([below](#scan-settings)). A query whose longest line
 one reader could not hold under that allowance — once the attached dumps'
-statistics and the longest lines of the queries still running are set
-aside, though not the `--memory-limit` — is refused before it reads, naming
+statistics, the longest lines of the queries still running and the
+allocator's 320 MiB are set aside, though not the `--memory-limit` — is refused before it reads, naming
 where the line starts, the bytes it needs and what was set aside.
 
 **A query reading long lines through fewer readers than `target_partitions`

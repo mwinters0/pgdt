@@ -258,8 +258,9 @@ async fn a_genuine_resume_reports_no_preamble_pass_and_names_the_frontier() {
 /// The number on the line is the **read-buffer budget** carved out of the
 /// stated allowance, never the allowance itself
 /// (`docs/design/decisions.md`, "D83"): a plain source recommends no
-/// per-reader memory, so a 640 MiB allowance leaves it the library's own
-/// 64 MiB constant under a 256 MiB cap.
+/// per-reader memory, so a 1 GiB allowance leaves it the library's own
+/// 64 MiB constant under a ceiling above it, once the allocator's retention
+/// is billed (`docs/design/decisions.md`, "D165").
 #[test]
 fn scan_started_names_jobs_and_the_stated_memory_budget_as_a_quantity() {
     let dir = tempfile::tempdir().unwrap();
@@ -273,7 +274,7 @@ fn scan_started_names_jobs_and_the_stated_memory_budget_as_a_quantity() {
         "--jobs",
         "4",
         "--memory",
-        "671088640",
+        "1073741824",
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let stderr = stderr_of(&out);
@@ -473,19 +474,19 @@ fn the_mode_report_marks_a_stated_flag_as_stated() {
         "--jobs",
         "3",
         "--memory",
-        "671088640",
+        "1073741824",
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let stderr = stderr_of(&out);
     let stated = stated_report(&stderr);
     assert!(stated.contains("jobs_flag=3"), "{stated}");
-    assert!(stated.contains("memory_flag=671088640"), "{stated}");
+    assert!(stated.contains("memory_flag=1073741824"), "{stated}");
     let resolved = resolved_report(&stderr);
     assert!(resolved.contains("jobs=3 (stated)"), "{resolved}");
     // The budget beside it is carved, so the line carries both numbers rather
     // than the typed one twice (`docs/design/decisions.md`, "D83").
     assert!(
-        resolved.contains("memory_bytes=67108864 (stated: --memory allows 671088640 resident"),
+        resolved.contains("memory_bytes=67108864 (stated: --memory allows 1073741824 resident"),
         "{resolved}"
     );
     assert!(!resolved.contains("recommended"), "{resolved}");
@@ -513,7 +514,7 @@ fn a_stated_memory_budget_at_a_serial_job_count_is_not_marked_default() {
         "--cache",
         cache.to_str().unwrap(),
         "--memory",
-        "671088640",
+        "1073741824",
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let stderr = stderr_of(&out);
@@ -755,7 +756,7 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
         "--jobs",
         "2",
         "--memory",
-        "536870912",
+        "1073741824",
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     assert!(arrangement_lines(&stderr_of(&out)).is_empty(), "{}", stderr_of(&out));

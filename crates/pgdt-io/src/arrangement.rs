@@ -110,6 +110,14 @@ pub struct ArrangementRequest {
     /// (`docs/design/decisions.md`, "D160"), reserved for as long as each
     /// lives. Part of what is [`held`](Self::held), and off the [`Floor`].
     pub lines: u64,
+    /// **What the process's allocator keeps resident of what it frees**, a
+    /// bound the binary that chose the allocator states — `pgdt`'s for
+    /// mimalloc's purge delay — and `0` where its embedder states none
+    /// (`docs/design/decisions.md`, "D165"). Off the margin's ceiling as what
+    /// is [`held`](Self::held) is, and off the [`Floor`], but never part of
+    /// the statistics' draw, which a gathering pass's account replaces: it
+    /// comes off the ledger's room instead, for the run's whole life.
+    pub retained: u64,
     /// Whether [`Allowance::HalfAvailable`] is carved as a stated allowance
     /// is, reserve and margin included, rather than capping the pools alone.
     /// A process hosting more than its scans — DataFusion's operators past
@@ -140,6 +148,7 @@ impl ArrangementRequest {
             statistics: 0,
             granted: 0,
             lines: 0,
+            retained: 0,
             carve_estimate: false,
             line_charge: 0,
         }
@@ -160,16 +169,18 @@ impl ArrangementRequest {
     /// statistics, the grant and other scans' line charges together. It comes
     /// off the margin's ceiling alone, where the allowance is carved with one
     /// (`docs/design/decisions.md`, "D85"), and opens the statistics' draw on
-    /// the ledger (`docs/design/decisions.md`, "D157").
+    /// the ledger (`docs/design/decisions.md`, "D157"). What the allocator
+    /// [`retained`](Self::retained) comes off that ceiling beside it.
     pub fn held(&self) -> u64 {
         self.statistics.saturating_add(self.granted).saturating_add(self.lines)
     }
 
-    /// **What stays beside a line as the run is carved**: the statistics and
-    /// other scans' line charges, which come off the [`Floor`]; the grant
-    /// does not (`docs/design/decisions.md`, "D161").
+    /// **What stays beside a line as the run is carved**: the statistics,
+    /// other scans' line charges and what the allocator retains, which come
+    /// off the [`Floor`]; the grant does not (`docs/design/decisions.md`,
+    /// "D161").
     fn beside_the_line(&self) -> u64 {
-        self.statistics.saturating_add(self.lines)
+        self.statistics.saturating_add(self.lines).saturating_add(self.retained)
     }
 }
 
@@ -219,8 +230,9 @@ impl Arrangement {
     ///
     /// **The ledger is what the margin's ceiling leaves the budget**
     /// wherever an allowance is found, an estimate's included, less what
-    /// others drew: one room, which a gathering pass's statistics and its
-    /// held lines share, statistics first. What is `held` opens the
+    /// others drew and what the allocator retains: one room, which a
+    /// gathering pass's statistics and its held lines share, statistics
+    /// first. What is `held` opens the
     /// statistics' draw on it: a mapping pass's is the statistics its cache
     /// hands it, which its account's total then replaces, one figure however
     /// a back-fill moves them from loaded to retained; a replay's settled
@@ -239,18 +251,27 @@ impl Arrangement {
     /// count: the cap, or the margin's ceiling where that is higher, less
     /// what others drew and one reader's budget — never less than the room —
     /// and less what stays beside the line as the run is carved, the
-    /// statistics and other scans' line charges, an uncarved estimate's
-    /// included, never the grant. So no line the ledger lends room for is
-    /// refused, its statistics' draw opening at all three
-    /// (`docs/design/decisions.md`, "D161").
+    /// statistics, other scans' line charges and what the allocator retains,
+    /// an uncarved estimate's included, never the grant. So no line the
+    /// ledger lends room for is refused, its statistics' draw opening at all
+    /// three holdings and what the allocator retains coming off its room
+    /// (`docs/design/decisions.md`, "D161", "D165").
     pub fn resolve(allowance: &Allowance, request: ArrangementRequest) -> Self {
-        let ArrangementRequest { jobs, worker_memory, drawn, carve_estimate, line_charge, .. } =
-            request;
+        let ArrangementRequest {
+            jobs,
+            worker_memory,
+            drawn,
+            retained,
+            carve_estimate,
+            line_charge,
+            ..
+        } = request;
         let held = request.held();
         let asked = match jobs {
             Jobs::Stated(jobs) | Jobs::Recommended(jobs) => jobs,
         };
         let shared = |bytes: u64| {
+            let held = held.saturating_add(retained);
             Parallelism::within_shared(asked, worker_memory, bytes, drawn, held, line_charge)
         };
         let carved = match allowance {
@@ -271,9 +292,11 @@ impl Arrangement {
             (Jobs::Stated(stated), Some(bytes)) => Parallelism::workers(stated, bytes),
             _ => carved,
         };
-        let room = allowance
-            .bytes()
-            .map(|bytes| margin_room(bytes, parallelism.budget_bytes()).saturating_sub(drawn));
+        let room = allowance.bytes().map(|bytes| {
+            margin_room(bytes, parallelism.budget_bytes())
+                .saturating_sub(drawn)
+                .saturating_sub(retained)
+        });
         let statistics_allowance = room.map(|room| room.saturating_sub(line_charge));
         let recommended_jobs = match jobs {
             Jobs::Stated(_) => None,
@@ -282,10 +305,13 @@ impl Arrangement {
         let uncarved = matches!(allowance, Allowance::HalfAvailable(_)) && !carve_estimate;
         let ledger = match (room, allowance.bytes()) {
             (Some(room), Some(bytes)) => {
+                // The room is short of what the allocator retains already.
                 let beside = request.beside_the_line();
-                let leaves = one_reader_leaves(bytes, uncarved, worker_memory, drawn).max(room);
-                let floor =
-                    Floor { holds: leaves.saturating_sub(beside), beside, allowance: bytes };
+                let leaves = one_reader_leaves(bytes, uncarved, worker_memory, drawn)
+                    .saturating_sub(retained)
+                    .max(room);
+                let holds = leaves.saturating_sub(beside.saturating_sub(retained));
+                let floor = Floor { holds, beside, allowance: bytes };
                 let ledger = Ledger::limited(room, floor, Terms::of(parallelism, worker_memory));
                 ledger.draw_statistics(held);
                 ledger
@@ -318,8 +344,9 @@ impl Arrangement {
     }
 
     /// **What a gathering pass's statistics may hold**: what the margin
-    /// leaves once the read-buffer budget, what others drew and a read's
-    /// longest line come off it — the ledger's room past that line —
+    /// leaves once the read-buffer budget, what others drew, what the
+    /// allocator retains and a read's longest line come off it — the
+    /// ledger's room past that line —
     /// carved after the workers (`docs/design/decisions.md`, "D85"), which
     /// `pgdt_mapping::map_file` and `pgdt_mapping::backfill_block` bound their
     /// statistics by. `None`, where no allowance was found, declines nothing.

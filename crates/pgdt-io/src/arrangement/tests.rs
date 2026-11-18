@@ -195,6 +195,29 @@ fn a_holding_lowers_the_count_and_then_the_budget() {
     let stated = Allowance::Stated(1 << 30);
     assert_eq!(holding(&stated, reader, 2 * READER).parallelism(), held.parallelism());
 
+    // What the allocator retains is carved around as the statistics are
+    // (`docs/design/decisions.md`, "D165"), and comes off the ledger's room
+    // rather than opening the statistics' draw, which a gathering pass's
+    // account replaces with its own total: so it is never lent again.
+    let request = ArrangementRequest::recommended(24, reader);
+    let retaining =
+        Arrangement::resolve(&limit, ArrangementRequest { retained: 2 * READER, ..request });
+    assert_eq!(retaining.parallelism(), held.parallelism());
+    let (kept, statistics) = (retaining.ledger(), held.ledger());
+    assert_eq!(kept.statistics(), 0);
+    assert_eq!(kept.capacity().unwrap(), statistics.capacity().unwrap() - 2 * READER);
+    let allowance = |arrangement: &Arrangement| arrangement.statistics_allowance().unwrap();
+    assert_eq!(allowance(&retaining), allowance(&held) - 2 * READER);
+    let lends = |ledger: &crate::Ledger| ledger.capacity().unwrap() - ledger.statistics();
+    assert_eq!(lends(kept), lends(statistics));
+    kept.draw_statistics(0);
+    statistics.draw_statistics(0);
+    assert_eq!(
+        lends(kept) + 2 * READER,
+        lends(statistics),
+        "the account's draw lends no retention"
+    );
+
     // A plain source's count cannot fall, so what the room beside its
     // budget cannot absorb comes off the budget, and the statistics
     // allowance is then exactly what the cache holds.
@@ -407,11 +430,12 @@ fn the_floor_is_what_the_allowance_leaves_one_reader() {
 }
 
 /// **The floor takes off what stays beside the line as the run is carved**
-/// (`docs/design/decisions.md`, "D161"): the statistics the run keeps and
-/// other live scans' line charges come off what one reader is left, at any
-/// count, an uncarved estimate's included, and `Floor::beside` names them; a
-/// session pool's grant does not, though all three lower the count and open
-/// the statistics' draw alike. No line the ledger lends room for is refused.
+/// (`docs/design/decisions.md`, "D161"): the statistics the run keeps, other
+/// live scans' line charges and what the allocator retains come off what one
+/// reader is left, at any count, an uncarved estimate's included, and
+/// `Floor::beside` names them; a session pool's grant does not, though all
+/// four lower the count and open the statistics' draw alike. No line the
+/// ledger lends room for is refused.
 #[test]
 fn the_floor_takes_off_what_stays_beside_the_line() {
     const GIB: u64 = 1 << 30;
@@ -420,16 +444,17 @@ fn the_floor_takes_off_what_stays_beside_the_line() {
     let resolve = |request| Arrangement::resolve(&allowance, request);
     let bare = resolve(lowered_request(memory)).ledger().floor().unwrap();
 
-    let (statistics, lines, granted) = (GIB, 512 << 20, 2 * GIB);
+    let (statistics, lines, retained, granted) = (GIB, 512 << 20, 320 << 20, 2 * GIB);
+    let beside = ArrangementRequest { statistics, lines, retained, ..lowered_request(memory) };
     for request in [
-        ArrangementRequest { statistics, lines, ..lowered_request(memory) },
-        ArrangementRequest { statistics, lines, granted, ..lowered_request(memory) },
-        ArrangementRequest { jobs: Jobs::Stated(24), statistics, lines, ..lowered_request(memory) },
+        beside,
+        ArrangementRequest { granted, ..beside },
+        ArrangementRequest { jobs: Jobs::Stated(24), ..beside },
     ] {
         let arrangement = resolve(request);
         let ledger = arrangement.ledger();
         let floor = ledger.floor().unwrap();
-        let beside = statistics + lines;
+        let beside = statistics + lines + retained;
         let expected = Floor { holds: bare.holds - beside, beside, allowance: 10 * GIB };
         assert_eq!(floor, expected, "{request:?}");
         assert_eq!(ledger.statistics(), request.held(), "the draw opens at all three");
@@ -444,10 +469,14 @@ fn the_floor_takes_off_what_stays_beside_the_line() {
     // An uncarved estimate's floor takes them off its whole cap.
     let reader = Some(WorkerMemory::per_worker(READER));
     let half = Allowance::HalfAvailable(GIB);
-    let request =
-        ArrangementRequest { statistics: READER, lines: READER, ..lowered_request(reader) };
+    let request = ArrangementRequest {
+        statistics: READER,
+        lines: READER,
+        retained: READER,
+        ..lowered_request(reader)
+    };
     let estimate = Arrangement::resolve(&half, request).ledger().floor().unwrap();
-    assert_eq!(estimate, Floor { holds: GIB - 3 * READER, beside: 2 * READER, allowance: GIB });
+    assert_eq!(estimate, Floor { holds: GIB - 4 * READER, beside: 3 * READER, allowance: GIB });
 }
 
 /// **Every clone of an arrangement shares its ledger**: one run's.
