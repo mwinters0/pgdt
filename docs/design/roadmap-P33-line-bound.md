@@ -284,7 +284,17 @@ environment overrides** (`decisions.md`, "D13"'s second remedy), **priced
 before it is set**, a delay's cost being the one ground the earlier refusal
 stated: the largest delay holding 33.7's query run and `long-line-resident`
 within their allowance at a cost within the throughput figures' noise, else the
-cheapest that holds, its cost stated. It is `pgdt`'s alone, an embedder's
+cheapest that holds, its cost stated. **A delay holds** when every rep at it is
+within the allowance with its worst rep's headroom at least the spread of its
+reps, largest peak less smallest — a margin read off the run's own noise, so a
+re-take tests the choice rather than re-drawing it — every rep the same build
+took at that delay counted, sittings pooled, and at least six from two
+interleaved sittings before it is chosen. 33.7's re-take counts among the
+chosen delay's reps, and only a rep of it past the allowance re-makes the
+choice, the headroom being the choice's test and not the acceptance's.
+Rejected: every rep within the line
+alone, which lands the choice at the edge, where any further rep can flip it;
+a margin stated apart from the readings. It is `pgdt`'s alone, an embedder's
 allocator being its own (D13), and the manual names the override where it
 describes `--memory`, which an operator setting it changes. No library change suiting both allocators reaches it: the view
 builder's blocks leave with their batch for DataFusion to free, a

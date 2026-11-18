@@ -1,6 +1,7 @@
 # P33.32 notes — mimalloc's purge delay priced
 
-**100 ms, the cheapest delay that holds.** The slice landed the two figures
+**100 ms, chosen as the cheapest delay holding every rep, holds no longer**
+under the spec's rule as amended ("The choice"). The slice landed the two figures
 that price the delay, then took them and 33.7's query run at each delay from a
 later commit, a figure being taken from a commit and never from a tree carrying
 its own apparatus (`measurements.md`, "A figure may be published outside the
@@ -83,10 +84,11 @@ cheapest that holds, its cost stated.
   times its worst margin, so a further rep past the line needs nothing to
   change. That is no reason for 10 ms, a margin the rule does not state
   demanded of one arbitrary run at two more resolved rows on every release.
-  33.7's re-take at the new default joins the evidence, three reps as both
-  sittings took, the count stated in its `run.sh` before it runs and every rep
-  counted: a rep past the line means 100 ms no longer holds in every rep, and
-  the grid is read below it (below).
+  33.7's re-take at the new default put one rep of three past the line, and
+  the spec's rule now asks a holding delay for headroom at least its reps'
+  spread, the reps pooled (the spec's "What a held line costs"): 100 ms's nine
+  span 88,504 KiB with one past the line, so it no longer holds and the choice
+  is re-made.
 - **What a user's run keeps is the margin's, not the delay's.** The query run
   holds past `margin_allowance`'s predicted resident at every delay, the zero
   one included, so no delay meets `MEMORY_MARGIN_PERCENT` on it; that excess
@@ -131,12 +133,13 @@ the maintainer (STATUS's "Decisions worth another look", 2026-11-17).
   round reads candidates above 100 ms on the query run by hand first, adds the
   one it keeps to `PURGE_DELAY_LEGS` in a commit, and re-takes both figures
   from it before the choice, so every table names each candidate.
-- **Below 100 ms the same rule, mirrored**, should 100 ms stop holding a rep:
-  a value between 10 and 100 ms is wanted where 10 ms resolves a cost 100 ms
-  does not, which today's figure shows on two rows. Candidates between them
-  are read on the query run by hand first, the one kept added to
+- **Below 100 ms the same rule, mirrored**, 100 ms holding no longer: a value
+  between 10 and 100 ms is wanted where 10 ms resolves a cost 100 ms does not,
+  which today's figure shows on two rows. Candidates between them are read on
+  the query run by hand first, six reps each over two interleaved sittings,
+  candidates and count fixed in `run.sh` before it runs, the one kept added to
   `PURGE_DELAY_LEGS` and both figures re-taken before the choice, rather than
-  falling to 10 ms, the grid's next leg rather than the rule's answer.
+  falling to 10 ms, the grid's next leg rather than the rule's answer (33.32.1).
 - **The parallel rows are where a positive delay's cost shows first**, frees
   crossing threads and purges serialized, and cost minutes of the figure's
   quarter hour; dropping them would hide the one outcome that refines the grid.
