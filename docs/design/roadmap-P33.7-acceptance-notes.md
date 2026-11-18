@@ -70,6 +70,27 @@ code.
   2,090,480 KiB against the 2,097,152 stated. 100 ms stays, chosen on
   throughput, and what it keeps is billed (the spec's "What a held line
   costs"), so the query run, the figure and the strict run wait on 33.35.
+- **Under 33.35's bill 2 GiB carves two readers, and nothing waits by the
+  cut.** Taken at `43e77f42`, six reps fixed in `run.sh`
+  (`runs/p33.7-query-billed-20261118/`, `readings.txt`): `input_partitions=2`,
+  each exit 0, no refusal, the unlimited run's rows, every peak under the
+  2,097,152 KiB stated. But the cut falls about 2.61 GB into the block, before
+  the whole cluster, so its lines are one reader's, read one after another.
+  The bill costs 400 MiB of allowance, so 2 GiB carves as an unbilled
+  1648 MiB would, 6 MiB short of three readers' edge (33.34's 1654 MiB);
+  billed at its unrounded 273 MiB it would have carved four.
+- **So the run is read at eight readers**, the smallest whole MiB whose
+  `EXPLAIN` carves eight, about 2387 MiB by 33.34's edge plus the bill's
+  400 MiB. Placed from the survey (`runs/datanommer-survey/long-lines.tsv`),
+  the block holds ten lines over 16 MiB: a 110 and a 55 MiB line near its
+  start, and the cluster of eight. The cut puts the two 440 MiB lines in
+  different pieces only at four, seven and eight readers. At four, by byte
+  progress, the later piece gives up its 440 MiB line before the earlier
+  reaches the other, so a 440 waits on a 220. At eight, three pieces reach a
+  220 and both 440s within a third of a gigabyte, together charging about
+  2203 MiB against a room of one line's charge and less than a term. Those
+  charges sit under the allowance, which is why the spec compares them with
+  the room, not with `--memory` (its "How it is shown").
 - **Why that `--memory`**: the read's line charge is its longest line,
   462,157,089 bytes, at the plan's factor of one, 924,314,178 bytes (D160),
   which `Arrangement::resolve` takes off the margin's ceiling before solving

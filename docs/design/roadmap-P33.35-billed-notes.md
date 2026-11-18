@@ -54,8 +54,9 @@ taken.
 
 ## What 33.7 inherits
 
-- **The query run at 2 GiB under this tree's build**, its count read off
-  `EXPLAIN`; two readers is still "two or more", as the spec asks.
+- **The query run under this tree's build**, its count read off `EXPLAIN`.
+  At 2 GiB that is two readers, which leave the block's cluster one reader's,
+  so the run is read at eight (the spec's "How it is shown"; 33.7's notes).
 - **`long_line_allowance` adds nothing for the bill.** It sizes
   `long-line-resident`'s allowance so that it never binds on the lines, and
   the bill comes off the room those lines draw from. The re-take checks

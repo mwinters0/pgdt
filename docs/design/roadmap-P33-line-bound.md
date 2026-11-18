@@ -477,14 +477,20 @@ under a stated `--memory` below its longest line, flat and never waiting on a
 line, holding none, its long field a `text` column a parse streams — below
 that line the reserve leaves the reference dump one reader, so its readers
 and statistics are the allowance's, not the line's; and a query whose batch reads its long field under a `--memory`
-carving two readers or more below what the lines its clusters hold at once
-charge, so its arrangement rather than its timing makes readers wait and give
-up their lines, read as not refused, its peak resident within that `--memory`
-and its rows an unlimited run's, the one reading of the ledger over a real
-dump. **That query is `pgdt sql` over the one block holding the dump's longest
-line, under `SET pgdump.memory`**, so a block's cluster is cut across readers.
-Rejected: a `--memory` only below what its clusters hold at once, which may
-carve one reader, where nothing waits or parks; a whole-table read, whose
+carving readers whose cut puts a cluster's longest lines in different pieces,
+each reached early in its piece, so the lines held at once charge past the
+ledger's room and its arrangement rather than its timing makes readers wait and
+give up their lines, read as not refused, its peak resident within that
+`--memory` and its rows an unlimited run's, the one reading of the ledger over
+a real dump; that `--memory` is the smallest whole MiB whose `EXPLAIN` carves
+its count, so the room is that count's tightest. **That query is `pgdt sql`
+over the one block holding the dump's longest line, under `SET pgdump.memory`**,
+so a block's cluster is cut across readers. Rejected: lines past the room
+alone, which may carve one reader, where nothing waits or parks; a `--memory`
+below what the lines held at once charge, which counts what the allowance holds
+beside the room as room, a bill beside the line raising every count's allowance
+past those charges while the room stays one line's; a count whose cut leaves
+the cluster's longest lines in one piece, where they meet only by timing; a whole-table read, whose
 sub-streams take a block's pieces contiguously, so a cluster falls to one
 reader and its lines meet only by timing; `pgdt query`, whose in-order merge
 reads one sub-stream at a time past its first round (`KD57`); a count of waits and parks,
