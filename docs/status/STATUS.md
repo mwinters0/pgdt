@@ -174,18 +174,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **What the allocator retains comes off the floor (33.35).** The call:
-  `ArrangementRequest::retained` comes off what one reader is left of a line,
-  as the statistics and other scans' lines do, rather than staying on it as a
-  pool's grant does, so every `pgdt` run with an allowance refuses a long line
-  `RETAINED_BOUND` sooner: by arithmetic the reference dump's longest line now
-  needs about 1.7 GiB of `--memory` where 33.34 read it at 1384 MiB. Why: the
-  spec's "The floor is one reader" takes off what stays resident beside the
-  line, which the retention is, and D161's reason, a holding ignored at the
-  floor being an OOM kill, holds for it; the grant is excluded as no holding.
-  Reconsidering it leaves the retention on the floor (`beside_the_line`
-  without `retained`), refusing later and letting a run at the floor overrun
-  by up to the bound; D165's `Rejected` and `arrangement/tests.rs`' floor test
-  move with it.
-

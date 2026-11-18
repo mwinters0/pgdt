@@ -154,12 +154,12 @@ another delay's speed outweighs what it keeps; a mimalloc-only gate failure no l
 Evidence: `allocator`, `purge-delay`, `purge-delay-resident`.
 
 ### D165 What the allocator keeps of what it frees is one bound the binary states, held beside every arrangement
-`pgdt` states what mimalloc keeps under its purge delay (`RETAINED_BOUND`) as `ArrangementRequest::retained` on every
-pass, and `pgdt sql` as `ScanBudget::retaining`; an embedder states its allocator's, or none. It comes off the margin's
-ceiling, off the ledger's room, never a statistics draw an account replaces, and off the floor as beside a line. It is
-read off a grid of reader counts as `MEMORY_UNPOOLED_BOUND` is (D3), that bound's smallest step covering the largest
-median the delay keeps over a zero delay's, the worst rep the margin's. Why: the allocator is the binary's (D13), and
-what it keeps moves with the cut, not the count. Rejected: a term per reader; the count one run's allowance carves; a
-library constant; the margin, which the run overruns; off the count alone, as a grant, a holding ignored at the floor
-being an OOM kill (D161). Reopens: a workload keeping more; P23 re-fitting `MEMORY_UNPOOLED_BOUND` net of it.
-Code: `alloc.rs`. Evidence: `runs/p33.34-delay-readers-20261118/`, `arrangement/tests.rs`.
+What mimalloc keeps under `pgdt`'s purge delay is one bound the binary states (`RETAINED_BOUND`); an embedder states its
+allocator's, or none. It comes off the margin's ceiling, the ledger's room, never a draw an account replaces, and the
+floor. It is read off a grid of reader counts as `MEMORY_UNPOOLED_BOUND` is (D3). Why: the allocator is the binary's
+(D13); what it keeps moves with the cut, not the count. Rejected: a term per reader; the count one run's allowance
+carves; a library constant; the margin, which the run overruns; off the count alone, as a grant, a holding ignored at
+the floor being an OOM kill (D161); a floor term at one reader's, a parked floor keeping what its readers freed.
+Reopens: a workload keeping more; a floor run at the shipped delay, carved or parked, no repartition, keeping well under
+it; P23 re-fitting `MEMORY_UNPOOLED_BOUND` and `MEMORY_RESERVE` net of it. Code: `alloc.rs`,
+`ArrangementRequest::retained`. Evidence: `runs/p33.34-delay-readers-20261118/`, `arrangement/tests.rs`.

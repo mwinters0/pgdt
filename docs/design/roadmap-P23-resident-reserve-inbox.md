@@ -130,7 +130,11 @@ is a term the binary states and bills, `pgdt`'s `RETAINED_BOUND`
 ([`decisions.md`](decisions.md), "D165"), so a bound re-fit here reads what is
 left past it: the remainder net of that stated term, which is part of the
 predicted resident beside the charge, and never the term again under "the
-allocators' per-thread retention" the bound's rustdoc names. `measure.py`'s
+allocators' per-thread retention" the bound's rustdoc names. The floor takes
+off `MEMORY_RESERVE` rather than this bound ([`decisions.md`](decisions.md),
+"D161"), and the reserve was last
+read at mimalloc's own delay, so its re-take is read net of the term too.
+`measure.py`'s
 `charge_model_problem` still reads a cell's remainder against the bound with
 that term in it. Nor is a run's excess where its scan
 exposes fewer partitions than `target_partitions` the bound's to cover: that is
