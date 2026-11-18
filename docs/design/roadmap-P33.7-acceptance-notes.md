@@ -69,7 +69,7 @@ code.
   refusal, the unlimited run's rows, peaking at 2,081,420, 2,104,304 and
   2,090,480 KiB against the 2,097,152 stated. By the spec's rule as amended
   ("What a held line costs") 100 ms no longer holds, so the figure and the
-  strict run wait on the delay 33.32.1 chooses and 33.33.1 sets.
+  strict run wait on the delay 33.32.2 chooses and 33.33.1 sets.
 - **Why that `--memory`**: the read's line charge is its longest line,
   462,157,089 bytes, at the plan's factor of one, 924,314,178 bytes (D160),
   which `Arrangement::resolve` takes off the margin's ceiling before solving

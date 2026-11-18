@@ -4550,8 +4550,9 @@ over escaped text took 3.83–4.13 s and a strict one 6.74–6.85 s, against
 "What a held line costs"): the wall clock of the shapes below, what each delay
 leaves resident over `long-line-resident`'s legs, and 33.7's query run on the
 reference dump, which is taken by hand and never by `measure.py`
-(`runs/p33.32-query-delays-20261117-0959/` and
-`runs/p33.32-query-above-100-20261117-1334/`, each with its `readings.txt`).
+(`runs/p33.32-query-delays-20261117-0959/`,
+`runs/p33.32-query-above-100-20261117-1334/` and
+`runs/p33.32.1-query-grid-20261118-0341/`, each with its `readings.txt`).
 Both figures were taken in one detached job from `7860c5fb`, logged at
 `runs/p33.32-figures-20261117-1011/log`.
 
