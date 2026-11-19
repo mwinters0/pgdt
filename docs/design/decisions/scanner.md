@@ -48,9 +48,10 @@ its row (a later field keeps the largest draw); holding the chunk while waiting.
 Every read loop holds a line, its terminator included, to `LINE_BOUND` (I71), measured before a read is drawn for or
 absorbed: to the LF ending the line, or the read's end, which nothing shortens, so a line past it is refused at its
 start, never held past it; a read is clamped to the bound, so a line one read holds is within it. A batch holding an
-offset-bounded column flushes at `OFFSET_CUT_BYTES` whatever its caps. Rejected: a setting (a cap below the bound
-refuses a valid line for memory, which `--memory` governs); the check where a chunk's passes end (exact only to a chunk,
-after the row is handed out); a cut tested before every row (code each row runs, for a cut no default batch reaches).
+offset-bounded column flushes at `OFFSET_CUT_BYTES`, a cap at or below it, its text within its span, flushing first.
+Rejected: a setting (a cap below the bound refuses a valid line for memory, which `--memory` governs); the check where a
+chunk's passes end (exact only to a chunk, after the row is handed out); a cut tested before every row, or installed
+under every cap (code each row runs, for a cut no default batch reaches).
 Code: `ChunkCarry::passes_bound`, `ReadOptions::line_bound`, `with_line_bound`, `OFFSET_CUT_BYTES`. Evidence: both
 crates' `line_bound.rs`.
 

@@ -45,10 +45,13 @@ use crate::options::QueryOptions;
 /// count or a child's bytes being no more than the text it is read from
 /// (`docs/design/decisions.md`, "D164").
 ///
-/// The cut holds whatever `QueryOptions` say, since `max_source_span` and
-/// `max_bytes` are a caller's to lift: making the span cap mandatory under a
-/// ceiling would have a knob that bounds pinning bound correctness too, and
-/// leaving Arrow's panic to whoever lifts the cap is no refusal at all.
+/// **It is installed only where no cap already implies it**: a batch's text
+/// is within its span (`RowBatcher`'s `bytes_in_batch`), so a `max_bytes` or
+/// `max_source_span` at or below the cut flushes first, and a default batch
+/// tests no byte cap. Where a caller lifted both, the cut holds: making the
+/// span cap mandatory under a ceiling would have a knob that bounds pinning
+/// bound correctness too, and leaving Arrow's panic to whoever lifts the cap
+/// is no refusal at all.
 pub(crate) const OFFSET_CUT_BYTES: usize = i32::MAX as usize + 1 - LINE_BOUND;
 
 /// Whether an Arrow type holds `i32` offsets into a buffer a batch grows
@@ -81,6 +84,11 @@ pub(crate) struct RowBatcher {
     declared_types: Vec<Option<String>>,
     columns: Vec<ColumnBuilder>,
     rows_in_batch: usize,
+    /// The bytes of the projected fields of the in-flight batch's held rows.
+    /// **Never more than its `span`**: each field lies inside its row, each
+    /// row inside the span, and rows arrive in file order without overlapping
+    /// ([`Self::push_row`] asserts the bound), which is what lets a span cap
+    /// stand in for [`OFFSET_CUT_BYTES`].
     bytes_in_batch: usize,
     /// The source byte span the in-flight batch covers: `Some((start, end))`
     /// once a row has been pushed, where `start` is the first pushed row's
@@ -133,7 +141,8 @@ impl RowBatcher {
     /// where `options` bounds its bytes or its span first, and around a
     /// nested value longer than `long_field` ([`Self::cuts_before`]); one
     /// holding an offset-bounded column at [`OFFSET_CUT_BYTES`] of its text
-    /// at the latest, whatever `options` say.
+    /// at the latest, a cut installed as `max_bytes` only where neither cap
+    /// in `options` is at or below it already.
     pub(crate) fn new(
         resolved: &ResolvedSchema,
         table: String,
@@ -159,9 +168,13 @@ impl RowBatcher {
             .collect();
         let walks = columns.iter().any(is_walked);
         let mut options = options;
-        if resolved.columns().iter().any(|column| offset_bounded(column.data_type())) {
-            let cut = options.max_bytes.map_or(OFFSET_CUT_BYTES, |max| max.min(OFFSET_CUT_BYTES));
-            options.max_bytes = Some(cut);
+        let implied = |cap: Option<usize>| cap.is_some_and(|cap| cap <= OFFSET_CUT_BYTES);
+        if !implied(options.max_bytes)
+            && !implied(options.max_source_span)
+            && resolved.columns().iter().any(|column| offset_bounded(column.data_type()))
+        {
+            // A cap at or below the cut flushes first (`docs/design/decisions.md`, "D164").
+            options.max_bytes = Some(OFFSET_CUT_BYTES);
         }
         let plans =
             resolved.columns().iter().map(|c| (c.data_type().clone(), c.plan().clone())).collect();
@@ -319,6 +332,10 @@ impl RowBatcher {
             pos = end + 1;
         }
         self.count_row(row_offset, row_offset + raw.len() as u64);
+        debug_assert!(
+            self.span.is_some_and(|(start, end)| self.bytes_in_batch as u64 <= end - start),
+            "a batch's text outgrew its span"
+        );
         Ok(())
     }
 
@@ -359,7 +376,8 @@ impl RowBatcher {
         Ok(())
     }
 
-    /// Take a row from `row_offset` to `row_end` into the batch and its span.
+    /// Take a row from `row_offset` to `row_end` into the batch and its span,
+    /// which then holds every byte [`Self::bytes_in_batch`] counts.
     #[inline]
     fn count_row(&mut self, row_offset: u64, row_end: u64) {
         self.rows_in_batch += 1;

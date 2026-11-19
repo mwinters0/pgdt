@@ -283,12 +283,32 @@ fn an_offset_bounded_batch_is_cut_before_its_offsets_overflow() {
         batcher.push_row(0, 0, RawRow::unchecked(b"ab"), &mut split, &mut chunks).unwrap();
         batcher.bytes_in_batch = OFFSET_CUT_BYTES - 2;
         assert!(!batcher.should_flush());
-        batcher.push_row(0, 3, RawRow::unchecked(b"ab"), &mut split, &mut chunks).unwrap();
+        // Placed past the text counted above, which a batch's span holds.
+        let offset = OFFSET_CUT_BYTES as u64;
+        batcher.push_row(0, offset, RawRow::unchecked(b"ab"), &mut split, &mut chunks).unwrap();
         assert_eq!(batcher.should_flush(), cut, "{:?}", batcher.schema);
     }
     let capped = QueryOptions { max_bytes: Some(4), ..lifted };
     let batcher = one_column_batcher_fed_by(capped, vec![Some(0)], DataType::Binary);
     assert_eq!(batcher.options.max_bytes, Some(4));
+}
+
+/// **The cut is installed only where no cap implies it**: a span cap at or
+/// below [`OFFSET_CUT_BYTES`] bounds a batch's text already, so a default
+/// batcher over a `bytea` column tests no byte cap, and one whose span cap
+/// is past the cut takes it.
+#[test]
+fn a_span_cap_at_or_below_the_cut_installs_none() {
+    let installed = |options: QueryOptions| {
+        one_column_batcher_fed_by(options, vec![Some(0)], DataType::Binary).options.max_bytes
+    };
+    assert!(QueryOptions::default().max_source_span.is_some_and(|span| span <= OFFSET_CUT_BYTES));
+    assert_eq!(installed(QueryOptions::default()), None);
+    let span = |span| QueryOptions { max_source_span: Some(span), ..Default::default() };
+    assert_eq!(installed(span(OFFSET_CUT_BYTES)), None);
+    assert_eq!(installed(span(OFFSET_CUT_BYTES + 1)), Some(OFFSET_CUT_BYTES));
+    let both = QueryOptions { max_bytes: Some(usize::MAX), ..span(OFFSET_CUT_BYTES + 1) };
+    assert_eq!(installed(both), Some(OFFSET_CUT_BYTES));
 }
 
 /// A [`RowBatcher`] over one nullable nested column of `data_type`, read by
@@ -453,10 +473,12 @@ fn a_tested_nested_field_is_null_whole_as_walked() {
         (b"{2024-01-01}", Some(1)),
         (b"\\N", None),
     ];
+    let mut offset = 0;
     for (field, _) in fields {
         batcher
-            .push_row(0, 0, RawRow::unchecked(field), &mut RowSplit::default(), &mut chunks)
+            .push_row(0, offset, RawRow::unchecked(field), &mut RowSplit::default(), &mut chunks)
             .unwrap();
+        offset += field.len() as u64 + 1;
     }
     let batch = batcher.flush().unwrap();
     let column = batch.column(0).as_list::<i32>();
