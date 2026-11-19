@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, SystemTime};
 
-use arrow::array::RecordBatch;
+use arrow::array::{ArrayRef, AsArray, RecordBatch};
 use arrow::compute::concat_batches;
 use bytes::Bytes;
 use futures::StreamExt;
@@ -596,13 +596,30 @@ async fn a_query_parking_its_sub_streams_answers_as_on_an_unlimited_ledger() {
 }
 
 /// A dump held in memory whose reads from `gate` on wait until it is
-/// opened, stating that each of its workers holds [`PARKED_TERM`] and
-/// counting the readers parked on it.
+/// opened, stating that each of its workers holds [`PARKED_TERM`], counting
+/// the readers parked on it and the reads it handed out still held.
 struct Gated {
     bytes: Bytes,
     gate: u64,
     open: AtomicBool,
     parked: ParkCount,
+    live: Arc<AtomicIsize>,
+}
+
+/// One read [`Gated`] handed out, its own copy, counted until its last
+/// reference drops.
+struct Live(Vec<u8>, Arc<AtomicIsize>);
+
+impl AsRef<[u8]> for Live {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl Drop for Live {
+    fn drop(&mut self) {
+        self.1.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl ByteRangeSource for Gated {
@@ -612,7 +629,6 @@ impl ByteRangeSource for Gated {
         len: usize,
     ) -> Pin<Box<dyn Future<Output = pgdt_core::Result<Bytes>> + Send + '_>> {
         let at = offset as usize;
-        let bytes = self.bytes.slice(at..at + len);
         let gated = offset >= self.gate;
         Box::pin(async move {
             std::future::poll_fn(|_| match !gated || self.open.load(Ordering::SeqCst) {
@@ -620,7 +636,9 @@ impl ByteRangeSource for Gated {
                 false => Poll::Pending,
             })
             .await;
-            Ok(bytes)
+            self.live.fetch_add(1, Ordering::SeqCst);
+            let read = Live(self.bytes[at..at + len].to_vec(), Arc::clone(&self.live));
+            Ok(Bytes::from_owner(read))
         })
     }
     fn extent(&self) -> Pin<Box<dyn Future<Output = pgdt_core::Result<Extent>> + Send + '_>> {
@@ -640,66 +658,104 @@ impl ByteRangeSource for Gated {
     }
 }
 
-/// **A sub-stream asked to park emits the rows its batch holds first, and
-/// parks holding no read** (`docs/design/decisions.md`, "D162", "D163"): a
-/// replay holding rows of a batch when a line alone past a ledger with no
-/// room asks it to park yields them, short of its batch size, then parks at
-/// its next read; the line is admitted once it has, and the replay resumes
-/// as the line's draw is returned, answering what it answers without limit.
-#[tokio::test]
-async fn a_sub_stream_asked_to_park_emits_its_batch_first() {
-    let rows: String = (1..=40).map(|row| format!("{row}\n")).collect();
-    let before = "CREATE TABLE public.t (\n    a integer\n);\n\nCOPY public.t (a) FROM stdin;\n";
+/// Rows a parking test's batches are cut at.
+const PARKING_BATCH: usize = 16;
+
+/// **A sub-stream asked to park keeps its batch, emitting nothing for the
+/// park, and pins no read chunk while parked** (`docs/design/decisions.md`,
+/// "D162", "D163"): forty rows of `public.t (a <declared>)`, the `n`th
+/// holding `value(n)`, read in `chunk`-byte reads at
+/// [`PARKING_BATCH`] rows a batch. The replay holds rows of its second batch
+/// when a line alone past a ledger with no room asks it to park; it parks at
+/// its next read without yielding, holding no read but the one before its
+/// park (`KD172`), the line is admitted once it has, and the replay resumes as
+/// the line's draw is returned, its batches those it yields without limit.
+async fn parks_keeping_its_batch(declared: &str, value: fn(usize) -> String, chunk: usize) {
+    let rows: String = (1..=40).map(|row| format!("{}\n", value(row))).collect();
+    let before =
+        format!("CREATE TABLE public.t (\n    a {declared}\n);\n\nCOPY public.t (a) FROM stdin;\n");
     let file = format!("{before}{rows}\\.\n\n");
-    let gate = (before.len() + file[before.len()..].find("20\n").unwrap()) as u64;
+    let gate =
+        (before.len() + file[before.len()..].find(&format!("{}\n", value(24))).unwrap()) as u64;
     let source = Arc::new(Gated {
         bytes: Bytes::from(file),
         gate,
         open: AtomicBool::new(true),
         parked: ParkCount::default(),
+        live: Arc::default(),
     });
     let shared = || -> Arc<dyn ByteRangeSource> { Arc::clone(&source) as _ };
-    let table = settled(shared(), "public.t", 4, &arranged(1)).await;
+    let table = settled(shared(), "public.t", chunk, &arranged(1)).await;
     let every = QueryOptions::default();
-    let unlimited = table.plan(reads(4), every.clone(), &arranged(1)).unwrap();
-    let want: Vec<_> = unlimited.stream(0, 8192).map(Result::unwrap).collect().await;
-    let want = joined(&want);
-    assert_eq!(want.num_rows(), 40);
+    let unlimited = table.plan(reads(chunk), every.clone(), &arranged(1)).unwrap();
+    let want: Vec<_> = unlimited.stream(0, PARKING_BATCH).map(Result::unwrap).collect().await;
+    assert_eq!(want.iter().map(RecordBatch::num_rows).collect::<Vec<_>>(), [16, 16, 8]);
+    let reads_held = || source.live.load(Ordering::SeqCst);
+    let before_the_stream = reads_held();
 
     let arrangement = parking(source.as_ref(), 2);
     let ledger = arrangement.ledger();
-    let plan = table.plan(reads(4), every, &arrangement).unwrap();
+    let plan = table.plan(reads(chunk), every, &arrangement).unwrap();
     assert_eq!(plan.len(), 1);
     source.open.store(false, Ordering::SeqCst);
-    let mut stream = plan.stream(0, 8192);
+    let mut stream = plan.stream(0, PARKING_BATCH);
     let mut cx = Context::from_waker(Waker::noop());
-    assert!(stream.poll_next_unpin(&mut cx).is_pending(), "it waits at the gate");
+    let mut batches = Vec::new();
+    while let Poll::Ready(batch) = stream.poll_next_unpin(&mut cx) {
+        batches.push(owned(batch.expect("it waits at the gate").unwrap()));
+    }
+    assert_eq!(batches.len(), 1, "it waits at the gate holding rows of its second batch");
 
     let mut line = ledger.holder();
-    let first = {
+    {
         let mut draw = std::pin::pin!(line.draw(0, 1));
         assert!(draw.as_mut().poll(&mut cx).is_pending(), "the line waits on the park");
         source.open.store(true, Ordering::SeqCst);
-        let Poll::Ready(Some(first)) = stream.poll_next_unpin(&mut cx) else {
-            panic!("the batch is emitted before the park");
-        };
-        let first = first.unwrap();
-        assert!((1..40).contains(&first.num_rows()), "cut short: {}", first.num_rows());
-        assert_eq!(ledger.parked(), 0, "it parks at its next read");
-        assert!(stream.poll_next_unpin(&mut cx).is_pending(), "parked");
+        assert!(stream.poll_next_unpin(&mut cx).is_pending(), "it parks, yielding nothing");
         assert_eq!((ledger.parked(), source.parked.now.load(Ordering::SeqCst)), (1, 1));
+        assert!(
+            reads_held() - before_the_stream <= 1,
+            "parked, it holds no read but the one before its park: {}",
+            reads_held() - before_the_stream,
+        );
         assert_eq!(draw.poll(&mut cx), Poll::Ready(Admission::Held));
-        first
-    };
+    }
     line.release();
-    let mut batches = vec![first];
     loop {
         match stream.poll_next_unpin(&mut cx) {
-            Poll::Ready(Some(batch)) => batches.push(batch.unwrap()),
+            Poll::Ready(Some(batch)) => batches.push(owned(batch.unwrap())),
             Poll::Ready(None) => break,
             Poll::Pending => panic!("the released line let it go"),
         }
     }
-    assert_eq!(joined(&batches), want);
+    assert_eq!(batches, want, "cut where an unlimited ledger cuts");
     assert_eq!((ledger.parked(), source.parked.now.load(Ordering::SeqCst)), (0, 0));
+}
+
+/// `batch` holding none of the reads its views point into, as a test keeping
+/// it must, or the reads it holds are counted against the stream (`KD171`).
+fn owned(batch: RecordBatch) -> RecordBatch {
+    let columns = batch
+        .columns()
+        .iter()
+        .map(|column| match column.as_string_view_opt() {
+            Some(text) => Arc::new(text.gc()) as ArrayRef,
+            None => Arc::clone(column),
+        })
+        .collect();
+    RecordBatch::try_new(batch.schema(), columns).unwrap()
+}
+
+/// [`parks_keeping_its_batch`] over integers, which take no view.
+#[tokio::test]
+async fn a_sub_stream_asked_to_park_keeps_its_batch() {
+    parks_keeping_its_batch("integer", |row| row.to_string(), 4).await;
+}
+
+/// [`parks_keeping_its_batch`] over text past a view's inline twelve bytes,
+/// read in chunks holding several rows whole, so its batch views the reads
+/// it parks between and re-owns them.
+#[tokio::test]
+async fn a_sub_stream_asked_to_park_re_owns_its_views() {
+    parks_keeping_its_batch("text", |row| format!("the value of row {row:02}"), 64).await;
 }

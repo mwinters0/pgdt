@@ -35,7 +35,7 @@ use pgdt_core::{Error, LINE_BOUND, Result};
 use pgdt_model::PostgresInvalidValues;
 
 use self::builder::{append_null, append_walked, is_walked, text_refused};
-use self::chunks::push_utf8view_field;
+use self::chunks::{own_views, push_utf8view_field};
 use crate::options::QueryOptions;
 
 /// **The most a batch holding an offset-bounded column takes in before a row
@@ -119,6 +119,9 @@ pub(crate) struct RowBatcher {
     /// after its row and no later row grows its reserved builders, or a line
     /// its replay drew for ([`Self::holds_drawn_line`]).
     holds_long: bool,
+    /// Parallel to `columns`: whether each holds a retained read chunk its
+    /// views point into, which [`Self::own_views`] gives up.
+    pinning: Vec<bool>,
 }
 
 impl RowBatcher {
@@ -180,6 +183,7 @@ impl RowBatcher {
             walks,
             long_field,
             holds_long: false,
+            pinning: vec![false; resolved.columns().len()],
         }
     }
 
@@ -440,7 +444,7 @@ impl RowBatcher {
         let decoded = row.decode(field)?;
         // Disjoint-field borrow: `columns[col]` is mutated below while
         // `schema`/`table` are only ever read, on the (rare) error path.
-        let Self { schema, table, columns, unrepresentable, not_null, options, .. } = self;
+        let Self { schema, table, columns, unrepresentable, not_null, options, pinning, .. } = self;
         let builder = &mut columns[col];
         let Some(text) = decoded else {
             if not_null[col] && options.postgres_invalid_values != PostgresInvalidValues::Ignore {
@@ -465,7 +469,7 @@ impl RowBatcher {
         if let ColumnBuilder::Utf8View(b, length) = builder
             && !text_refused(&text, *length, options.postgres_invalid_values)
         {
-            push_utf8view_field(b, col, field_offset, field_len, text, chunks);
+            pinning[col] |= push_utf8view_field(b, col, field_offset, field_len, text, chunks);
             return Ok(());
         }
         append_typed(builder, &text, options.postgres_invalid_values)
@@ -485,6 +489,26 @@ impl RowBatcher {
         }
     }
 
+    /// **Give up every read chunk the in-flight batch's views point into**,
+    /// its rows kept: each text column holding one re-owns its values
+    /// ([`own_views`]) and the block indices `chunks` cached go, so a replay
+    /// parking with the batch pins no chunk through it
+    /// (`docs/design/decisions.md`, "D163").
+    pub(crate) fn own_views(&mut self, chunks: &mut RetainedChunks) {
+        let mut owned = false;
+        for (column, pinning) in self.columns.iter_mut().zip(&mut self.pinning) {
+            if let ColumnBuilder::Utf8View(builder, _) = column
+                && std::mem::take(pinning)
+            {
+                own_views(builder);
+                owned = true;
+            }
+        }
+        if owned {
+            chunks.invalidate_block_cache();
+        }
+    }
+
     /// Finish the in-flight batch. The row count is passed explicitly rather
     /// than inferred from the arrays, since a zero-column projection has none
     /// to infer it from; stating it unconditionally keeps one path for both
@@ -496,6 +520,7 @@ impl RowBatcher {
         self.bytes_in_batch = 0;
         self.span = None;
         self.holds_long = false;
+        self.pinning.fill(false);
         let arrays: Vec<ArrayRef> = self.columns.iter_mut().map(finish_column).collect();
         RecordBatch::try_new_with_options(
             self.schema.clone(),

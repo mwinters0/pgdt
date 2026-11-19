@@ -84,12 +84,12 @@ per-worker term bills. Code: `DecodeBudget::hint_parked`, `BlockCache::give_back
 A reader stands before absorbing a read, a sub-stream aside as it yields. Where lines and statistics hold past the room,
 the standing readers after the earliest busy line holding and awaiting no line park, latest first, as few as the carve's
 fall covers (`Terms`); a line alone waiting past it is admitted once they have parked or left. They park dropping the
-read in hand (D162, `KD172`), a sub-stream's batch emitted first, resuming as the excess falls. Why: the floor is the
-room and what others free (D161); a park gives back at once, a give-up at its holder's next draw. Rejected: admitting it
-first; parking only behind a line alone; asking a reader whose line waits, which waits on it, or one at a yield,
-unpolled under a merge; parking with a batch, its views pinning what no carve states (`KD23`); never asking one holding
-rows, cut alike each run but passing the room; crediting an unscaled term (`KD21`). Code: `ledger/park.rs`,
-`draw_absorbing`, `replay`. Evidence: `ledger/tests.rs`, `tests/ledger.rs`.
+read in hand (D162, `KD172`), a sub-stream with its batch, views re-owned, resuming as the excess falls. Why: the floor
+is the room and what others free (D161); a park gives back at once, a give-up at its holder's next draw. Rejected:
+admitting it first; parking only behind a line alone; asking a reader whose line waits, which waits on it, or one at a
+yield, unpolled under a merge; emitting its batch, which a consumer may hold; keeping views no carve states (`KD23`);
+never asking one holding rows, admitting a line past the room; crediting an unscaled term (`KD21`). Code:
+`ledger/park.rs`, `draw_absorbing`, `replay`. Evidence: `ledger/tests.rs`, `tests/ledger.rs`.
 
 ### D4 A budget is solved against a source's cost, never divided by it
 `WorkerMemory` carries a per-worker term and a shared pool term (`affords`, `at`): the block pool's retention list is

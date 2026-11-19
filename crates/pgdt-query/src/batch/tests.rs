@@ -465,3 +465,61 @@ fn a_tested_nested_field_is_null_whole_as_walked() {
         assert_eq!(read, *length, "{}", String::from_utf8_lossy(field));
     }
 }
+
+/// **A batch owning its views holds no read chunk and keeps its rows**
+/// ([`RowBatcher::own_views`]): a text column viewing a retained chunk
+/// re-owns its values, so the chunk is freed once its read loop releases
+/// it, and the batch reads as it would have, a row pushed after it viewing a
+/// chunk afresh.
+#[test]
+fn a_batch_owning_its_views_holds_no_chunk_and_keeps_its_rows() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use bytes::Bytes;
+
+    /// A chunk's bytes, counting the chunks still held.
+    struct Counted(&'static [u8], Arc<AtomicUsize>);
+    impl AsRef<[u8]> for Counted {
+        fn as_ref(&self) -> &[u8] {
+            self.0
+        }
+    }
+    impl Drop for Counted {
+        fn drop(&mut self) {
+            self.1.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    let held = Arc::new(AtomicUsize::new(0));
+    let chunk = |bytes: &'static [u8]| {
+        held.fetch_add(1, Ordering::SeqCst);
+        Bytes::from_owner(Counted(bytes, Arc::clone(&held)))
+    };
+
+    let (first, second) = (b"a value past twelve bytes\nshort\n", b"another long value\n");
+    let mut batcher = one_column_batcher(QueryOptions::default());
+    let mut chunks = RetainedChunks::new();
+    let mut split = RowSplit::default();
+    chunks.retain(0, &chunk(first));
+    for (offset, row) in [(0, &first[..25]), (26, &first[26..31])] {
+        let row = RawRow::validated(std::str::from_utf8(row).unwrap());
+        split.restart();
+        batcher.push_row(0, offset, row, &mut split, &mut chunks).unwrap();
+    }
+    chunks.release_through(first.len() as u64);
+    assert_eq!(held.load(Ordering::SeqCst), 1, "the batch's views hold the chunk");
+    batcher.own_views(&mut chunks);
+    assert_eq!(held.load(Ordering::SeqCst), 0, "the batch holds no chunk");
+
+    chunks.retain(32, &chunk(second));
+    let row = RawRow::validated(std::str::from_utf8(&second[..18]).unwrap());
+    split.restart();
+    batcher.push_row(0, 32, row, &mut split, &mut chunks).unwrap();
+    chunks.release_through(32 + second.len() as u64);
+    assert_eq!(held.load(Ordering::SeqCst), 1, "a later row views its chunk");
+    let batch = batcher.flush().unwrap();
+    let want = ["a value past twelve bytes", "short", "another long value"];
+    assert_eq!(rendered(&batch), want.map(|value| Some(value.to_string())));
+    drop(batch);
+    assert_eq!(held.load(Ordering::SeqCst), 0);
+}

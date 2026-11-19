@@ -7,6 +7,7 @@
 use std::borrow::Cow;
 use std::collections::VecDeque;
 
+use arrow::array::Array;
 use arrow::array::builder::StringViewBuilder;
 use arrow::buffer::Buffer;
 use bytes::Bytes;
@@ -37,11 +38,20 @@ impl SourceChunk {
         (local_end <= self.buffer.len() as u64).then_some((local as u32, len as u32))
     }
 
-    fn block_for(&mut self, col: usize, builder: &mut StringViewBuilder) -> u32 {
+    /// The block `col`'s builder holds this chunk as, appending it where it
+    /// holds none, and whether it was appended here.
+    fn block_for(&mut self, col: usize, builder: &mut StringViewBuilder) -> (u32, bool) {
         if self.column_blocks.len() <= col {
             self.column_blocks.resize(col + 1, None);
         }
-        *self.column_blocks[col].get_or_insert_with(|| builder.append_block(self.buffer.clone()))
+        match self.column_blocks[col] {
+            Some(block) => (block, false),
+            None => {
+                let block = builder.append_block(self.buffer.clone());
+                self.column_blocks[col] = Some(block);
+                (block, true)
+            }
+        }
     }
 }
 
@@ -132,7 +142,8 @@ const OWN_BLOCK_PAST: usize = 2 << 20;
 /// in one place; a `Cow::Borrowed` result (no escapes present, already UTF-8
 /// checked) is what makes the field eligible for a zero-copy view, and an
 /// owned one past [`OWN_BLOCK_PAST`] becomes a block of its own — everything
-/// else is copied.
+/// else is copied. **Whether the column now holds a retained chunk it did
+/// not**, which [`own_views`] gives up.
 pub(super) fn push_utf8view_field(
     builder: &mut StringViewBuilder,
     col: usize,
@@ -140,7 +151,7 @@ pub(super) fn push_utf8view_field(
     field_len: usize,
     text: Cow<'_, str>,
     chunks: &mut RetainedChunks,
-) {
+) -> bool {
     match text {
         Cow::Owned(s) if s.len() > OWN_BLOCK_PAST => {
             let len = s.len();
@@ -151,8 +162,12 @@ pub(super) fn push_utf8view_field(
             unsafe {
                 builder.append_view_unchecked(block, 0, len as u32)
             };
+            false
         }
-        Cow::Owned(s) => builder.append_value(s),
+        Cow::Owned(s) => {
+            builder.append_value(s);
+            false
+        }
         Cow::Borrowed(s) => {
             let view = chunks
                 .chunks
@@ -160,7 +175,7 @@ pub(super) fn push_utf8view_field(
                 .find_map(|c| c.contains(field_offset, field_len).map(|coords| (c, coords)));
             match view {
                 Some((chunk, (local_offset, len))) => {
-                    let block = chunk.block_for(col, builder);
+                    let (block, appended) = chunk.block_for(col, builder);
                     // SAFETY: `contains` confirmed `local_offset..local_offset+len`
                     // is in bounds for `block`, and the `Borrowed` case above
                     // means the decode already validated this exact byte
@@ -173,12 +188,28 @@ pub(super) fn push_utf8view_field(
                     unsafe {
                         builder.append_view_unchecked(block, local_offset, len)
                     };
+                    appended
                 }
                 // No retained buffer holds the field whole: a read loop
                 // retains the carried line beside the chunk, so only a row
                 // pushed from bytes it never retained gets here.
-                None => builder.append_value(s),
+                None => {
+                    builder.append_value(s);
+                    false
+                }
             }
         }
     }
+}
+
+/// **Re-own a `Utf8View` column's values**, so it holds none of the read
+/// chunks its views pointed into: its values so far are copied, the bytes its
+/// views read alone, into a fresh builder that goes on as it would have. A
+/// block index [`RetainedChunks`] cached for it is then stale, which the
+/// caller clears ([`RetainedChunks::invalidate_block_cache`]).
+pub(super) fn own_views(builder: &mut StringViewBuilder) {
+    let held = builder.finish().gc();
+    let mut owned = StringViewBuilder::with_capacity(held.len());
+    owned.append_array(&held);
+    *builder = owned;
 }

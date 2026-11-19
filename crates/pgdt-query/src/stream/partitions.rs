@@ -74,9 +74,10 @@ use crate::summary::partition_orders;
 /// asked to give its line up, and hears that only when next polled, so one
 /// left unpolled mid-line keeps its draw and an earlier line waits on it.
 /// Where a line alone passes the room, the sub-streams reading later in the
-/// file are asked to park, each emitting the batch it holds rows of and then
-/// parking at its next read, holding only the read before it (`KD172`),
-/// until the lines and statistics past the room fall; one hears that only when polled, and the line waits on it only
+/// file are asked to park, each parking at its next read with the rows of
+/// its batch, their views re-owned, emitting nothing for it, and holding only
+/// the read before it (`KD172`), until the lines and statistics past the
+/// room fall; one hears that only when polled, and the line waits on it only
 /// while it reads (`docs/design/decisions.md`, "D163"). **One left unpolled
 /// at a batch it yielded draws nothing and is asked nothing**: each returns
 /// its draw and stands aside before it yields, so a caller holding back a

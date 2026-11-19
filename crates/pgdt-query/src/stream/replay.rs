@@ -68,12 +68,14 @@ use crate::prune::SortedStop;
 /// (`docs/design/decisions.md`, "D159").
 ///
 /// **Its reader parks where the ledger asks it to**, as a parse's does: it
-/// stands where it reads before absorbing each read, and one asked emits the
-/// batch it holds rows of, then parks at its next read, dropping that read
-/// (its last one it still holds, `KD172`), resuming as
-/// what passes the room falls, a draw returned or statistics freed; it stands aside
-/// before every yield, so a caller holding it back at a batch stalls no line
-/// (`docs/design/decisions.md`, "D163").
+/// stands where it reads before absorbing each read, and one asked parks
+/// there, dropping that read (its last one it still holds, `KD172`), and
+/// emits nothing for it: the batch it holds rows of is kept, its text
+/// columns' views into read chunks re-owned first
+/// ([`RowBatcher::own_views`]), so its batches are cut where an unlimited
+/// ledger's are. It resumes as what passes the room falls, a draw returned or
+/// statistics freed; it stands aside before every yield, so a caller holding
+/// it back at a batch stalls no line (`docs/design/decisions.md`, "D163").
 // upstream: UF5 -- a plan may hold a yielded batch, and its line's copy, unreserved.
 // deficiency: KD174 — the draw returned at the yield, a round-robin
 // repartition above the scan keeps the batch's decoded copy of the line in
@@ -107,9 +109,10 @@ pub(super) fn replay<'a>(
         // differently. **The replay loop could not grant a
         // wait** (`docs/design/decisions.md`, "D5"): a batch's
         // `StringViewBuilder` holds every chunk it has taken a `Utf8View` into
-        // until it flushes, so this loop can never be the task that frees one
-        // it waits on. Stated rather than left to the default, so whatever the
-        // mapping pass granted is un-stated on the same source.
+        // until it flushes or its reader parks, so this loop can never be the
+        // task that frees one it waits on. Stated rather than left to the
+        // default, so whatever the mapping pass granted is un-stated on the
+        // same source.
         announce_read_loop(source, read, plan.parallelism);
 
         let mut rows_emitted = resume.as_ref().map_or(0, |t| t.rows_emitted);
@@ -270,27 +273,15 @@ pub(super) fn replay<'a>(
                     }
                 }
                 // A reader asked to park parks holding no read
-                // (`docs/design/decisions.md`, "D162"): the rows its batch
-                // views are emitted first, and it parks at the read after.
+                // (`docs/design/decisions.md`, "D162"), and with its batch:
+                // the read chunks its views point into are given up first.
                 let parks = match active.as_mut() {
                     Some((_, _, batcher, _, _)) if !batcher.is_empty() => {
-                        if holder.stand(chunked.read_pos()) {
-                            let begins_at = batcher
-                                .batch_start()
-                                .unwrap_or_else(|| chunked.scanner().position());
-                            let batch = batcher.flush()?;
-                            chunks.invalidate_block_cache();
-                            rows_emitted += batch.num_rows() as u64;
-                            *shared.batch_offset.lock().unwrap() = begins_at;
-                            *shared.position.lock().unwrap() =
-                                snapshot(chunked.scanner(), &active, rows_emitted, fingerprint);
-                            holder.release();
-                            holder.stand_aside();
-                            yield batch;
-                            true
-                        } else {
-                            false
+                        let asked = holder.stand(chunked.read_pos());
+                        if asked {
+                            batcher.own_views(&mut chunks);
                         }
+                        asked
                     }
                     _ => true,
                 };
