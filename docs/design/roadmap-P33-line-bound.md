@@ -105,7 +105,7 @@ dumps whose long lines cluster three to nine in a chunk; holding a long `text`
 or `jsonb` field whole, the line again on the dumps whose long lines are one
 such field; a push machine for every scalar, which costs `field_key` and a
 typed query on every short value for a long scalar no dump in hand holds
-([`roadmap-P33.22-priced-notes.md`](roadmap-P33.22-priced-notes.md)); a fork keeping its runs
+([`roadmap-P33-line-bound-notes.md`](roadmap-P33-line-bound-notes.md), "The scalar push machines priced"); a fork keeping its runs
 back to where it forked, a line's worth on one whitespace run, and the run held
 until its end decides it, as its bytes or their run lengths, the same on a run
 alternating its bytes, which no `pg_dump` writes and a restore reads; a rewind
@@ -258,7 +258,7 @@ whether a step is backed by one is the host's THP policy, so under `madvise` or
 (`decisions.md`, "D104"); macOS, which has no `mremap`, is P34's. Rejected:
 growing it to exactly its bytes, whose mapping always ends at its last byte and
 so is faulted and freed in base pages, the whole of its gap to a line mapped at
-its length (`roadmap-P33.10-mapping-notes.md`, "What the readings found");
+its length (`roadmap-P33-line-bound-notes.md`, "A grown line's gap to a sized one");
 mapping each held line at its block's longest line, which a block's first read
 cannot know and a strict overcommit counts whole for every line it holds;
 reserving I71's bound of address space per held line, which never moves it and,
@@ -273,8 +273,8 @@ stall on a fragmented host, and overrides a policy that is the host's.
 retention, as every buffer a scan frees at its rate is**: at the resident peak
 of 33.7's query run the freed decoded copy is a few MiB of what the shipped
 purge delay keeps, the rest the view builder's blocks, the decoded-block
-buffers and DataFusion's own (`roadmap-P33.31-blocks-notes.md`, "The
-readings"), so it is bounded where that retention is (`decisions.md`, "D3",
+buffers and DataFusion's own (`roadmap-P33-line-bound-notes.md`, "The block
+tracker's readings"), so it is bounded where that retention is (`decisions.md`, "D3",
 "D13"), never per buffer. Rejected: a draw's buffers given back outside the
 allocator, which reaches a few MiB at the peak and never DataFusion's buffers;
 every buffer a scan frees moved outside it, which no change of ours reaches

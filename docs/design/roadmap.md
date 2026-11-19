@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P17, P19, P20, P25, P27–P31, P35, P36, P38 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P33 — every line PostgreSQL writes and reads | **Current** | [spec](roadmap-P33-line-bound.md); progress in [`../status/STATUS.md`](../status/STATUS.md) |
+| P33 — every line PostgreSQL writes and reads | **Complete** | [spec](roadmap-P33-line-bound.md); [notes](roadmap-P33-line-bound-notes.md) |
 | P8 — `--inserts` and `--column-inserts` rows | Sketched; not grilled | this file, below; [inbox](roadmap-P8-inserts-inbox.md) |
 | P41 — archive formats: the shared model, and `--format=custom` | Sketched; not grilled | this file, below; [inbox](roadmap-P41-archive-formats-inbox.md) |
 | P42 — `--format=directory` and `--format=tar` | Sketched; not grilled | this file, below |
@@ -728,12 +728,13 @@ item; see below.
 
 ## P33 — Every line PostgreSQL writes and reads
 
-A `COPY` line is read up to the bound PostgreSQL holds it to,
+**Complete.** A `COPY` line is read up to the bound PostgreSQL holds it to,
 [`postgres-invariants.md`](postgres-invariants.md), "I71", whatever the chunk
 size, `--jobs`, the split or the resume point, and refused only past it; memory
 may slow a long line and never refuses one a single reader could hold. No
 setting governs it. The spec is
-[`roadmap-P33-line-bound.md`](roadmap-P33-line-bound.md).
+[`roadmap-P33-line-bound.md`](roadmap-P33-line-bound.md), and what it leaves
+the next phase its [notes](roadmap-P33-line-bound-notes.md).
 
 ## P8 — `--inserts` and `--column-inserts` rows
 

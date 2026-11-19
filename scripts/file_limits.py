@@ -67,7 +67,7 @@ TOTAL_HARD = 7500
 EXEMPT: dict[str, str] = {
     "crates/pgdt-codec/src/value/datetime/grammar.rs": (
         "a transliteration of upstream datetime.c, sectioned as the original is; "
-        "a cut would un-mirror the port, and P33 reconsiders it"
+        "a cut would un-mirror the port"
     ),
 }
 

@@ -13800,16 +13800,16 @@ def run_purge_delay_resident(session: Session) -> str:
     **What it reads is the allocator's retention over a held line's
     passes**: a delay below the shipped one decommits a freed page sooner,
     so the resident it leaves should only fall, and the fall is what the
-    shipped delay keeps of what a pass frees (`roadmap-P33.31-blocks-notes.md`,
-    "The readings"). Every leg states `long-line-resident`'s allowance, sized
+    shipped delay keeps of what a pass frees (`roadmap-P33-line-bound-notes.md`,
+    "The block tracker's readings"). Every leg states `long-line-resident`'s allowance, sized
     from the factors its instrument legs read in this sitting
     (`long_line_allowance`), and whether each delay holds every rep within it
     is the resident half of the spec's criterion; 33.7's query run is the
     other reading it names, taken by hand on the reference dump. **That half
     cannot tell the legs apart**: the allowance is the widest leg's, which
     the shipped delay already holds on every leg, so the choice turns on the
-    query run and `purge-delay` (`roadmap-P33.32-purge-notes.md`, "The leg
-    grid"), and this figure reads what each delay leaves resident.
+    query run and `purge-delay` (`roadmap-P33-line-bound-notes.md`, "The purge
+    delay's leg grid"), and this figure reads what each delay leaves resident.
 
     **What would falsify the account**, written before any reading: a
     stating leg whose readings lie wholly above the shipped one's on any

@@ -248,6 +248,9 @@ our API, CLI, or data until we reach v1.0.
         - [ ] Optimal per-machine config
     - Adaptation to your data:
         - [x] Minimal adaptation to keep memory flat with large files
+        - [x] Rows of any length PostgreSQL writes, up to its 1 GiB line bound: a parse streams a long
+        line, a query charges it against its `--memory`, and one no reader could hold is refused for
+        memory
         - [ ] Optimal per-dump and per-table config
 
 Two things set the direction:

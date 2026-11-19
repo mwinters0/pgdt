@@ -118,7 +118,7 @@ of a percent of the allowance itself
 `runs/p33.32-query-above-100-20261117-1334/readings.txt`). Its live Rust heap
 is under the allowance; the rest is the held line's mapping, liblzma's
 decoders and what mimalloc keeps unpurged
-([`roadmap-P33.7-acceptance-notes.md`](roadmap-P33.7-acceptance-notes.md),
+([`roadmap-P33-line-bound-notes.md`](roadmap-P33-line-bound-notes.md),
 "The hand runs").
 
 **Why P23 cares.** It is `KD34`'s class read on a real dump: what a compressed
@@ -164,7 +164,7 @@ read a parked floor.
 **Why P23 cares.** It re-fits `MEMORY_RESERVE` and `MEMORY_UNPOOLED_BOUND`
 net of this term, and the three are billed together on the floor: with the
 reserve they set the smallest `--memory` a strict parse of the reference dump
-passes under (`roadmap-P33.7-acceptance-notes.md`, "The hand runs"). So the
+passes under (`roadmap-P33-line-bound-notes.md`, "The hand runs"). So the
 grid that re-fits them takes D165's floor runs too: carved and parked, at the
 shipped delay and zero, `parse` and `sql`, with `parse` parked from several
 readers so that a bound per command — `parse` holding no DataFusion plan and so

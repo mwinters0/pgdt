@@ -25,7 +25,7 @@ as a second parser. A differential test, which every replaced reader already
 has, would hold the two together.
 
 **Origin.** 33.22, 2026-11-09 and 2026-11-10
-([`roadmap-P33.22-priced-notes.md`](roadmap-P33.22-priced-notes.md));
+([`roadmap-P33-line-bound-notes.md`](roadmap-P33-line-bound-notes.md), "The scalar push machines priced");
 `runs/count-pair-33.22-20261109/`, `runs/count-pair-33.22-rework-20261109/`.
 The machines are at `89cf0a30` (33.13.4) and `f799618c` (33.13.5).
 
