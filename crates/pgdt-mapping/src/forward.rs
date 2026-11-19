@@ -577,13 +577,11 @@ pub async fn map_forward(
     index.spans = spans;
     index.scanned_through = size;
     index.diagnostics = derived_diagnostics(index, size, source.compression_index().as_ref());
-    // deficiency: KD131 — this saves a complete map, its `scanned_through` the
-    // file's end, behind `SourceWatch::check` alone: the reads' own checks
-    // (`SourceWatch::finish`, a source's `complete_reads`) come only before
-    // `map_file`'s last save, after the back-fill's saves of this same map. So
-    // a block whose check a later completion would fail can stand in a
-    // complete map on disk; the fix is a save of a complete map that finishes
-    // the watch first.
+    // **The watch is finished before the save**, which records the map as
+    // complete, so a later run never trusts bytes that fail their own check
+    // ([`SourceWatch::finish`]) — the file's last unit, which the scan's last
+    // read stopped inside, above all.
+    watch.finish(source).await?;
     cache.save(watch, source, index).await?;
     // The true end of the file, as opposed to the early
     // `Ok(MapStop::Reached)`s above: one for a map already there, three
@@ -661,6 +659,16 @@ async fn close_copy_block(
     // The save at the *last* watermark before an early stop is what persists
     // the map for the next query, so a settled target and an interrupt save
     // whether or not the throttle would have.
+    //
+    // deficiency: KD178 — a block ending at the file's end completes the map
+    // here, `watermark` being the file's size, and a settled target's or an
+    // interrupt's save writes it before `map_forward`'s end-of-file path
+    // attaches the text of the spans past the preamble and finishes the watch:
+    // the cache holds a complete map those spans carry no text in, and whose
+    // last unit was never compared against its own check, and no later run
+    // extends it to do either. **(c) unowned**; promoted by a dump ending on a
+    // `COPY` block's `\.`, which `pg_dump`'s trailer never does, reaching a
+    // user. The fix is that close leaving the save to the end-of-file path.
     if settled || cancelled || due {
         throttle.save(cache, watch, source, index).await?;
     }

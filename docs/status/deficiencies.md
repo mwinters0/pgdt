@@ -24,7 +24,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD177 -->
+rather than being deleted. <!-- deficiency-watermark: KD178 -->
 **Every number up to that watermark is allocated, and none is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -409,12 +409,6 @@ than reading as a phase nobody has sliced.
   its scattered reads are unread. **(c) unowned**; promoted by a reading of the
   split cold on the HDD. Detail: `crates/datafusion-pgdump/src/table.rs`.
 
-- **KD131** — a complete map is saved before the reads that built it are
-  completed: the forward pass's end-of-file save and the back-fill's run
-  `SourceWatch::check` alone, so a block a source's `complete_reads` would
-  refuse can stand in a complete map on disk. **(b) owned by `M294`**. Detail:
-  `crates/pgdt-mapping/src/forward.rs`.
-
 - **KD133** — two concatenated dumps of one database name resolve every block
   against the first's DDL, so a column the second retyped is typed as the
   first declared it and a table only the second declares is `NotDeclared`,
@@ -594,3 +588,9 @@ than reading as a phase nobody has sliced.
   there is refused in a block of bare-CR rows too, which a restore reads.
   **(c) unowned**; promoted by a dump ending so at `--jobs` above one.
   Detail: `crates/pgdt-mapping/src/interior.rs`.
+
+- **KD178** — a map a `COPY` block ending at the file's end completes is
+  saved at that block's close by a settled query or an interrupt, before the
+  text of its spans past the preamble is attached and the watch finished, and
+  no later run completes either. **(c) unowned**; promoted by a dump ending
+  on `\.` reaching a user. Detail: `crates/pgdt-mapping/src/forward.rs`.

@@ -58,6 +58,9 @@ struct Shifting {
     /// `LocalFileSource` fails a read past a truncation, with the short read's
     /// own error. `None` for a file of its whole length.
     cut: Option<u64>,
+    /// Refuse [`ByteRangeSource::complete_reads`], as a compressed source
+    /// refuses where a unit its reads stopped inside fails its own check.
+    refusing: bool,
 }
 
 impl Shifting {
@@ -69,6 +72,7 @@ impl Shifting {
             silent: false,
             dropping: None,
             cut: None,
+            refusing: false,
         }
     }
 
@@ -87,6 +91,12 @@ impl Shifting {
     /// the error a truncation is first met as, which says nothing of one.
     fn cut(path: PathBuf, observations: usize, cut: u64) -> Self {
         Self { cut: Some(cut), ..Self::new(path, observations) }
+    }
+
+    /// An unmoving identity over a source whose reads, once completed, fail
+    /// their own check.
+    fn refusing(path: PathBuf) -> Self {
+        Self { refusing: true, ..Self::new(path, usize::MAX) }
     }
 
     /// Whether this observation is past the point the identity moves. Counted
@@ -151,6 +161,16 @@ impl ByteRangeSource for Shifting {
             let real = self.inner.modified().await?;
             Ok(real.map(|t| if self.shifted() { t + Duration::from_secs(1) } else { t }))
         })
+    }
+
+    fn complete_reads(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        let refusal = self.refusing.then(|| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "a unit fails its check",
+            ))
+        });
+        Box::pin(std::future::ready(refusal.map_or(Ok(()), Err)))
     }
 }
 
@@ -226,6 +246,34 @@ async fn an_aborted_run_leaves_the_cache_on_disk_exactly_as_it_was() {
         std::fs::read_dir(dir.path()).unwrap().count(),
         2,
         "the dump and its cache, and no half-written file beside them"
+    );
+}
+
+/// **A complete map is saved only once the reads that built it are
+/// completed** ([`SourceWatch::finish`]): a cold parse whose source refuses
+/// to complete its reads fails with that refusal, and the cache it leaves
+/// holds no complete map — the forward pass's end-of-file save finishing the
+/// watch before it writes one, not only `map_file`'s last.
+#[tokio::test]
+async fn a_complete_map_is_saved_only_once_its_reads_are_completed() {
+    let (_dir, dump) = sandboxed();
+    let path = cache::colocated_path(&dump);
+    let refusing = Shifting::refusing(dump.clone());
+    let err = map_file(
+        CacheMode::enabled(&path).open_source(Arc::new(refusing)).await.unwrap(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
+    )
+    .await
+    .expect_err("a run whose reads fail their check does not finish");
+    assert!(matches!(&err, Error::Io(e) if e.kind() == std::io::ErrorKind::InvalidData), "{err:?}");
+    let left = cache::OfflineCache::new(&path).load().await.unwrap();
+    assert!(
+        !matches!(&left, CacheStatus::Loaded(loaded) if loaded.is_complete()),
+        "no complete map is left on disk"
     );
 }
 

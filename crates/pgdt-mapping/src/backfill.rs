@@ -137,6 +137,12 @@ pub(crate) async fn backfill_statistics(
         loaded,
         shortfall_reported: false,
     };
+    // **This pass's saves check the watch and do not finish it**, though a
+    // map at EOF is complete: every unit it re-reads was compared against its
+    // own check by the forward pass that completed the map, under the
+    // identity the watch still holds ([`SourceWatch::finish`]), and finishing
+    // before each save would decode a unit again per save and slow an
+    // interrupt. `map_file`'s last save finishes it.
     let mut throttle = SaveThrottle::new();
     let blocks = rereads.len();
     for (done, (at, backfill, unchecked)) in rereads.into_iter().enumerate() {

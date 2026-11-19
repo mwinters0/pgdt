@@ -544,10 +544,10 @@ async fn map_file_watched(
         watch.check(source).await?;
     } else {
         // Before the save, so this save of a complete map is never written
-        // from bytes that fail their own check ([`SourceWatch::finish`]) —
-        // the forward pass's and the back-fill's before it are (`KD131`); an
-        // interrupted run leaves the block it stopped inside for the resume
-        // to re-read.
+        // from bytes that fail their own check ([`SourceWatch::finish`]): the
+        // forward pass's end-of-file save finishes it too, and the back-fill
+        // re-reads only units a forward pass checked. An interrupted run
+        // leaves the block it stopped inside for the resume to re-read.
         watch.finish(source).await?;
         cache.save(watch, source, &index).await?;
         report_density_shortfall(statistics, &index);
