@@ -82,7 +82,9 @@ impl CompressedFileSource {
     /// A file whose first bytes name no format this build reads is refused,
     /// [`Error::SourceNotReadable`], and so is any other gzip one, whose index
     /// only a first pass builds — which [`open`](crate::open) runs — so it
-    /// opens here only through [`CompressedFileSource::with_index`].
+    /// opens here only through [`CompressedFileSource::with_index`]: one that
+    /// is not BGZF, and one opening with a BGZF member whose chain then breaks,
+    /// each refused by its own reason.
     /// Recognition that falls back to the plain source, and checks an index a
     /// cache hands in, is [`open`](crate::open).
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -96,16 +98,21 @@ impl CompressedFileSource {
         match Format::recognize(leading) {
             None => Err(refuse("its first bytes name no compressed format this build reads")),
             Some(Format::Xz) => Self::walked_xz(file),
-            Some(Format::Gzip) => {
-                let walked = if is_bgzf(leading) { Self::walked_bgzf(file, &named)? } else { None };
-                walked.ok_or_else(|| {
+            Some(Format::Gzip) if is_bgzf(leading) => {
+                Self::walked_bgzf(file, &named)?.ok_or_else(|| {
                     refuse(
-                        "it is gzip-compressed and not BGZF, and such a file's index is built by \
-                         a first pass over it, which `pgdt_io::open` runs: this source opens one \
-                         only over a complete index (`CompressedFileSource::with_index`)",
+                        "it opens with a BGZF member and its chain of members does not hold — \
+                         damaged, cut short, or a later member not BGZF's — so its index is \
+                         built by a first pass over it, which `pgdt_io::open` runs: this source \
+                         opens one only over a complete index (`CompressedFileSource::with_index`)",
                     )
                 })
             }
+            Some(Format::Gzip) => Err(refuse(
+                "it is gzip-compressed and not BGZF, and such a file's index is built by a first \
+                 pass over it, which `pgdt_io::open` runs: this source opens one only over a \
+                 complete index (`CompressedFileSource::with_index`)",
+            )),
         }
     }
 

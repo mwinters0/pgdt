@@ -171,6 +171,30 @@ async fn a_broken_chain_is_left_to_a_first_pass() {
     assert!(got[..] == expected[..], "the first pass reads every member");
 }
 
+/// **`CompressedFileSource::open` refuses a broken chain by the chain**, not
+/// as a file that is not BGZF: an embedder opening one directly hears why
+/// without the walk's warning, and a file whose first member is not BGZF's is
+/// still refused as "not BGZF".
+#[test]
+fn a_broken_chain_is_refused_by_name() {
+    let payload = payload();
+    let single = std::fs::read(gzip_compress(b"and a member that is not BGZF's\n").path()).unwrap();
+    let mixed = bgzf_then(&payload, &single);
+    let whole = std::fs::read(bgzf_compress(&payload).path()).unwrap();
+    let mut cut = tempfile::NamedTempFile::new().unwrap();
+    cut.write_all(&whole[..whole.len() / 2]).unwrap();
+    cut.flush().unwrap();
+    for (broken, what) in [(mixed.path(), "a mixed file"), (cut.path(), "a file cut short")] {
+        let refused = CompressedFileSource::open(broken).err().unwrap().to_string();
+        assert!(refused.contains("chain of members does not hold"), "{what}: {refused}");
+        assert!(!refused.contains("not BGZF,"), "{what}: {refused}");
+    }
+    let plain = gzip_compress(&payload);
+    let refused = CompressedFileSource::open(plain.path()).err().unwrap().to_string();
+    assert!(refused.contains("not BGZF"), "{refused}");
+    assert!(!refused.contains("chain"), "{refused}");
+}
+
 /// **`open` walks a BGZF file and builds no first pass**: the source it hands
 /// back answers a complete index and an exact extent before any read, as
 /// does `CompressedFileSource::open`, which refuses a single member by name.

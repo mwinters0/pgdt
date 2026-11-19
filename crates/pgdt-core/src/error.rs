@@ -95,7 +95,8 @@ pub enum Error {
     /// `pgdt_io::CompressedFileSource::open` is handed that is not one it
     /// opens. Raised by `pgdt_io::Origin`'s constructors and by the per-place
     /// openers below `pgdt_io::open`, before anything is fetched, and by
-    /// `CompressedFileSource::open` after its leading bytes.
+    /// `CompressedFileSource::open` after its leading bytes, or a BGZF file's
+    /// member walk.
     ///
     /// **It refuses by name**: `origin` is the argument as the user wrote it
     /// and `why` says which rule it met, so a mistyped scheme is a sentence
