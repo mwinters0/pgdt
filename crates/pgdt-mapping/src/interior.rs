@@ -417,20 +417,20 @@ async fn run_region(
         // order and [`futures::stream::FuturesOrdered`] hands the results back
         // in it: the `?` below fires on the earliest failing piece, where
         // `try_join_all` would return the first error it *observes*.
-        // deficiency: KD134 — every partition of the window is taken through
-        // the `?` below, those past the one holding the terminator included,
-        // so a piece failing on what follows the block — a line past the
-        // line bound, named with no table, a corrupt unit, a failed fetch —
-        // fails the region where the serial scanner would have stopped at `\.`: a
-        // cold `query` at `--jobs` above one refuses a table it answers
-        // serially. The fix is a partition's error raised only where no
-        // earlier one held the terminator.
         // Whether an earlier partition held the terminator, past which a line
         // is no row of this table's.
         let mut terminated = false;
         while let Some(partition) = futures::StreamExt::next(&mut dispatched).await {
-            let (partition_scans, piece) = partition
-                .map_err(|e| if terminated { e } else { e.in_copy_of(|| table.to_owned()) })?;
+            // **A partition past the terminator read past the block**, where
+            // the serial scanner stops at `\.`: its failure — a line past the
+            // bound, a corrupt unit, a failed fetch — is not the block's, and
+            // what follows the block is the leader's to read and refuse. The
+            // window is still drained to its end, and such a failure
+            // discarded with everything else [`merge`] reads no further than.
+            let (partition_scans, piece) = match partition {
+                Err(_) if terminated => continue,
+                partition => partition.map_err(|e| e.in_copy_of(|| table.to_owned()))?,
+            };
             // Held here, in file order, so a refusal is raised ahead of any
             // later partition's error.
             for scan in &partition_scans {

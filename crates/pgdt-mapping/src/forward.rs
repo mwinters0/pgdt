@@ -403,8 +403,7 @@ pub async fn map_forward(
                     // `data_offset` until `\.` is line-structured rows, so
                     // the region may be handed to workers that never parse
                     // structure. It answers the block's totals as the
-                    // serial scanner would have, or declines, or fails on
-                    // what follows the block (`KD134`) — and a
+                    // serial scanner would have, or declines — and a
                     // block it closes holds the statistics its pieces
                     // observed, as a declined one does the rows this loop
                     // hands on.

@@ -15,9 +15,9 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use pgdt_core::Error;
-use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::{CacheMode, colocated_path};
 use pgdt_dump::internal::with_line_bound;
+use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
@@ -26,7 +26,7 @@ use pgdt_query::{Dump, QueryOptions};
 use tokio_util::sync::CancellationToken;
 
 mod common;
-use common::{arranged, arranged_as, mapped, rows_of};
+use common::{Cold, arranged, arranged_as, mapped, rows_of};
 
 /// The bound every path here reads at.
 const BOUND: usize = 300;
@@ -82,10 +82,6 @@ impl ByteRangeSource for FailsPast {
 /// included, and where that row starts: where `ahead`, `COPY public.u`'s
 /// block of short rows before `public.t`'s header, and `public.t`'s rows
 /// before the long one.
-///
-/// A split pass's pieces past a block's terminator scan what follows it
-/// (`KD134`), so a long row right after a block fails that block's region,
-/// naming no table: only the resumed pass, serial, reads one ahead.
 fn dump(dir: &Path, line: usize, ahead: bool) -> (PathBuf, u64) {
     let mut text = String::new();
     if ahead {
@@ -271,6 +267,48 @@ async fn a_replay_holds_a_line_to_the_bound() {
             }
             let path = format!("a replay at {jobs} partition(s), {chunk}-byte reads");
             held_to_the_bound(read, line, start, &path);
+        }
+    }
+}
+
+/// **A cold query split across workers answers a table whose block is
+/// followed by a line past the bound**, as the serial pass does: a piece
+/// past the block's `\.` scans what follows it, and its refusal is not the
+/// block's. The block is followed by short lines a partition long, so the
+/// piece whose cut lands among them, a piece past the `\.`'s, reads the long
+/// line whole; each count of rows places the `\.` at another offset of the
+/// window.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_split_pass_ignores_a_long_line_past_its_block() {
+    let dir = tempfile::tempdir().unwrap();
+    for count in 0..32 {
+        let mut text = String::from("COPY public.t (id, v) FROM stdin;\n");
+        for id in 0..count {
+            text.push_str(&format!("{id}\tshort\n"));
+        }
+        text.push_str("\\.\n");
+        // Wider than a partition of 16-byte reads (`PLAIN_PARTITION_CHUNKS`).
+        text.push_str(&"--\n".repeat(64));
+        // A comment whose line, its LF included, is a byte past the bound.
+        text.push_str(&format!("-- {}\n", "x".repeat(BOUND - 3)));
+        text.push_str("SELECT 1;\n");
+        let path = dir.path().join(format!("past-{count}.sql"));
+        std::fs::write(&path, text).unwrap();
+        for jobs in [1, 4] {
+            let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
+            let scan = ScanOptions {
+                read: read(16, BOUND),
+                parallelism: Parallelism::workers(jobs, 1 << 30),
+            };
+            let cold = Cold { scan, ..Cold::default() };
+            let stream = cold.stream(source, "public.t", QueryOptions::default()).await;
+            let stream = stream.unwrap_or_else(|e| panic!("{count} rows at --jobs {jobs}: {e:?}"));
+            let mut stream = stream.expect("the dump holds public.t");
+            let mut rows = 0;
+            while let Some(batch) = stream.next().await {
+                rows += rows_of(&batch.unwrap()).len();
+            }
+            assert_eq!(rows, count, "{count} rows at --jobs {jobs}");
         }
     }
 }

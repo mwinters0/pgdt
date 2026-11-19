@@ -421,12 +421,6 @@ than reading as a phase nobody has sliced.
   with no error. **(c) unowned**; promoted by a same-name concatenation
   reaching a user. Detail: `crates/pgdt-model/src/catalog.rs`.
 
-- **KD134** — a parallel interior region fails on what follows its block — a
-  line past the line bound, a corrupt unit, a failed fetch — where the
-  serial scanner stops at `\.`, so a cold `query` at `--jobs` above one can
-  refuse a table it answers serially. **(b) owned by `M293`**. Detail:
-  `crates/pgdt-mapping/src/interior.rs`.
-
 - **KD136** — a `parse` over a fetched compressed file reads each run of DDL
   back after its scan through the indexed source, which fetches the unit
   holding the run whole, so the object is downloaded again where it is under
