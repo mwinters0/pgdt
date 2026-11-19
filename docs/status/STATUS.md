@@ -143,7 +143,7 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.32.1** Evidence: the purge delay read between 10 and 100 ms under the spec's rule as amended ("What a held line costs"): 33.7's query run read by hand at 0 and 10 ms in a second interleaved sitting, and at the candidates 20, 30, 50 and 75 ms, six reps each over two interleaved sittings, candidates and count fixed in `run.sh` before it ran; no production code. From `7860c5fb`'s build (`runs/p33.32.1-query-grid-20261118-0341/`): pooled, 0 ms alone holds, 10 ms no longer does, no candidate does, so none joins `PURGE_DELAY_LEGS`; the delay is then chosen on throughput instead, 100 ms kept and what it keeps billed (the spec's "What a held line costs") — [notes](../design/roadmap-P33.32.1-choice-notes.md)
 - [x] **33.34** Evidence: what the 100 ms purge delay keeps resident priced: 33.7's query run read by hand at 100 ms and at zero under `--memory` values carving from one reader to eight, reps and allowances fixed in `run.sh` before it runs, read for whether what the delay keeps grows with the readers or is the process's, as the spec's "What a held line costs" states; no production code. From `373e1320`'s build, six reps a leg at the smallest allowance carving each count and at 2 GiB (`runs/p33.34-delay-readers-20261118/`): **the process's** by the rule fixed in `run.sh`, largest at five readers and not one constant; and at a zero delay the run passes its allowance at one, two, six and seven readers, where it holds with no repartition above the scan (UF5) — [notes](../design/roadmap-P33.34-kept-notes.md)
 - [x] **33.35** What the purge delay keeps billed: `pgdt` stating it beside `PURGE_DELAY_MS` as one bound for the process, read off 33.34's reader grid, its notes naming that grid's one workload and the run keeping more that would move it, and `Arrangement::resolve` carving the count around it, datafusion-pgdump's session budget carrying it for `pgdt sql`, an embedder stating its own allocator's or none, as the spec's "What a held line costs" and "Where it lives" state (D13). `RETAINED_BOUND`, 320 MiB, the 64 MiB step over five readers' median; `ArrangementRequest::retained` off the margin's ceiling, the ledger's room and the floor, `ScanBudget::retaining` for `pgdt sql` (D165) — [notes](../design/roadmap-P33.35-billed-notes.md)
-- [ ] **33.7** Acceptance: `long-line-resident` re-taken and the charge factors confirmed or re-set, a parse flat in its line length; the two hand runs on the reference dump, a strict parse under a `--memory` below its longest line and a query reading its long field under one whose cut puts a cluster's longest lines in different pieces, their charges at once past the ledger's room, as the spec's "How it is shown" states. Re-taken at `4cb97fd4`, `text[]` read at the bound ([`measurements.md`](../design/measurements.md), "What a held line holds resident"): every factor confirmed as a bound and none re-set, a parse flat, no falsifier firing. The strict hand run is taken, holding no line: exit 0, no refusal, every block and row counted, its peak resident under the stated `--memory` (`runs/p33.7-strict-hand-run-20261116-1842/`). The query hand run is taken over the block holding the longest line, eight readers carved: exit 0, no refusal, its rows an unlimited run's, but its peak resident past the stated `--memory`, within it at a zero purge delay (`runs/p33.7-query-hand-run-20261117-0320/`). The query run re-taken at 33.33's default, `373e1320`, three reps: exit 0, its rows an unlimited run's, one rep past the stated `--memory` (`runs/p33.7-query-default-20261118/`), what 100 ms keeps being unbilled (the spec's "What a held line costs"). Re-taken after 33.35's bill at 2 GiB, which carves two readers and leaves the cluster one reader's: exit 0, its rows an unlimited run's, every rep within the stated `--memory`, but no reader waiting by the cut (`runs/p33.7-query-billed-20261118/`). Remaining: the query run re-taken at the smallest whole MiB whose `EXPLAIN` carves eight readers, the count separating the two 440 MiB lines, its peak within the stated `--memory` at every rep, the repartition's copies being UF5's, then the figure and the strict run — [notes](../design/roadmap-P33.7-acceptance-notes.md)
+- [ ] **33.7** Acceptance: `long-line-resident` re-taken and the charge factors confirmed or re-set, a parse flat in its line length; the two hand runs on the reference dump, a strict parse under a `--memory` below its longest line and a query reading its long field under one whose cut puts a cluster's longest lines in different pieces, their charges at once past the ledger's room, as the spec's "How it is shown" states. Re-taken at `543e5877`, after 33.35's bill ([`measurements.md`](../design/measurements.md), "What a held line holds resident"): every factor confirmed as a bound and none re-set, a parse flat, no falsifier firing, no leg waiting or refused. The strict hand run is taken at `7f593832`, before the bill, holding no line: exit 0, no refusal, every block and row counted, its peak resident under the stated `--memory` (`runs/p33.7-strict-hand-run-20261116-1842/`). The query hand run is taken over the block holding the longest line, eight readers carved: exit 0, no refusal, its rows an unlimited run's, but its peak resident past the stated `--memory`, within it at a zero purge delay (`runs/p33.7-query-hand-run-20261117-0320/`). The query run re-taken at 33.33's default, `373e1320`, three reps: exit 0, its rows an unlimited run's, one rep past the stated `--memory` (`runs/p33.7-query-default-20261118/`), what 100 ms keeps being unbilled (the spec's "What a held line costs"). Re-taken after 33.35's bill at 2 GiB, which carves two readers and leaves the cluster one reader's: exit 0, its rows an unlimited run's, every rep within the stated `--memory`, but no reader waiting by the cut (`runs/p33.7-query-billed-20261118/`). Re-taken at eight readers, 2387 MiB the smallest whole MiB whose `EXPLAIN` carves them, the count separating the two 440 MiB lines, from `543e5877`, six reps: exit 0, no refusal, its rows an unlimited run's, every rep within the stated `--memory` (`runs/p33.7-query-eight-20261118/`). The strict run re-taken from `543e5877` at its 432 MiB is refused, the bill leaving one reader's floor nothing (`runs/p33.7-strict-hand-run-20261118-2344/`). Remaining: the strict run, on the maintainer's call ("Decisions worth another look") — [notes](../design/roadmap-P33.7-acceptance-notes.md)
 
 ## Not started
 
@@ -174,3 +174,38 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **33.7's strict run, refused under the bill, is left unticked and nothing is
+  re-taken (33.7).** The call: the run was re-taken at its 432 MiB as handed
+  and refused (`LineOutgrowsMemory`, a 2,007,136-byte draw against a floor of
+  zero; `roadmap-P33.7-acceptance-notes.md`, "The hand runs"), and the
+  session neither moved its `--memory` nor gave `KD170` an owner. Why: the
+  bill comes off the floor (D165), leaving one reader nothing below at least
+  750 MiB, and `KD170` draws for a row a parse streams before knowing it
+  streams, so any run of the spec's shape, below the 441 MiB longest line, is
+  refused at the first row over a chunk; which of the run, the deficiency or
+  the bill moves is a call on the spec's acceptance, not phase-local
+  arithmetic. The recommendation: promote `KD170` into P33 as a slice ahead
+  of the strict run, an exact charge drawing nothing for a streamed row, and
+  keep the run at 432 MiB, since a parse holding none of a row being refused
+  for memory is the defect the run exists to rule out. The alternative,
+  re-taking at the smallest whole MiB whose floor holds the draw, with the
+  spec's "below its longest line" read as a floor below it, leaves `KD170`
+  standing and the run above the line; reversing D165's floor term was
+  affirmed against already (D165's `Rejected`).
+
+- **33.7's round is in the tree uncommitted (33.7).** The call: `/gosub` left
+  it uncommitted, since a round leaving its box unticked is never committed
+  and the strict run's refusal left 33.7's annotation at "Remaining: the
+  strict run, on the maintainer's call". The tree holds the eight-reader
+  query run at 2387 MiB (`runs/p33.7-query-eight-20261118/`), the
+  `long-line-resident` re-take at `543e5877` folded into `measurements.md`,
+  "What a held line holds resident" (`runs/measure-20261118T220656/`), and
+  the refused strict run (`runs/p33.7-strict-hand-run-20261118-2344/`), each
+  in the notes, STATUS and the 2026-11-18 history entry; `mise run check`
+  passes on it (`runs/check/20261119-000120-e358d8a2e604/`). What remains is
+  the strict run, which waits on the entry above. The decision: commit the
+  tree as it stands, finish it, or discard it. The recommendation: commit it
+  as it stands, the box unticked, since the query run and the figure are
+  readings of `543e5877` whichever way the strict run is settled, and
+  discarding them costs an hour's sweep to take the figure again.

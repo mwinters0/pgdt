@@ -1,31 +1,35 @@
 # P33.7 notes — acceptance
 
-**`long-line-resident` was re-taken at `4cb97fd4`**, the commit reading
-`text[]` at the bound, and folded into [`measurements.md`](measurements.md),
-"What a held line holds resident", which reads it against
-`run_long_line_resident`'s falsifiers and the spec's account;
-`runs/long-line-resident-20261117-0207/`, its log and pickup, and
-`runs/measure-20261117T020756/`, the sitting's tables, readings and
-instrument reports. It replaces the take at `7f593832`
-(`runs/measure-20261116T172728/`) whole: the same build, every leg stating
-the allowance `text[]`'s planned charge at the bound sizes. No production
-code.
+**`long-line-resident` was re-taken at `543e5877`**, 33.35's code, and
+folded into [`measurements.md`](measurements.md), "What a held line holds
+resident", which reads it against `run_long_line_resident`'s falsifiers and
+the spec's account; `runs/long-line-resident-20261118-2206/`, its log and
+pickup, and `runs/measure-20261118T220656/`, the sitting's tables, readings
+and instrument reports. It replaces the take at `4cb97fd4`
+(`runs/measure-20261117T020756/`) whole: every leg states the same allowance,
+and the build differs by the 100 ms purge delay and the bill (D13, D165). No
+production code.
 
 - **Every planned factor is confirmed as a bound; none is re-set**, `text[]`'s
-  at the bound too. A one-partition query holds its line and the terms of its
-  factor its input writes, no doubling among them, and every factor
-  over-charges only by terms its input writes nothing of (the figure's prose
-  names each). The charge D154 sets is a reservation's commit, which a
-  resident set does not see past the pages written, so no reading can show a
-  factor understated by less than those terms.
+  at the bound too, each read off its plan as at `4cb97fd4`. A one-partition
+  query holds its line and the terms of its factor its input writes, no
+  doubling among them, and every factor over-charges only by terms its input
+  writes nothing of (the figure's prose names each). The charge D154 sets is
+  a reservation's commit, which a resident set does not see past the pages
+  written, so no reading can show a factor understated by less than those
+  terms.
 - **`text[]` at the bound holds the base and nine lines**, where its secant
   put it, inside the 15g container and the stated allowance.
 - **A parse is flat in its line length**, holding no line at any length to
   the bound, default or strict.
-- **No falsifier fires.** The residual rule that fired at `7f593832`, at four
-  partitions over escaped text, reads 17.04 MiB here against its 32 MiB
-  limit: one build's two sittings differ there by the column's rep spread at
-  its 512 MiB anchor, which the figure's prose prices.
+- **No falsifier fires**, and **no leg waits or is refused under the bill**:
+  `long_line_allowance` adds nothing for it, and the room it leaves still
+  holds every four-partition leg's lines at once, which each such column
+  still reads; the one charge past the room, `text[]` at the bound, is alone
+  and admitted under the floor.
+- **The parse columns read a few hundred KiB lower than at `4cb97fd4`**, the
+  100 ms delay's, as `purge-delay-resident` reads it within one build; no
+  query cell moves with the bill.
 
 ## The hand runs
 
@@ -48,6 +52,20 @@ code.
   each: below the 441 MiB longest line the 384 MiB reserve leaves one reader,
   so a run under that line carves no more (the spec's "How it is shown"). Its
   wall clock is no figure.
+- **Under 33.35's bill the same run is refused.** Re-taken at `543e5877` in
+  `run.sh`'s shape, its own cache, the build `long-line-resident` timed
+  (`runs/p33.7-strict-hand-run-20261118-2344/`, `parse.log`, `HANDOFF.md`):
+  one reader, a read budget and a statistics allowance of zero, then exit 1
+  a minute into the scan, `LineOutgrowsMemory` for a draw of 2,007,136 bytes
+  at offset 35,247,420,889, one reader left 0 once the bill's 335,544,320
+  bytes come off; peak 88,372 KiB. The offset is in `_hyper_1_128_chunk`,
+  the dump's first block holding a line over 1 MiB, rows whose `msg`, `text`,
+  runs to about 2.8 MB (`runs/datanommer-survey/copy-index.tsv`,
+  `long-lines.tsv`): a row a strict parse streams, drawn for under two
+  chunks before its carry knows it streams, `KD170`'s refusal. The bill comes
+  off the floor (D165), and at 432 MiB the larger of the cap and the margin's
+  ceiling is under it, so the floor is zero, as the handoff predicted before
+  the run; it turns positive only above at least 750 MiB.
 - **The query run read its rows and passed its `--memory`.** Taken at
   `4cb97fd4` (`runs/p33.7-query-hand-run-20261117-0320/`, `run.sh`, each
   run's `.csv` and `.err`): `pgdt sql`'s `SELECT count(*) AS n,
@@ -91,21 +109,27 @@ code.
   2203 MiB against a room of one line's charge and less than a term. Those
   charges sit under the allowance, which is why the spec compares them with
   the room, not with `--memory` (its "How it is shown").
-- **Why that `--memory`**: the read's line charge is its longest line,
+- **At eight readers the query run holds.** Taken at `543e5877`, the release
+  image's build byte for byte `43e77f42`'s, six reps fixed in `run.sh`
+  (`runs/p33.7-query-eight-20261118/`, `readings.txt`, `carve.txt`):
+  2387 MiB is the smallest whole MiB whose `EXPLAIN` carves eight, 2386 MiB
+  carving seven. Each rep exit 0, no refusal, the unlimited run's rows, every
+  peak under the 2,444,288 KiB stated, the worst 337,640 KiB under it. The
+  resident at eight readers is 33.34's at 1987 and 2048 MiB to within its
+  spread, so the bill's 400 MiB of allowance is what brings it under.
+- **Why readers wait there**: the read's line charge is its longest line,
   462,157,089 bytes, at the plan's factor of one, 924,314,178 bytes (D160),
   which `Arrangement::resolve` takes off the margin's ceiling before solving
   the count, so the room holds that charge and the cache's statistics, and
-  less than one reader's term past them. At 2 GiB that solves to eight
-  readers (`EXPLAIN`'s `PgDumpExec` feeding eight partitions); at 1.5 GiB to
-  one. Eight cut the block's 5.22 GB into pieces of about 650 MB
-  (`cut_blocks`), so the cluster at its end — two lines of about 110 MiB, two
-  of 220 MiB, two of 440 MiB, the longest 3.79 GiB into the block — falls
-  across about three pieces, placed from the survey's line numbers
+  less than one reader's term past them. Eight cut the block's 5.22 GB into
+  pieces of about 650 MB (`cut_blocks`), placing a 440 MiB line in each of
+  the sixth and seventh, each reached within a third of a gigabyte of its
+  piece's start, the sixth's after a 220 MiB line: the two 440 MiB lines
+  alone charge about twice what the room holds, so readers wait by the cut
+  rather than by timing. The lines are placed from the survey's line numbers
   (`runs/datanommer-survey/long-lines.tsv`) and the longest line's start
-  (`pgdt info --detail`) rather than read, each piece reaching a long line
-  early: the two 440 MiB lines alone charge about twice what the room holds,
-  so readers wait by the cut rather than by timing. Nothing records a wait
-  (the spec's `Rejected`).
+  (`pgdt info --detail`) rather than read, and nothing records a wait (the
+  spec's `Rejected`).
 - **What the excess is**: the instrument build (`introspect-limited.txt`)
   reads a live Rust heap peaking at 1,427,385,872 bytes, under the
   allowance, beside the held line's own mapping (D139) and liblzma's decoders,
@@ -122,16 +146,17 @@ code.
 ## What the phase inherits
 
 - **A four-partition query over escaped text or bytea holds less than four
-  lines and four copies**, increasingly with the line over bytea, where over
-  text it holds four lines exactly; unattributed. Whether each partition's
+  lines and four copies**, increasingly with the line, where over text it
+  holds four lines exactly; unattributed. Whether each partition's
   copy is live at the peak is the question, for the `introspect` build.
 - **A parse's slow growth with its line**, which the figure states, still
   has no name; the `introspect` build's live peak at 512 MiB and at the
   bound would say whether it is Rust's heap.
-- **A query over escaped text took longer under the resident wrapper** than
-  at `93428ef7`, at both sittings of this build: wall clocks the figure does
-  not publish, priced to the 40 commits between and to no one of them. A
-  count pair over a query row would place it.
+- **Wall clocks the figure does not publish moved, unattributed**: a query
+  over escaped text still takes longer under the resident wrapper than at
+  `93428ef7` at 512 MiB, and about half as much longer at the bound, priced
+  to no one commit; a strict parse over bytea takes longer at `543e5877` than
+  at `4cb97fd4` at every length. A count pair over each row would place it.
 
 ## Negative results
 
