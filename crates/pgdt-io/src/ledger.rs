@@ -601,7 +601,8 @@ impl State {
         }
     }
 
-    /// Gather every waiting line's waker: what it waited on may have moved.
+    /// Gather every waiting line's waker: what it waited on may have moved
+    /// (`docs/design/decisions.md`, "D157").
     fn wake_waiters(&mut self, woken: &mut Vec<Waker>) {
         woken.extend(self.lines.values_mut().filter_map(|line| line.waker.take()));
     }

@@ -9414,7 +9414,7 @@ def _per_rep_counts(
 #: a page it holds of freed blocks stays committed, and resident, before it is
 #: decommitted. What the shipped binary keeps past a zero delay is retention of
 #: every buffer a scan frees at its rate (`roadmap-P33-line-bound.md`, "What a
-#: held line costs"), which `docs/design/decisions.md`, "D13" bounds by this
+#: held line costs"), which `docs/design/decisions.md`, "D166" bounds by this
 #: delay, `pgdt` setting a default the variable overrides
 #: (`crates/pgdt/src/alloc.rs`, `PURGE_DELAY_MS`).
 PURGE_DELAY_VAR = "MIMALLOC_PURGE_DELAY"
@@ -18449,7 +18449,8 @@ COUNT_PAIR_LONG_INPUTS: tuple[str, ...] = tuple(
 #: under `statistics-gathering`'s limit, since the allowance it gathers within
 #: is discovered from the container (D85); both `query` modes; the provider's
 #: typed scan; and the typed `query` over the `arrays` input, the one row
-#: whose batch decodes a nested column, the control holding none. The same
+#: whose batch decodes a nested column, the control holding none, and
+#: `pgdt sql -c` over it counting `perf`'s scalar columns alone. The same
 #: shapes the register times, so a count here and a figure there are one
 #: workload. `pgdt sql`'s runs fall on two counts, so a rise smaller than their
 #: step is unresolved there, and the typed `query` counts the same decode finer.

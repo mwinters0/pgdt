@@ -448,7 +448,7 @@ The subcommands, their flags and what each prints, `sql` being
 Which allocator and Cargo profile built `pgdt`, and the purge delay mimalloc
 runs under, as `pgdt --version` names them, and what that delay keeps, which
 every arrangement `pgdt` resolves holds beside its readers
-([`decisions.md`](decisions.md), "D13", "D105", "D165").
+([`decisions.md`](decisions.md), "D13", "D105", "D165", "D166").
 
 - **pgdt** — `alloc.rs`, `profile.rs`: the binary's choice, never the
   library's.

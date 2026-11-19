@@ -32,7 +32,8 @@ past the ceiling is replaced by its port (`network_in`). `JSONB_MAX_DEPTH` is fi
 names are open (tzdata grows unbidden), abbreviations those PostgreSQL ships (I83). Rejected: failing every field read
 as no value; widening a canonicalized kind's reader (`=` misses another spelling, `KD82`; `macaddr`'s one bounds set,
 D79, splits); for a narrowed `*_in`, the dump's own major's; a server's own abbreviation file (forgoes I61's era edge);
-the tzdata at hand.
+the tzdata at hand; a split test of the readers' own for a text past its work buffer, beside `ParseDateTime`'s port, a
+second statement of I83's buffer to drift from.
 
 ### D56 Special values are a rank in the key; equality has three canonicalizations, by injectivity of `*_out`
 `infinity`/`NaN` are a rank in PostgreSQL's order, compared before the value; `OrderKey` derives no `Ord`. Rejected:

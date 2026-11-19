@@ -7,7 +7,7 @@ in its topic's file under `decisions/`, which opens with what the topic is and i
 index and the citation target: cite as `docs/design/decisions.md`, "D12". The rules, the caps and the meter included,
 are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D165 -->
+<!-- decision-watermark: D166 -->
 
 ## I/O, memory and parallelism
 [`decisions/io.md`](decisions/io.md)
@@ -29,6 +29,7 @@ are `docs/process.md`, "The decision register".
 - **D11** Limit discovery takes a root; the seam is crate-private
 - **D12** Workers are `spawn_blocking`; no runtime flavour is imposed
 - **D13** The allocator is the binary's choice; the one binary composes DataFusion's CLI and links mimalloc
+- **D166** `pgdt` sets mimalloc's purge delay first in `main`, a default the environment overrides
 - **D165** What the allocator keeps of what it frees is one bound the binary states, held beside every arrangement
 
 ## The compressed source and the cache

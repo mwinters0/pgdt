@@ -215,7 +215,7 @@ back. **`UF1`–`UF6` are allocated, and none is reused.**
   47 `mi_option_e` entries, `mi_option_purge_delay` (15) not among them, nor
   `mi_options_print_out`, which reads every option back by name. `pgdt` sets
   the purge delay as its default and reads it back for `--version`
-  (`../design/decisions.md`, "D13"), so it names the option by a number
+  (`../design/decisions.md`, "D166"), so it names the option by a number
   counted from `mimalloc.h`, which an upgrade renumbering the enum would point
   at another option.
 - **Upstream.** No issue, PR or discussion found asking for v3's option

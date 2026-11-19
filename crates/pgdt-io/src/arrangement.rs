@@ -403,7 +403,8 @@ fn one_reader_leaves(
 }
 
 /// The arrangement under an estimate rather than an allowance: `cap` bounds
-/// the pools, with no reserve and no margin ([`Arrangement::resolve`]).
+/// the pools, with no reserve and no margin ([`Arrangement::resolve`],
+/// `docs/design/decisions.md`, "D11").
 fn estimated(jobs: usize, memory: Option<WorkerMemory>, cap: u64) -> Parallelism {
     if memory.is_none() {
         // Nothing recommended: no recommendation to cap, which is the

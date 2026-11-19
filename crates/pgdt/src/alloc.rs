@@ -99,7 +99,7 @@ mod purge {
     /// The delay in milliseconds where the environment states none
     /// (`MIMALLOC_PURGE_DELAY`, which overrides it): `pgdt`'s default, never a
     /// library's, an embedder linking mimalloc keeping its own
-    /// (`docs/design/decisions.md`, "D13").
+    /// (`docs/design/decisions.md`, "D166").
     pub const PURGE_DELAY_MS: std::ffi::c_long = 100;
 
     /// **What mimalloc keeps resident of what it frees under
@@ -125,7 +125,8 @@ mod purge {
     /// leaves in place (`mi_option_set_default`). Called first in `main`,
     /// while one thread runs, the option's setter not being thread-safe;
     /// mimalloc reads the delay afresh at each purge it schedules, so every
-    /// page the commands free is purged under it.
+    /// page the commands free is purged under it (`docs/design/decisions.md`,
+    /// "D166").
     pub fn configure() {
         // SAFETY: an option's setter takes any option index and value, and
         // runs here before a second thread exists.

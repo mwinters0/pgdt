@@ -2,8 +2,7 @@
 
 What the phase leaves the next one, and what it tried and refused. The spec is
 [`roadmap-P33-line-bound.md`](roadmap-P33-line-bound.md); the mechanisms'
-decisions are [`decisions.md`](decisions.md), D13's purge-delay clause and
-D138–D165; each crate's part is [`concepts.md`](concepts.md). The per-slice
+decisions are [`decisions.md`](decisions.md), D138–D166; each crate's part is [`concepts.md`](concepts.md). The per-slice
 notes went at the wrap, and git holds them at `c33e3886`. Each slice's
 decision reached the register in the slice that made it or sits beside its
 mechanism in code. The phase filed `KD164`, `KD167` and `KD170`, struck
@@ -94,7 +93,7 @@ owned by P33.
   directory's 12g `unlimited.csv`.
 - **A `purge-delay` or `purge-delay-resident` re-take reads 100 ms twice and
   mimalloc's 1000 ms in no column**, the shipped leg being `PURGE_DELAY_LEGS`'
-  last value, so pricing mimalloc's default (D13's `Reopens`) adds 1000 as a
+  last value, so pricing mimalloc's default (D166's `Reopens`) adds 1000 as a
   stating leg. `measure.py`'s `discovered_budget` and `afforded_readers`
   subtract no `RETAINED_BOUND`, so the bill makes them looser upper bounds.
 
@@ -296,50 +295,19 @@ them; 33.23 reverted both.
 
 ## Negative results
 
-- **Reserving a builder that already holds rows**, rather than cutting the batch
-  before a long nested value: arrow 59's builders have no `reserve`, capacity
-  being `with_capacity`'s alone, and growing one copies the batch's earlier rows
-  beside the reservation. Reading a column's plan off `RowBatcher::plans` on
-  every field raised all four query rows (`runs/count-pair-33.24-20261111/`);
-  the per-field test is the builder's variant (`walks_column`).
-- **The scanner folding an `Option<LongestLine>` per row**: it tests and rebuilds
-  the option every row, 33.11's rise in `CopyScanner::next_event`
-  (`runs/count-pair-33.26-20261112/callgrind/reading.txt`), where measuring a
-  row against the block's longest by its length fell on every control row.
-- **A non-allocating split test beside the `ParseDateTime` port**, for M276's
-  rise: a second statement of I83's buffer the readers could drift from; a cold
-  or inline attribute is D108's codegen-dependent rework.
+- **`cuts_before` reading a column's plan off `RowBatcher::plans` on every
+  field** raised all four query rows (`runs/count-pair-33.24-20261111/`); the
+  per-field test is the builder's variant (`walks_column`).
 - **Zeroing `Unescape`'s stage is about 7% of 33.27's rise in
   `unescape_owned`**; the rest is per escape and short stretch, a `memchr`, an
   out-of-line `escape_at` and the copy into the stage
   (`runs/count-pair-33.27-20261113/callgrind/reading.txt`).
-- **Waking only the next waiter in file order**: a pass has tens of readers, and
-  the admission test enforces the order, not who wakes, so `wake_waiters` wakes
-  every one. Weighed, not measured.
-- **Solving an uncarved estimate's count against the margin's ceiling only when
-  a line is charged**: a one-byte line would cost a fifth of the estimate and
-  `MEMORY_UNPOOLED_BOUND` in readers.
-- **A parked reader gives up its carry**: a line under its chunk term sits in
-  its own buffer, which the per-worker term already bills.
-- **Planning a read once**: `Table::line_charge` and `Table::plan` each resolve
-  and prune every block, neither reading a byte nor on a row's path.
 - **A count pair for the ledger, parking, the floor or the bound**: each adds
   work per chunk or per plan, and D108's trigger is per row or byte.
-- **`pgdt sql -c` over `arrays` as a count-pair row**: its query counts `perf`'s
-  sixteen scalar columns, so no nested builder runs; the typed `query` over
-  `arrays` is the only row pricing nested decoding.
-- **A purge delay between 10 and 100 ms**: 10 ms keeps most of what 100 ms does
-  over zero and resolves four `purge-delay` rows slower against 100 ms's two
-  (`runs/p33.32.1-query-grid-20261118-0341/readings.txt`). **One above 100 ms**
-  keeps more on 33.7's query run, at 125 and 150 ms one rep of three holding its
-  2 GiB and at 200 and 250 ms none; a longer default re-reads `RETAINED_BOUND`'s
-  grid first.
-- **The purge delay set at compile time or without `unsafe`**: v3's `options.c`
-  hard-codes 1000 ms with no define, `libmimalloc-sys` passes none, the
-  `mimalloc` crate exposes no option, and setting the variable in `main` comes
-  after mimalloc has read it (`alloc::configure`, D13).
-- **An instruction count pricing a purge delay**: a purge is an `madvise` and the
-  faults after it, system time `instructions:u` never sees; `cpu_seconds`
-  carries it.
+- **What the purge delay's alternatives read**: 10 ms keeps most of what 100 ms
+  does over zero and resolves four `purge-delay` rows slower against 100 ms's two
+  (`runs/p33.32.1-query-grid-20261118-0341/readings.txt`); above 100 ms, 33.7's
+  query run at 125 and 150 ms held its 2 GiB on one rep of three, and at 200 and
+  250 ms on none (D166).
 - **The query run's shape**, one block through `pgdt sql` rather than a
   whole-table read or `pgdt query`, is the spec's ("How it is shown").

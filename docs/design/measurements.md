@@ -4451,7 +4451,7 @@ costs" gives — a parse streaming its line, a query holding its line and what
 its plan's factor bounds. The previous sitting, at `4cb97fd4`, is
 `runs/measure-20261117T020756/tables.md`. Every leg states the same allowance
 there and here, and the shipped build differs in two things a leg can see:
-mimalloc's purge delay, its own 1000 ms there and `pgdt`'s 100 ms here (D13),
+mimalloc's purge delay, its own 1000 ms there and `pgdt`'s 100 ms here (D166),
 and `RETAINED_BOUND`'s bill off the margin's ceiling, the ledger's room and the
 floor (D165); every other change between is a comment or the `introspect`
 build's. Each planned factor reads as it did there. The launch's log is

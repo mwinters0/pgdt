@@ -46,18 +46,19 @@ earlier waiters; the earliest unadmitted, or statistics past the room, ask later
 the leftmost line progresses, a suspended holder keeps its buffer, statistics never hang on a line. Alone, the earliest
 passes the room, never asked, up to the floor (D161), once later readers park (D163). Rejected: dropping a waiter's
 buffer; giving up on every wait; a bound per worker; the cap, lending the margin; a fixed split; first come; `held` off
-the room, a back-fill billed twice; an uncarved estimate's room unmargined, past halving. Code: `ledger.rs`. Evidence:
-`ledger/tests.rs`.
+the room, a back-fill billed twice; an uncarved estimate's room unmargined, past halving; waking only the next waiter,
+the admission test keeping file order, not the wake. Code: `ledger.rs`. Evidence: `ledger/tests.rs`.
 
 ### D160 A read over mapped blocks carves its longest line at its query's factor, then plans under that arrangement
-`Table::line_charge` answers the longest line of the blocks the read holds rows of, at its query's factor, zero where
-it fits its chunk; `pgdt query` and each provider scan carve it (`ArrangementRequest::line_charge`, D157), and
+`Table::line_charge` answers the longest line of the blocks the read holds rows of, at its query's factor, zero where it
+fits its chunk; `pgdt query` and each provider scan carve it (`ArrangementRequest::line_charge`, D157), and
 `Table::plan` takes that arrangement whole; a live scan's charge is each later draw's `held`. A block pruned whole, or
-whose plan reads no field, is passed over, its long rows streamed whatever a dynamic filter reads (D138). Why: the
-line fits beside its readers, lent by no later scan's ledger; a count and a ledger meet only as carved together (D83).
+whose plan reads no field, is passed over, its long rows streamed whatever a dynamic filter reads (D138). Why: the line
+fits beside its readers, lent by no later scan's ledger; a count and a ledger meet only as carved together (D83).
 Rejected: a kept run's own longest, unbounded by a block's record; asking a dynamic filter, arriving after the draw
-(D95); a ledger in `QueryOptions`; one per session, for `KD38`'s slack. Code: `line_charge`,
-`ScanBudget::draw`. Evidence: `tests/ledger.rs`, `budget.rs`.
+(D95); a ledger in `QueryOptions`; one per session, for `KD38`'s slack; `line_charge` handing `plan` the blocks it
+resolved and pruned, neither reading a byte nor on a row's path. Code: `line_charge`, `ScanBudget::draw`. Evidence:
+`tests/ledger.rs`, `budget.rs`.
 
 ### D161 A line one reader cannot hold is refused at the floor, whatever the count, a mapped read before its first byte
 `Arrangement::resolve` gives a limited ledger a `Floor`: the cap, or the margin's ceiling where higher, less what others
@@ -75,8 +76,9 @@ reading: a compressed source's block-pool depth is theirs, its retained blocks d
 any pool's free buffers over a lowered limit dropped then. Why: a ledger lending a parked reader's term needs its bytes
 gone now, not at the next decode. Rejected: re-announcing a smaller `Parallelism`, which moves the budget `block_path`
 and the cut read mid-run; a chunk pool shrinking per reader, its depth flat in the count (`KD24`); a count the pass
-sets, which concurrent parkers overwrite. Code: `DecodeBudget::hint_parked`, `BlockCache::give_back`. Evidence:
-`blocks/tests.rs`, `pool/tests.rs`.
+sets, which concurrent parkers overwrite; giving up its carry, a line under its chunk term sitting in a buffer the
+per-worker term bills. Code: `DecodeBudget::hint_parked`, `BlockCache::give_back`. Evidence: `blocks/tests.rs`,
+`pool/tests.rs`.
 
 ### D163 Lines and statistics past the room park the latest readers; a line alone is admitted once they have
 A reader stands before absorbing a read, a sub-stream aside as it yields. Where lines and statistics hold past the room,
@@ -135,7 +137,8 @@ root-taking readers are crate-private (D106). With no limit found, `pgdt` caps a
 provider's) carves half as an allowance. With `MemAvailable` unreadable `DEFAULT_MEMORY_BUDGET` is the estimate,
 unstated not being unlimited: a cap, which a carving request draws down by what others drew. Rejected: an env var
 overriding the root; the seam public for tests alone; refusing such a recommendation; the default as a cap per scan,
-which multiplies.
+which multiplies; carving the estimate once a line is charged, so a one-byte line costs the margin and
+`MEMORY_UNPOOLED_BOUND` in readers.
 
 ### D12 Workers are `spawn_blocking`; no runtime flavour is imposed
 The library keeps `tokio` at `rt`+`sync` and imposes no runtime flavour, its work being `spawn_blocking`; `pgdt`'s own
@@ -145,13 +148,22 @@ a thread pool of our own; `rayon`. Consequence: cancellation is cooperative (D26
 ### D13 The allocator is the binary's choice; the one binary composes DataFusion's CLI and links mimalloc
 No `#[global_allocator]` in a library. `pgdt` is the one binary, composing `datafusion-cli-pgdump` as `sql`
 unconditionally so every figure times what ships, and links mimalloc as that CLI does, without `override`: C keeps
-libc's `malloc` (`KD109`). It sets mimalloc's purge delay (`PURGE_DELAY_MS`) as a default `MIMALLOC_PURGE_DELAY`
-overrides, an embedder keeping its own, chosen on throughput: leaving zero buys back most of the speed. Rejected: the
-platform allocator, or `override`, off DataFusion's path; `mallopt(M_ARENA_MAX)`, binding C's arenas alone (RT10) and
-overwriting `MALLOC_ARENA_MAX`; DataFusion behind a feature, or a second binary; a library constant re-set for a term
-one allocator alone holds; a delay fitted under one run's allowance. Reopens: a contention figure; a figure where
-another delay's speed outweighs what it keeps; a mimalloc-only gate failure no library change or option reaches.
-Evidence: `allocator`, `purge-delay`, `purge-delay-resident`.
+libc's `malloc` (`KD109`). Its purge delay is the binary's default (D166). Rejected: the platform allocator, or
+`override`, off DataFusion's path; `mallopt(M_ARENA_MAX)`, binding C's arenas alone (RT10) and overwriting
+`MALLOC_ARENA_MAX`; DataFusion behind a feature, or a second binary; a library constant re-set for a term one allocator
+alone holds. Reopens: a contention figure; a mimalloc-only gate failure no library change or option reaches. Evidence:
+`allocator`.
+
+### D166 `pgdt` sets mimalloc's purge delay first in `main`, a default the environment overrides
+`alloc::configure` sets `PURGE_DELAY_MS` before a second thread exists, `MIMALLOC_PURGE_DELAY` overriding it; an
+embedder linking mimalloc keeps its own. Why: what a scan frees stays resident until its purge, so the delay bounds it
+for every buffer at once, D165 billing what it keeps; a zero delay pays each purge in system time on every scan, and
+this one buys back most of it. Rejected: mimalloc's default, keeping more; zero; a shorter delay, resolved slower on
+more rows; a longer one, keeping more on the reference run, unless `RETAINED_BOUND`'s grid is re-read; a delay fitted
+under one run's allowance; setting it at compile time (v3's `options.c` has no define, and neither `libmimalloc-sys` nor
+`mimalloc` an option); setting the variable in `main`, read as the process loaded; pricing it in `instructions:u`, blind
+to a purge's `madvise` and faults. Reopens: a figure where another delay's speed outweighs what it keeps. Evidence:
+`purge-delay`, `purge-delay-resident`, `runs/p33.32.1-query-grid-20261118-0341/`.
 
 ### D165 What the allocator keeps of what it frees is one bound the binary states, held beside every arrangement
 What mimalloc keeps under `pgdt`'s purge delay is one bound the binary states (`RETAINED_BOUND`); an embedder states its

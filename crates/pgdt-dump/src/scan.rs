@@ -573,7 +573,8 @@ impl CopyScanner {
 
     /// Measure a row of the open block, `len` bytes at `offset`, against its
     /// longest so far: kept only where strictly longer, so the earliest of
-    /// the longest stands, as [`LongestLine::fold`] answers.
+    /// the longest stands, as [`LongestLine::fold`] answers
+    /// (`docs/design/decisions.md`, "D140").
     fn measure(&mut self, offset: u64, len: u64) {
         debug_assert!(len > 0, "a row is never empty");
         if len > self.longest.len {

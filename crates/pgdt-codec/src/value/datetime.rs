@@ -130,7 +130,7 @@ fn unsigned_part(s: &str) -> Option<i64> {
 /// which opens one more, and every byte but a space is held with a terminator
 /// per field: so it needs at most its length and two bytes, and only a longer
 /// one is put to [`parse_date_time_splits`], whose only refusal of it can then
-/// be the buffer's.
+/// be the buffer's (`docs/design/decisions.md`, "D55").
 pub(crate) fn within_workbuf(s: &str, buflen: usize) -> Read<()> {
     if s.len() + 2 <= buflen || parse_date_time_splits(s, buflen) {
         Ok(())

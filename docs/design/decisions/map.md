@@ -82,5 +82,6 @@ held or streamed (D138), the interior's pieces fold theirs in file order — fin
 holds it. A fact of the dump's bytes, which a read over mapped blocks plans its charge from; a back-fill holds it to the
 record as it does the row count. Rejected: persisting the charge, which moves with the build; recording it at the data
 level only, which a metadata-level parse finds for free; showing it in `info`'s default listing, read to choose what to
-query: it is an offset, beside the four `--detail` adds, and a line refused names itself. Evidence: `pgdt-mapping`'s
-`tests/longest_line.rs`.
+query: it is an offset, beside the four `--detail` adds, and a line refused names itself; folding an
+`Option<LongestLine>` per row, tested and rebuilt at each, where `CopyScanner` holds a row's length against the
+longest's. Evidence: `pgdt-mapping`'s `tests/longest_line.rs`, `runs/count-pair-33.26-20261112/`.

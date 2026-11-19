@@ -40,8 +40,9 @@ factors (D152). Why: a buffer doubling past its chunk term holds its outgrown on
 the held line is. Rejected: doubling, a batch's (D141); every factor doubled; the densest buffer alone (another
 doubles); the largest charged, the unwritten rest free (aborting past admission under a strict overcommit or an
 address-space limit); counting parts first to reserve exactly (a second read); summing the two kinds; a factor per type
-in pgdt-codec. Code: `batch/builder/factor.rs`, `RowBatcher::cuts_before`, `ReplayPlan::factor`. Evidence:
-`factor/tests.rs`, `tests/decoded_copies.rs`.
+in pgdt-codec; reserving builders already holding rows, not cutting before the value: arrow's builders reserve only as
+built, so growing one copies its rows. Code: `batch/builder/factor.rs`, `RowBatcher::cuts_before`, `ReplayPlan::factor`.
+Evidence: `factor/tests.rs`, `tests/decoded_copies.rs`.
 
 ### D159 A query's drawn line ends its batch, and a replay returns every draw before it yields
 A replay draws a line held past its chunk term as a parse does (D158), charged its bytes and its query's factor of them
