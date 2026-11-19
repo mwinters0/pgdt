@@ -158,20 +158,27 @@ pub(super) fn split_top_level_commas(s: &str) -> Vec<&str> {
 /// starting at `s`'s first non-whitespace byte, ending at its closing quote;
 /// whatever follows that is not read.
 pub(super) fn parse_string_literal(s: &str) -> Option<String> {
-    let mut chars = s.trim().chars().peekable();
-    if chars.next() != Some('\'') {
+    string_literal_prefix(s).map(|(literal, _)| literal)
+}
+
+/// [`parse_string_literal`], answering also what follows the closing quote,
+/// for a grammar reading on past it.
+pub(super) fn string_literal_prefix(s: &str) -> Option<(String, &str)> {
+    let s = s.trim_start();
+    let mut chars = s.char_indices().peekable();
+    if chars.next().map(|(_, c)| c) != Some('\'') {
         return None;
     }
     let mut out = String::new();
     loop {
-        let c = chars.next()?;
+        let (i, c) = chars.next()?;
         if c == '\'' {
-            if chars.peek() == Some(&'\'') {
+            if chars.peek().map(|&(_, c)| c) == Some('\'') {
                 chars.next();
                 out.push('\'');
                 continue;
             }
-            return Some(out);
+            return Some((out, &s[i + 1..]));
         }
         out.push(c);
     }

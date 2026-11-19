@@ -8,7 +8,9 @@ use pgdt_codec::compare::{CompareKind, ComparisonPlan};
 use pgdt_codec::pgtype::{NestedPlan, RANGE_STRUCT_FIELDS};
 use pgdt_codec::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdt_mapping::{StrictUnchecked, strict_unchecked};
-use pgdt_model::{ArrayShape, DataBlock, DumpIndex, Span, SpanBody, TableReference, TypeKind};
+use pgdt_model::{
+    ArrayShape, DataBlock, DumpIndex, LabelPlacement, Span, SpanBody, TableReference, TypeKind,
+};
 
 /// How a database is named in the listing. A `\connect`-less dump has no name
 /// to print, and `(unnamed)` is what the listing calls it — one spelling, so
@@ -257,9 +259,15 @@ pub(super) fn span_summary(span: &Span) -> String {
         }
         SpanBody::Connect { database } => format!("\\connect {database}"),
         SpanBody::VersionHeader { .. } => "version header".to_string(),
-        SpanBody::AlterTypeAddValue { type_name, label } => {
-            format!("ALTER TYPE {type_name} ADD VALUE {label:?}")
-        }
+        SpanBody::AlterTypeAddValue { type_name, label, placement } => match placement {
+            None => format!("ALTER TYPE {type_name} ADD VALUE {label:?}"),
+            Some(LabelPlacement::Before(neighbour)) => {
+                format!("ALTER TYPE {type_name} ADD VALUE {label:?} BEFORE {neighbour:?}")
+            }
+            Some(LabelPlacement::After(neighbour)) => {
+                format!("ALTER TYPE {type_name} ADD VALUE {label:?} AFTER {neighbour:?}")
+            }
+        },
         SpanBody::AlterTypeDropAttribute { type_name, attribute } => {
             format!("ALTER TYPE {type_name} DROP ATTRIBUTE {attribute:?}")
         }

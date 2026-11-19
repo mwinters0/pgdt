@@ -321,11 +321,6 @@ than reading as a phase nobody has sliced.
   parse refuses it, so promoted by a query wanted to refuse it without one.
   Detail: `crates/pgdt-query/src/batch/builder.rs`.
 
-- **KD89** — an `ALTER TYPE … ADD VALUE … BEFORE` or `AFTER`, which no
-  `pg_dump` writes, is folded as if it appended the label, so an ordering
-  filter and the bounds it prunes by order that label last where the server
-  does not. **(b) owned by `M290`**. Detail: `crates/pgdt-dump/src/ddl/types.rs`.
-
 - **KD96** — a `varchar(n)` or `char(n)` field is read as written, not as
   PostgreSQL stores it (I75): one longer than `n` only by trailing blanks
   keeps them, and a `char(n)` one shorter than `n` is not padded, neither of

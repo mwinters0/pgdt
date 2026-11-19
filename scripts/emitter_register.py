@@ -1069,6 +1069,8 @@ READS: tuple[Read | Clause, ...] = (
     *_clauses(_DDL, ("CREATE TABLE",), "INHERITS", "FOREIGN", "LIKE", "EXCLUDE", "USING"),
     *_clauses(_DDL, ("CREATE TABLE", "ALTER TABLE"), "FOR", "VALUES", "IN", "WITH", "FROM", "TO"),
     *_clauses(_DDL, ("ALTER TABLE",), "ONLY", "COLUMN"),
+    # An added label's placement, which no `pg_dump` writes; a hand-written dump can.
+    *_clauses(_DDL, ("ALTER TYPE",), "BEFORE", "AFTER"),
     *_clauses(_DDL, ("CREATE EXTENSION",), "IF NOT EXISTS", "SCHEMA"),
     *_clauses(_DDL, ("CREATE COLLATION",), "deterministic", "false"),
     *_clauses(_DDL, ("CREATE TYPE",), "subtype", "multirange_type_name", "canonical", "delimiter"),

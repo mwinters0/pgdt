@@ -1403,7 +1403,7 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
 /// The persisted format version and the digest of every fixture's persisted
 /// index it was pinned beside, re-pinned together
 /// (`persisted_index_is_pinned_to_the_format_version`).
-const PERSISTED_INDEX: (u32, u64) = (86, 792_325_988_727_546_045);
+const PERSISTED_INDEX: (u32, u64) = (87, 8_617_095_081_735_352_639);
 
 /// **Every fixture's persisted [`DumpIndex`](pgdt_model::DumpIndex)
 /// digests to the value pinned beside `CACHE_FORMAT_VERSION`.** A cache saved

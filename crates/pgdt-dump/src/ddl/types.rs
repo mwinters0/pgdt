@@ -9,11 +9,12 @@ use super::column::{
 };
 use super::syntax::{
     find_ci, holds_word, matching_paren, parse_string_literal, split_top_level_commas,
+    string_literal_prefix,
 };
 use crate::lex::strip_kw;
 use pgdt_core::internal::Cursor;
 use pgdt_core::internal::{canonical_type_name, parse_type_name};
-use pgdt_model::{CollationDef, Extension, TypeDef, TypeKind};
+use pgdt_model::{CollationDef, Extension, LabelPlacement, TypeDef, TypeKind};
 
 /// `CREATE TYPE <name>` in any of its six shapes, which reach five of
 /// [`TypeKind`]'s variants — [`TypeKind::Domain`] comes from
@@ -171,24 +172,33 @@ pub(super) fn parse_create_extension(rest: &str) -> Option<Extension> {
 }
 
 /// Parse the body of `ALTER TYPE <name> ADD VALUE '<label>' [BEFORE|AFTER
-/// '<other>'];` — the `--binary-upgrade` shape for enum labels (I6) — after
-/// `ALTER TYPE` has already been stripped. `BEFORE`/`AFTER` is ignored: a
-/// `--binary-upgrade` dump only ever emits these in declaration order
-/// (`fixtures/*/types/binary-upgrade.sql`), so appending is equivalent to
-/// respecting them. Used by [`classify`](super::classify) to recognize the statement
+/// '<neighbour>'];`, after `ALTER TYPE` has already been stripped, as the
+/// type, the label and where it is placed: the `--binary-upgrade` shape for
+/// enum labels (I6), which appends each in declaration order, or a
+/// hand-written one placing it beside another. `None` for anything more,
+/// which [`alter_type_labels_unread`] reads as a change to the labels unread.
+/// Used by [`classify`](super::classify) to recognize the statement
 /// as its own [`pgdt_model::SpanBody::AlterTypeAddValue`] span, since that
 /// module has no already-open `TypeDef` to fold into the way
 /// `fold_alter_type_add_value` does for
 /// [`dump_metadata_from_spans`](super::dump_metadata_from_spans).
-// deficiency: KD89 — a hand-written `ADD VALUE … BEFORE` or `AFTER` placing
-// the label anywhere but last is folded as appended, so the label orders after
-// every other: an ordering term, a group's bounds and the pruning they drive
-// place it where the server does not, and a query can lose its rows.
-pub(super) fn parse_alter_type_add_value_body(rest: &str) -> Option<(String, String)> {
+pub(super) fn parse_alter_type_add_value_body(
+    rest: &str,
+) -> Option<(String, String, Option<LabelPlacement>)> {
     let (name, consumed) = parse_type_name(rest)?;
     let after = strip_kw(strip_kw(rest[consumed..].trim_start(), "ADD")?, "VALUE")?;
-    let label = parse_string_literal(after)?;
-    Some((name, label))
+    let (label, after) = string_literal_prefix(after)?;
+    let after = after.trim_start();
+    let (placement, after) = if let Some(neighbour) = strip_kw(after, "BEFORE") {
+        let (neighbour, after) = string_literal_prefix(neighbour)?;
+        (Some(LabelPlacement::Before(neighbour)), after)
+    } else if let Some(neighbour) = strip_kw(after, "AFTER") {
+        let (neighbour, after) = string_literal_prefix(neighbour)?;
+        (Some(LabelPlacement::After(neighbour)), after)
+    } else {
+        (None, after)
+    };
+    (after.trim() == ";").then_some((name, label, placement))
 }
 
 /// Whether the body of an `ALTER TYPE`, after `ALTER TYPE` has been stripped,

@@ -1921,8 +1921,10 @@ value:
   scale that is the order of their unscaled integers; for a column that keeps
   its own scale per value it is the order of sign, then magnitude, then
   fraction, over the digits `numeric_out` wrote.
-- **enum** — ordered by `pg_enum.enumsortorder`, which `AddEnumLabel`
-  assigns from **declaration order**, never by the label text.
+- **enum** — ordered by `pg_enum.enumsortorder`, which `CREATE TYPE … AS
+  ENUM` and an appending `ADD VALUE` assign in **declaration order**, and an
+  `ADD VALUE … BEFORE` or `AFTER` between the neighbour it names and that
+  neighbour's own neighbour on that side — never by the label text.
 
 **Proof.** `src/include/utils/float.h`:
 
@@ -1940,7 +1942,11 @@ float8_gt(const float8 val1, const float8 val2)
 length tiebreak. `boolgt` (`src/backend/utils/adt/bool.c`) is `arg1 > arg2`.
 `enum_cmp_internal` (`src/backend/utils/adt/enum.c`) compares OIDs on the fast
 path and `enumsortorder` otherwise, and `pg_enum.c` fills `enumsortorder` with
-`elemno + 1` in declaration order.
+`elemno + 1` in declaration order. `AddEnumLabel` gives an appended label the
+largest order plus one, and one with a `neighbor` the neighbour's order minus or
+plus one at either end and otherwise the midpoint of the two, renumbering the
+type first where they are adjacent, after an `"%s" is not an existing enum
+label` error for a neighbour the type lacks.
 
 `numeric`'s scale-independence is `cmp_numerics`' non-special branch, which
 delegates to `cmp_var_common` — a comparison of sign, then weight, then
@@ -1961,12 +1967,15 @@ about the nested types, whose comparison stays a string comparison.
 master — all seven carry the `float8_gt` and `uuid_internal_cmp` bodies quoted
 above verbatim, and in all seven `cmp_numerics`' non-special branch is the one
 `cmp_var_common` call quoted above and `numeric_out` ends in
-`get_str_from_var`. v13's `numeric_out` handles `NaN` alone; v14+ handle the
+`get_str_from_var`, and `AddEnumLabel`'s `neighbor` and `newelemorder` lines are
+identical. v13's `numeric_out` handles `NaN` alone; v14+ handle the
 infinities as well (I34).
 
 **Relied on by.** The comparison register's *Agrees* and enum rows —
 [`decisions.md`](decisions.md), "D55";
-`compare/walk.rs`'s `comparison_for` and `key/order.rs`'s `pg_float_cmp`.
+`compare/walk.rs`'s `comparison_for` and `key/order.rs`'s `pg_float_cmp`;
+`pgdt-dump`'s `ddl/metadata.rs`, `fold_alter_type_add_value`, placing a label
+beside its neighbour.
 
 **Re-verify.**
 
@@ -1976,6 +1985,7 @@ grep -n -A3 'float8_gt(const float8' src/include/utils/float.h
 grep -n 'memcmp(arg1->data, arg2->data, UUID_LEN)' src/backend/utils/adt/uuid.c
 awk '/^byteacmp/,/^}/' src/backend/utils/adt/varlena.c
 grep -n 'Anum_pg_enum_enumsortorder' src/backend/catalog/pg_enum.c
+awk '/^AddEnumLabel\(/,/^}$/' src/backend/catalog/pg_enum.c | grep -n 'neighbor\|newelemorder'
 grep -n -A8 'cmp_var_common(NUMERIC_DIGITS' src/backend/utils/adt/numeric.c
 awk '/^numeric_out\(PG_FUNCTION_ARGS\)/,/^}/' src/backend/utils/adt/numeric.c
 ```

@@ -1,8 +1,8 @@
 use super::*;
 use pgdt_core::CopyHeader;
 use pgdt_model::{
-    CompressedContainer, DataBlock, DiagnosticKind, Finding, Span, SpanBody, TocHeader, TypeKind,
-    UnrepresentableTier,
+    CompressedContainer, DataBlock, DiagnosticKind, Finding, LabelPlacement, Span, SpanBody,
+    TocHeader, TypeKind, UnrepresentableTier,
     internal::{FieldCount, Kept},
 };
 
@@ -602,8 +602,67 @@ fn binary_upgrade_add_value_becomes_its_own_span() {
         SpanBody::AlterTypeAddValue {
             type_name: "public.mood".to_string(),
             label: "sad".to_string(),
+            placement: None,
         }
     );
+}
+
+/// A hand-written `ADD VALUE … BEFORE` or `AFTER` places its label beside
+/// the neighbour it names, which is where `AddEnumLabel` puts it in the
+/// type's sort order (I33): the folded labels are `pg_enum`'s order, not the
+/// order the statements came in. One naming a neighbour no label read here
+/// carries places it nowhere this can say, so the label is left out and the
+/// enum inexact; one carrying more than a placement is not read at all.
+#[test]
+fn an_added_label_is_placed_beside_its_neighbour() {
+    let labels = |lines: &[&str]| -> (Vec<String>, bool) {
+        let metadata = crate::ddl::dump_metadata_from_spans(&spans_of(lines));
+        match &metadata.databases[0].types[0].kind {
+            TypeKind::Enum { labels, exact } => (labels.clone(), *exact),
+            other => panic!("{other:?}"),
+        }
+    };
+    let owned = |labels: &[&str]| labels.iter().map(ToString::to_string).collect::<Vec<_>>();
+    let declared = "CREATE TYPE public.mood AS ENUM ('sad', 'ok', 'happy');";
+    assert_eq!(
+        labels(&[
+            declared,
+            "ALTER TYPE public.mood ADD VALUE 'awful' BEFORE 'sad';",
+            "ALTER TYPE public.mood ADD VALUE 'meh' AFTER 'sad';",
+            "ALTER TYPE public.mood ADD VALUE 'fine' after  'ok' ;",
+            "ALTER TYPE public.mood ADD VALUE 'ecstatic';",
+            "ALTER TYPE public.mood ADD VALUE 'glad' BEFORE 'ecstatic';",
+        ]),
+        (owned(&["awful", "sad", "meh", "ok", "fine", "happy", "glad", "ecstatic"]), true)
+    );
+    assert_eq!(
+        spans_of(&["ALTER TYPE public.mood ADD VALUE 'it''s' BEFORE 'o''k';"])[0].body,
+        SpanBody::AlterTypeAddValue {
+            type_name: "public.mood".to_string(),
+            label: "it's".to_string(),
+            placement: Some(LabelPlacement::Before("o'k".to_string())),
+        }
+    );
+    assert_eq!(
+        labels(&[declared, "ALTER TYPE public.mood ADD VALUE 'meh' AFTER 'fine';"]),
+        (owned(&["sad", "ok", "happy"]), false)
+    );
+    for unread in [
+        "ALTER TYPE public.mood ADD VALUE 'meh' AFTER E'sad';",
+        "ALTER TYPE public.mood ADD VALUE 'meh' BESIDE 'sad';",
+        "ALTER TYPE public.mood ADD VALUE 'meh' AFTER 'sad' AFTER 'ok';",
+    ] {
+        assert_eq!(
+            spans_of(&[unread])[0].body,
+            SpanBody::EnumLabelsUnread { type_name: Some("public.mood".to_string()) },
+            "{unread}"
+        );
+        assert_eq!(
+            labels(&[declared, unread]),
+            (owned(&["sad", "ok", "happy"]), false),
+            "{unread}"
+        );
+    }
 }
 
 /// So does its `ALTER TYPE ... DROP ATTRIBUTE ...;`, the fold removing the

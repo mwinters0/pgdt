@@ -582,18 +582,21 @@ pub struct TypeDef {
 /// the variants below.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TypeKind {
-    /// Fully determined by the DDL — labels in declaration order. A
-    /// `--binary-upgrade` dump emits these via a separate `ALTER TYPE ADD
-    /// VALUE` per label (I6); `pgdt_dump`'s `ddl::metadata::fold_alter_type_add_value` folds them back
-    /// in here so both forms produce the same shape.
+    /// Fully determined by the DDL — labels in sort order (I33), which is
+    /// declaration order but for a label an `ADD VALUE` placed `BEFORE` or
+    /// `AFTER` another. A `--binary-upgrade` dump emits these via a separate
+    /// `ALTER TYPE ADD VALUE` per label (I6); `pgdt_dump`'s
+    /// `ddl::metadata::fold_alter_type_add_value` folds them back in here so
+    /// both forms produce the same shape.
     ///
     /// `exact` says the labels are every label the type holds when its
     /// database's preamble ends, which is what makes a field naming another
     /// one a refusal (I70). It is cleared by a label no plain `'…'` literal spells
     /// and by an `ALTER TYPE` that could change the labels and is not read —
-    /// `RENAME VALUE`, `ADD VALUE IF NOT EXISTS`, and any naming a type no
-    /// definition here carries, which clears every enum's
-    /// (`pgdt_dump`'s `ddl::metadata::fold_enum_labels_unread`). Nothing `pg_dump` writes clears it.
+    /// `RENAME VALUE`, `ADD VALUE IF NOT EXISTS`, an `ADD VALUE` placed beside
+    /// a label not read, and any naming a type no definition here carries,
+    /// which clears every enum's (`pgdt_dump`'s
+    /// `ddl::metadata::fold_enum_labels_unread`). Nothing `pg_dump` writes clears it.
     Enum { labels: Vec<String>, exact: bool },
     /// Reduces to a base type, resolved transitively by [`pgdt_codec::pgtype`] (a
     /// domain over a domain is legal).

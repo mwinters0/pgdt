@@ -198,13 +198,16 @@ pub enum SpanBody {
         server_version: Option<String>,
         pg_dump_version: Option<String>,
     },
-    /// A `--binary-upgrade` dump's `ALTER TYPE <name> ADD VALUE '<label>'
-    /// ...;` (I6) — recognized so
-    /// [`pgdt_dump::dump_metadata_from_spans`] can fold the label into
-    /// the [`TypeDef`](SpanBody::TypeDef) span it targets.
+    /// A `--binary-upgrade` dump's `ALTER TYPE <name> ADD VALUE '<label>';`
+    /// (I6), or a hand-written one placing the label `BEFORE` or `AFTER`
+    /// another — recognized so [`pgdt_dump::dump_metadata_from_spans`] can
+    /// fold the label into the [`TypeDef`](SpanBody::TypeDef) span it
+    /// targets. `placement` is `None` for the label appended, which is all
+    /// `pg_dump` writes.
     AlterTypeAddValue {
         type_name: String,
         label: String,
+        placement: Option<LabelPlacement>,
     },
     /// A `--binary-upgrade` dump's `ALTER TYPE <name> DROP ATTRIBUTE
     /// <attr>;`, dropping a composite's placeholder for an attribute the type
@@ -250,6 +253,15 @@ pub enum SpanBody {
     /// (`docs/design/decisions.md`, "D30"). Never produced by `pgdt_mapping::build_map`,
     /// which always scans to EOF; an incremental scan is what emits one.
     Unscanned,
+}
+
+/// Where an `ALTER TYPE … ADD VALUE` places its label: `BEFORE` or `AFTER`
+/// the existing label named, which the server places it beside in the type's
+/// sort order. No `pg_dump` writes one; a hand-written dump can.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LabelPlacement {
+    Before(String),
+    After(String),
 }
 
 /// One located COPY block.

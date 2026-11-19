@@ -956,8 +956,10 @@ An enum's labels are written into the dump, so an enum column maps to
 `--binary-upgrade`, which writes the labels differently — we read both forms, so
 this should be invisible to you. A genuinely empty enum falls back to a string.
 
-Because the labels come with their declaration order, `<`, `<=`, `>` and `>=`
-on an enum column order by that, which is what PostgreSQL does: on a type
+Because the labels come with their declaration order — a label an `ALTER TYPE
+… ADD VALUE` placed `BEFORE` or `AFTER` another sitting where it was placed —
+`<`, `<=`, `>` and `>=` on an enum column order by that, which is what
+PostgreSQL does: on a type
 declared `('low','medium','high')`, `--filter 'level>low'` keeps the `medium`
 and `high` rows, not the alphabetical ones. A value that is not one of the
 declared labels is reported as a decode error rather than being compared, on
@@ -1091,7 +1093,8 @@ those it gathers statistics of. `query` has no `strict`.
 
 An enum label its type does not declare fails `parse` too, unless the dump
 changes the type's labels in a way pgdt does not read — an `ALTER TYPE …
-RENAME VALUE`, an `ADD VALUE IF NOT EXISTS`, a label written `E'…'` — when it
+RENAME VALUE`, an `ADD VALUE IF NOT EXISTS`, a label written `E'…'`, an `ADD
+VALUE … BEFORE` or `AFTER` a label pgdt has not read — when it
 cannot tell such a label from one it missed, and goes on past it. `pgdt info
 --detail` says which types those are, listing their labels with `(labels not
 read exactly)` after them.

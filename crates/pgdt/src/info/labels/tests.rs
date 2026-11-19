@@ -173,3 +173,33 @@ fn every_type_kind_renders_with_its_own_payload() {
     assert_eq!(type_kind_summary(&TypeKind::base()), "base type");
     assert_eq!(type_kind_summary(&TypeKind::Shell), "shell type");
 }
+
+/// `--map` names where an `ADD VALUE` places its label, as the statement
+/// wrote it, and says nothing of placement for one appending.
+#[test]
+fn an_added_label_s_placement_is_printed() {
+    let summary = |placement| {
+        span_summary(&Span {
+            start: 0,
+            end: 1,
+            database: None,
+            text: None,
+            toc: None,
+            toc_owned: false,
+            body: SpanBody::AlterTypeAddValue {
+                type_name: "public.mood".to_string(),
+                label: "meh".to_string(),
+                placement,
+            },
+        })
+    };
+    assert_eq!(summary(None), "ALTER TYPE public.mood ADD VALUE \"meh\"");
+    assert_eq!(
+        summary(Some(LabelPlacement::Before("ok".to_string()))),
+        "ALTER TYPE public.mood ADD VALUE \"meh\" BEFORE \"ok\""
+    );
+    assert_eq!(
+        summary(Some(LabelPlacement::After("sad".to_string()))),
+        "ALTER TYPE public.mood ADD VALUE \"meh\" AFTER \"sad\""
+    );
+}

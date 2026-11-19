@@ -66,8 +66,8 @@ use pgdt_model::{Extension, SpanBody, TypeDef};
 /// the `CREATE` shapes introducing one ([`classify_create`]).
 pub(crate) fn classify(stmt: &str) -> SpanBody {
     if let Some(rest) = strip_kw(stmt.trim_start(), "ALTER TYPE") {
-        if let Some((type_name, label)) = parse_alter_type_add_value_body(rest) {
-            return SpanBody::AlterTypeAddValue { type_name, label };
+        if let Some((type_name, label, placement)) = parse_alter_type_add_value_body(rest) {
+            return SpanBody::AlterTypeAddValue { type_name, label, placement };
         }
         if let Some((type_name, attribute)) = parse_alter_type_drop_attribute_body(rest) {
             return SpanBody::AlterTypeDropAttribute { type_name, attribute };

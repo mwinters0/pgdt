@@ -4,7 +4,9 @@
 //! folded into the definitions they amend.
 
 use pgdt_model::internal::{DatabaseMetadataExt, TableDefExt};
-use pgdt_model::{DatabaseMetadata, DumpMetadata, Extension, Span, SpanBody, TypeDef, TypeKind};
+use pgdt_model::{
+    DatabaseMetadata, DumpMetadata, Extension, LabelPlacement, Span, SpanBody, TypeDef, TypeKind,
+};
 
 /// Build a [`DumpMetadata`] by walking already-classified [`pgdt_model::Span`]s
 /// instead of raw lines — the derived view `docs/design/decisions.md`'s "D34"
@@ -99,8 +101,10 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
             SpanBody::Extension { name, schema } if !current.preamble_complete => {
                 current.extensions.push(Extension { name: name.clone(), schema: schema.clone() });
             }
-            SpanBody::AlterTypeAddValue { type_name, label } if !current.preamble_complete => {
-                fold_alter_type_add_value(&mut current.types, type_name, label);
+            SpanBody::AlterTypeAddValue { type_name, label, placement }
+                if !current.preamble_complete =>
+            {
+                fold_alter_type_add_value(&mut current.types, type_name, label, placement.as_ref());
             }
             SpanBody::AlterTypeDropAttribute { type_name, attribute }
                 if !current.preamble_complete =>
@@ -164,14 +168,36 @@ fn record_type(types: &mut Vec<TypeDef>, name: &str, kind: &TypeKind) {
 /// encounters the label as its own [`pgdt_model::SpanBody::AlterTypeAddValue`]
 /// span, separate from the [`pgdt_model::SpanBody::TypeDef`] span it targets.
 ///
+/// The label is appended, or placed `BEFORE` or `AFTER` the neighbour it
+/// names, as `AddEnumLabel` places it in the type's sort order (I33). A
+/// neighbour among no labels read here — one a statement this grammar does
+/// not read added or renamed — places the label nowhere this can say, so it
+/// is left out and the enum inexact, as [`fold_enum_labels_unread`] leaves it:
+/// a field naming it is then unread rather than ordered in the wrong place.
+///
 /// A name no definition here carries leaves every enum inexact, as
 /// [`fold_enum_labels_unread`] does: the server may resolve it to one of
 /// them (an unqualified name under a `search_path`) where this does not.
-fn fold_alter_type_add_value(types: &mut [TypeDef], type_name: &str, label: &str) {
-    match types.iter_mut().find(|t| t.name == type_name) {
-        Some(TypeDef { kind: TypeKind::Enum { labels, .. }, .. }) => labels.push(label.to_string()),
-        Some(_) => {}
-        None => fold_enum_labels_unread(types, None),
+fn fold_alter_type_add_value(
+    types: &mut [TypeDef],
+    type_name: &str,
+    label: &str,
+    placement: Option<&LabelPlacement>,
+) {
+    let Some(position) = types.iter().position(|t| t.name == type_name) else {
+        return fold_enum_labels_unread(types, None);
+    };
+    let TypeKind::Enum { labels, exact } = &mut types[position].kind else { return };
+    let at = match placement {
+        None => Some(labels.len()),
+        Some(LabelPlacement::Before(neighbour)) => labels.iter().position(|l| l == neighbour),
+        Some(LabelPlacement::After(neighbour)) => {
+            labels.iter().position(|l| l == neighbour).map(|i| i + 1)
+        }
+    };
+    match at {
+        Some(at) => labels.insert(at, label.to_string()),
+        None => *exact = false,
     }
 }
 

@@ -19,11 +19,13 @@ fn binary_upgrade_enum_labels_arrive_via_alter_type() {
         span(SpanBody::AlterTypeAddValue {
             type_name: "public.mood".to_string(),
             label: "sad".to_string(),
+            placement: None,
         }),
         span(SpanBody::Unparsed),
         span(SpanBody::AlterTypeAddValue {
             type_name: "public.mood".to_string(),
             label: "has'quote".to_string(),
+            placement: None,
         }),
     ];
     let meta = dump_metadata_from_spans(&spans);

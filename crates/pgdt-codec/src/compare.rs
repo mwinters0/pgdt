@@ -113,11 +113,12 @@ pub enum CompareKind {
         infinities: bool,
         typmod: Option<NumericTypmod>,
     },
-    /// An enum, compared by each label's position in the type's own
-    /// declaration order (I33) rather than by its text. The labels are
+    /// An enum, compared by each label's position in the type's own sort
+    /// order (I33) rather than by its text. The labels are
     /// `TypeKind::Enum`'s, verbatim and in that order, which is what
     /// `CREATE TYPE … AS ENUM (…)` writes and what a `--binary-upgrade`
-    /// dump's `ALTER TYPE … ADD VALUE` run is folded back into (I6).
+    /// dump's `ALTER TYPE … ADD VALUE` run is folded back into (I6), a label
+    /// placed `BEFORE` or `AFTER` another sitting beside it.
     ///
     /// `exact` is `TypeKind::Enum`'s: the labels are all the type holds, so
     /// a field naming another is one `enum_in` refuses (I70). `name` is the
