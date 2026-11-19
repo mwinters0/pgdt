@@ -18,7 +18,7 @@ use super::WaitPolicy;
 /// alive when chunk *N+1* is read — and every chunk a batch's views point into
 /// is alive until that batch flushes, which this depth does not cover (`KD54`).
 ///
-/// **It is the ceiling on the slot count, and the stated budget lowers it**
+/// **It is the chunk pool's ceiling on the slot count, and the stated budget lowers it**
 /// where a slot is large; the two together are what make a slot able to hold a decoded xz block rather
 /// than only a read chunk.
 ///
@@ -308,7 +308,7 @@ impl BufferPool {
     /// affords it, fewer where a slot is large, never zero.
     ///
     /// **This is what makes the pool block-capable.** At the default chunk it
-    /// is [`POOL_DEPTH`]; at a decoded xz block over half the allowance, it
+    /// is [`POOL_DEPTH`]; at a decoded xz block over half the pool's budget, it
     /// is one.
     pub(super) fn slots(&self) -> usize {
         let depth = self.depth.load(Ordering::Relaxed).max(1);

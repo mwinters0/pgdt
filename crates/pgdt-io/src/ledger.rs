@@ -77,8 +77,8 @@ struct Limits {
 }
 
 /// **The most one line may hold**: what the allowance leaves one reader,
-/// whatever the worker count — the floor a pass's readers are parked down to
-/// before its earliest line is refused — once what stays beside the line is
+/// whatever the worker count — the earliest line admitted alone up to it, its
+/// later holders parked, and any line past it refused at once — once what stays beside the line is
 /// off it, and the allowance that was carved from, both of which a refusal
 /// names (`docs/design/decisions.md`, "D161").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -269,7 +269,7 @@ impl Holder {
     /// **Hold `charge` bytes in all for the line starting at `start`**,
     /// waiting until it is admitted ([`Ledger`]'s order) — the line's whole
     /// charge, never its growth, so a draw no larger than what it holds is
-    /// met at once.
+    /// met at once, unless its holder has been asked to give it up.
     ///
     /// **The earliest line is admitted past the capacity where no other line
     /// holds**, whatever the statistics' draw holds, and never waits on

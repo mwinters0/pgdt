@@ -24,7 +24,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD174 -->
+rather than being deleted. <!-- deficiency-watermark: KD176 -->
 **Every number up to that watermark is allocated, and none is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -315,8 +315,8 @@ than reading as a phase nobody has sliced.
 - **KD88** — a query's typed read of an enum column emits a label the type
   does not declare, which `enum_in` refuses, so such a field no default
   parse keyed — its column at the metadata level, its block declined — is
-  refused only by a query ordering on the column or comparing an array or
-  composite holding it. **(c) unowned**; a strict
+  refused only by a query ordering on the column or comparing an array,
+  composite, range or multirange holding it. **(c) unowned**; a strict
   parse refuses it, so promoted by a query wanted to refuse it without one.
   Detail: `crates/pgdt-query/src/batch/builder.rs`.
 
@@ -617,3 +617,16 @@ than reading as a phase nobody has sliced.
   partition than the arrangement carved. **(c) unowned**; promoted by UF5's fix
   landing or a phase taking up `pgdt sql`'s resident. Detail:
   `crates/pgdt-query/src/stream/replay.rs`.
+
+- **KD175** — a typed read of an array field recurses once per opening brace,
+  bounded by no `MAXDIM`, so a brace run thousands long — which no `pg_dump`
+  writes — overflows the stack rather than failing the field. **(c)
+  unowned**; promoted by a fixture or a user's file holding one. Detail:
+  `crates/pgdt-codec/src/value/nested/output/walk.rs`.
+
+- **KD176** — a query's factor leaves out three keys a term builds whole: a
+  membership's lookup over a `jsonb`, multirange or nested column, a range's
+  bound over `jsonb` or an array, and a nested term's escaped text leaf, so a
+  long field such a term reads is held past its draw. **(c) unowned**;
+  promoted by P40, or a dump whose long field such a term reads. Detail:
+  `crates/pgdt-query/src/predicate/resolve.rs`.

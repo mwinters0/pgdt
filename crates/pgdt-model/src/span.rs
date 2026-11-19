@@ -293,12 +293,12 @@ pub struct CopyBlock {
     /// *different* request declines, and carries this beside them.
     #[serde(default)]
     pub statistics_declined: Option<u64>,
-    /// **The fields its type's `*_in` refuses that a parse told to ignore them
-    /// went past in this block** — per column, its first, quoted, and a count
+    /// **The fields PostgreSQL refuses, by type or `NOT NULL`, that a parse
+    /// told to ignore them went past in this block** — per column, its first, quoted, and a count
     /// — and `None` where no pass gathering it met one so. Recorded by the
     /// mapping pass and merged with a back-fill's re-read
-    /// ([`IgnoredRefusals::merge`]); a parse refusing such fields over this
-    /// map fails with it where it tracks such a column
+    /// ([`IgnoredRefusals::merge`]); a default parse over this map fails
+    /// with it where it tracks such a column, a strict one re-reading the block
     /// ([`pgdt_core::Error::FieldRefusedRecorded`]).
     #[serde(default)]
     pub ignored_refusals: Option<Box<IgnoredRefusals>>,

@@ -283,11 +283,11 @@ pub(crate) fn render_plan_into(
 ///
 /// Each element is rendered where it will be read, and
 /// [`quote_array_element`] moves it aside only if the grammar wants
-/// it quoted, so an `integer[]` of fifty is fifty appends and no allocation
+/// it quoted, so an `integer[]` of fifty is fifty appends and one allocation, the list's slice
 /// (`docs/design/decisions.md`, "D45").
 ///
 /// Lower bounds are always 1, so no `[lb:ub]=` prefix is ever written: a
-/// decorated value is refused at append time (I21), and no column holds one to
+/// decorated value is refused at append time (I21) unless every lower bound is 1, when it is read as the plain array, and no column holds one to
 /// render back.
 fn render_array_into(
     column: &dyn Array,

@@ -21,8 +21,8 @@ use crate::value::nested::FieldText;
 /// position a pair, the shortest pair and its comma being `"":0,`.
 ///
 /// Positions alone: a number compared is keyed whole from its text, as a key
-/// reads a scalar (D152), so it holds what numeric's precision bounds whatever
-/// the line's length, and on a dump's field no digit its text lacks,
+/// reads a scalar (D152), so on a dump's field it holds what numeric's
+/// precision bounds whatever the line's length, and no digit its text lacks,
 /// `numeric_out` writing no exponent to pad (I41). A reader holds that as
 /// it holds a short value's decode, and no factor carries it.
 pub(crate) const JSONB_KEY_FACTOR: KeyFactor =

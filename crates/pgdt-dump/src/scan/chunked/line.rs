@@ -5,8 +5,9 @@
 
 use bytes::Bytes;
 
-/// The line being carried across chunk boundaries: a `Vec` the carry reuses
-/// while the line is no longer than `outgrows` bytes, a chunk's, and a
+/// The line being carried across chunk boundaries: a `Vec` while the line
+/// is no longer than `outgrows` bytes, a chunk's, handed off with the row it
+/// completes, and a
 /// [`LineMapping`] from the extension that takes it past them, so a line
 /// that outgrows its chunk holds what it has written and less than one step
 /// more, beside the buffer the carry keeps for the next, whatever the global

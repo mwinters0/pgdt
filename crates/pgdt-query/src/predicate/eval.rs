@@ -326,7 +326,7 @@ impl ResolvedTerm {
         }))
     }
 
-    /// Whether `raw_row` makes this term [`Truth::False`] — answered where
+    /// Whether a value `raw_row` holds makes this term [`Truth::False`] — answered where
     /// [`ResolvedExpr::matches`] may never have evaluated the term, so **it
     /// raises nothing**: a field that does not unescape or decode answers
     /// `false`, as a NULL or a missing field does, and the error stays where

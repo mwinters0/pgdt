@@ -4952,7 +4952,8 @@ dump in another server encoding counts them otherwise.
 16.15 (observed).
 
 **Relied on by:** `value::text::char_typmod_refuses`, which a parse keying, a
-query decoding and a strict parse checking such a field read it by, through
+query decoding and a strict parse checking such a field whole read it by, and
+`TextRead::typmod_refuses`, which a strict parse walking one reads it by, through
 `CompareKind::Text`'s and `CompareKind::PaddedText`'s `length` and
 `NestedPlan::Text`.
 

@@ -16,8 +16,8 @@
 //! arithmetic that says which side of the bound they fall.
 //! A leaf that does not decode is not counted — a container holding one is
 //! counted by its other leaves — and refuses wherever it is decoded: text its
-//! PostgreSQL type would not read is outside the input
-//! contract, and a nested array `KD2` leaves on the optimistic path is that
+//! PostgreSQL type's `*_out` would not write — `24:0:0` for `24:00:00`, which
+//! `time_in` reads — is outside the input contract, and a nested array `KD2` leaves on the optimistic path is that
 //! deficiency's. It is not decoded in a column the untyped mode reads as its
 //! text, nor in a container the null mode takes as NULL whole for another
 //! leaf past its tiers.

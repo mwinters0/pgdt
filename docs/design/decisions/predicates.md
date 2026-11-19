@@ -11,9 +11,9 @@ No `LIKE` (collation-dependent folding), `BETWEEN` (`And`), or column-to-column;
 three-valued logic forces, `IS [NOT] UNREPRESENTABLE` what the null mode forces (D101). `IN` and `NOT IN` are
 `PredicateOp`s holding their list, `NULL` included: one column against literals, as PostgreSQL parses `= ANY` and `<>
 ALL` over consts (`transformAExprIn`), answering as the `Or` of `=` (or its negation) but decoding and looking up once a
-row, where that `Or` costs per term (`dynamic-filter-join`), save an ordered `=`, asked term by term (`Lookup::Each`).
-Rejected: `Expr::In`, a second kind of leaf for an embedder to build; recognizing the `Or`, every front end emitting
-`In`. Evidence: `tests/membership.rs`.
+row, where that `Or` costs per term (`dynamic-filter-join`), save a list whose `=`s differ in kind or plan, asked term
+by term (`Lookup::Each`). Rejected: `Expr::In`, a second kind of leaf for an embedder to build; recognizing the `Or`,
+every front end emitting `In`. Evidence: `tests/membership.rs`.
 
 ### D54 One tree, no planner yet, short-circuit defined against the root
 `filter` is one n-ary `Expr`, by default the empty conjunction. `And` may stop at the first `Unknown` except beneath

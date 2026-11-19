@@ -7,7 +7,8 @@
 //!
 //! The grammar is `decode_*`'s, token for token: a token is read by
 //! [`scan_token`] itself, and the structure around it as `decode_*` reads it,
-//! which `tests.rs` holds the walk to over a generated corpus.
+//! which `key/field/tests.rs` holds the walk to over a generated corpus,
+//! through the order it reads.
 
 use std::borrow::Cow;
 
@@ -219,6 +220,13 @@ impl ArrayWalk {
         }
     }
 
+    // deficiency: KD175 — this recursion, and `ArrayScan::braces`'s beside
+    // `decode_array`, descend once per `{` with no `MAXDIM` bound, where the
+    // input walk refuses past it (I25), so a brace run longer than the stack
+    // holds frames aborts the process instead of answering `None`. Only a
+    // file no `pg_dump` wrote holds one. Bounding the depth at `MAXDIM`, as
+    // the input side does, closes it. **(c) unowned**; promoted by a fixture
+    // or a user's file holding one.
     fn braces(
         &mut self,
         text: &mut FieldText<'_>,

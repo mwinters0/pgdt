@@ -29,8 +29,9 @@ pub enum Error {
     /// done to it, `doing` a phrase ending in the word the path follows:
     /// `open the dump at`. Raised at every open, `stat` and plain read of a
     /// local source, every read a decode makes of a local compressed one or
-    /// of a cache's gzip windows — carried through the codec's crate in an
-    /// `io::Error` ([`Error::into_io`]) — every open, read and write of a cache
+    /// of a cache's gzip windows — carried in an `io::Error`
+    /// ([`Error::into_io`]) through `xz_seek` for an `.xz` read, a gzip read
+    /// being ours throughout — every open, read and write of a cache
     /// and of the file a save writes beside it, and where a gzip first pass
     /// cannot make, write or read back the file it holds its windows in,
     /// naming its directory ([`Error::file`]).

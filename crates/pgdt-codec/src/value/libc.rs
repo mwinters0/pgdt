@@ -444,7 +444,7 @@ fn decimal(text: &mut Vec<u8>, sticky: bool, point: i64, exponent: i64) -> Walke
 
 /// C's `isspace` in the server's locale over a byte below `0x80`, which is
 /// what the input functions below skip: a byte past it is a blank in no
-/// locale a server runs in.
+/// glibc locale a server runs in (I81), where it may be on another libc.
 pub(crate) fn is_c_space(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | 0x0B | 0x0C | b'\r')
 }

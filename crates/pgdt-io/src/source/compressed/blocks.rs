@@ -663,7 +663,8 @@ impl DecodeBudget {
 
     /// **A reader parks, or a parked one resumes**
     /// ([`ByteRangeSource::hint_parked`](crate::ByteRangeSource::hint_parked)).
-    /// Parking takes it off the block pool's depth and drops the
+    /// Parking takes it off the readers the block pool's depth counts, which
+    /// moves that depth only above [`POOL_DEPTH`], and drops the
     /// least-recently-used retained blocks over what the readers still
     /// reading keep ([`BlockCache::give_back`]); resuming puts the
     /// depth back, and the list regrows as decodes land.

@@ -36,14 +36,14 @@ after the DDL, never instead of it, and is a parameter of resolution so no calle
 apart from `NotDeclared`: same output, opposite advice. Rejected: widening `builtin_scalar`'s tuple; `Field` metadata.
 
 ### D45 Strict decoders apart from permissive parsers; decode and render allocate only what they return
-`decode_*` reads what a dump holds and cannot loosen, each the inverse of its `render_*`; `parse_*` reads what `*_in`
-reads — a filter's literal, a strictly checked field — and cannot tighten: two scanners, not one flagged, each
-transcribing the newest major and under-accepting (I35, I44). Wrong depth, `[lb:ub]=` or a field-count mismatch is
-refused, never reshaped; a value no text form spells is never rounded (I40), and `FieldRender` where its renderer tells
-(`KD166`). A renderer writes into its caller's buffer, an integer, boolean, text, date, time, timestamp or array with no
-`String` between (`tests/render_allocations.rs` pins the count), and a decoder allocates only what it returns and a
-decorated array's `[lb:ub]` list, an element borrowed unless escaped. Rejected: a `String` per rendered field. Evidence:
-`nested-decode-micro`.
+`decode_*` reads what a dump holds and cannot loosen, each the inverse of its `render_*` on what `*_out` writes;
+`parse_*` reads what `*_in` reads — a filter's literal, a strictly checked field — and cannot tighten: two scanners, not
+one flagged, each transcribing the newest major and under-accepting (I35, I44). Wrong depth, `[lb:ub]=` or a field-count
+mismatch is refused, never reshaped; a value no text form spells is never rounded (I40), and `FieldRender` where its
+renderer tells (`KD166`). A renderer writes into its caller's buffer, an integer, boolean, text, date, time, timestamp
+or array with no `String` between (`tests/render_allocations.rs` pins the count), and a decoder allocates only what it
+returns and an array's dimension list, an element borrowed unless escaped. Rejected: a `String` per rendered field.
+Evidence: `nested-decode-micro`.
 
 ### D143 An input grammar is a walk, read a part at a time
 `array_in`'s, `record_in`'s, `range_in`'s, `multirange_in`'s and `int2vectorin`'s grammars, and `json_in`'s with

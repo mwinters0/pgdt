@@ -1,4 +1,4 @@
-//! `bytea`: both input forms read, the hex form written, and why `byteain`
+//! `bytea`: both input forms read and written, and why `byteain`
 //! refuses a text.
 
 use pgdt_core::internal::Unescaped;

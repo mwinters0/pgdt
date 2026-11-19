@@ -129,7 +129,7 @@ pub struct ArrangementRequest {
     /// **The charge of the longest line a read over mapped blocks will
     /// meet**, carved before its readers so that line is admitted without
     /// waiting on them: it comes off the margin's ceiling the count is solved
-    /// against, or an uncarved estimate's cap ([`Arrangement::resolve`]), and
+    /// against, or an uncarved half of what is available ([`Arrangement::resolve`]), and
     /// off what statistics may hold, never off a carved cap
     /// (`docs/design/decisions.md`, "D157"). Zero for a pass that meets its
     /// lines unknown — a mapping pass — whose ledger is what its readers
@@ -253,8 +253,10 @@ impl Arrangement {
     /// and less what stays beside the line as the run is carved, the
     /// statistics, other scans' line charges and what the allocator retains,
     /// an uncarved estimate's included, never the grant. So no line the
-    /// ledger lends room for is refused, its statistics' draw opening at all
-    /// three holdings and what the allocator retains coming off its room
+    /// ledger lends room for as it opens is refused, its statistics' draw
+    /// opening at all three holdings and what the allocator retains coming off
+    /// its room; a back-fill shrinking the statistics later lends room the
+    /// floor, fixed at the opening, still refuses
     /// (`docs/design/decisions.md`, "D161", "D165").
     pub fn resolve(allowance: &Allowance, request: ArrangementRequest) -> Self {
         let ArrangementRequest {

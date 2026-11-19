@@ -95,8 +95,9 @@ pub(crate) fn column_factor(data_type: &DataType, plan: &NestedPlan) -> Option<F
     let builder = new_column_builder(data_type, plan);
     let factor = match &builder {
         // A text read in place is a view into its held line, an escaped one
-        // its own block, and a `bytea` decoded into its column: one copy at
-        // most, every decode shortening a value (D141).
+        // past `OWN_BLOCK_PAST` its own block, and a `bytea` decoded into its
+        // column: one copy at most, every decode shortening a value (D141). An
+        // escaped one under that bound is copied in beside its decoded copy.
         ColumnBuilder::Utf8View(..) | ColumnBuilder::Binary(_) => Factor::ONE,
         b if is_walked(b) => reserved(b).plus(stage(b)),
         _ => Factor::ZERO,

@@ -1,6 +1,6 @@
 //! The output scanner: the nested forms as PostgreSQL's `*_out` functions
 //! write them inside a `COPY` field, read by `decode_*` and written back by
-//! `render_*`, each the exact inverse of the other.
+//! `render_*`, each the exact inverse of the other on what `*_out` writes.
 //!
 //! # The output side: one scanner, three parameter sets
 //!

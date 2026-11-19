@@ -404,8 +404,8 @@ pub trait BlockObserver: Send {
     /// recovers the concrete piece it made.
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
 
-    /// The fields its type's `*_in` refuses that this observer keyed and went
-    /// past, being told to ignore them
+    /// The fields PostgreSQL refuses, by type or `NOT NULL`, that this
+    /// observer keyed and went past, being told to ignore them
     /// ([`crate::PostgresInvalidValues::Ignore`]), taken before
     /// [`Self::finish`]: what the block records
     /// ([`crate::CopyBlock::ignored_refusals`]).

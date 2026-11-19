@@ -176,7 +176,7 @@ pub(crate) async fn backfill_statistics(
 /// **Say which blocks still hold more rows than a stated maximum asks for**,
 /// one line each: a block too dense for it is re-read at the size its own
 /// groups predicted, and one whose rows cluster can miss it there. Nothing
-/// reads such a block again but one whose finer read declined, which a run
+/// re-reads such a block for the maximum but one whose finer read declined, which a run
 /// under a larger allowance re-reads, so every run under that maximum says
 /// what it keeps rather than what it will fix.
 pub(crate) fn report_density_shortfall(statistics: &StatisticsRequest, index: &DumpIndex) {

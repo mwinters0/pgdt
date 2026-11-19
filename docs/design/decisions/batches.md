@@ -202,9 +202,9 @@ the gathering run's. Rejected: a record per block; a `SET`-able setting; a third
 refusing such a cache (D20); `Strict` trusting the record. Defaults: `Null` (D38); `Default`, as a restore.
 
 ### D119 A projection is the request's names, each once, in its order; the CLI repeats `--column`
-A projection resolves each name against a block's own columns as a predicate's column does, emitting them in the order
-asked; one asked twice is refused on the request (`QueryOptions::validate`) and one the block lacks when the read is
-planned, before a row is replayed, so an embedder and `pgdt` refuse alike. Rejected: a repeat kept, as SQL's select list
-keeps one (a field feeds one built column, and a batch would carry two fields of one name); `--columns a,b`, a column
-name being free to hold a comma, so a list would invent a quoting grammar; `--columns ''` for none, `--no-columns`
-saying it. Code: `QueryOptions::validate`, `project`. Evidence: `crates/pgdt-query/tests/projection.rs`.
+A projection resolves each name against the table's columns, then its block's as a predicate's column does, emitting
+them in the order asked; one asked twice is refused on the request (`QueryOptions::validate`) and one the table lacks
+when the read is planned, before a row is replayed, so an embedder and `pgdt` refuse alike. Rejected: a repeat kept, as
+SQL's select list keeps one (a field feeds one built column, and a batch would carry two fields of one name); `--columns
+a,b`, a column name being free to hold a comma, so a list would invent a quoting grammar; `--columns ''` for none,
+`--no-columns` saying it. Code: `QueryOptions::validate`, `project`. Evidence: `crates/pgdt-query/tests/projection.rs`.

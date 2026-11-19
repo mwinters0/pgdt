@@ -1,4 +1,5 @@
-//! The flag groups and value parsers more than one subcommand reads.
+//! The flag groups and value parsers more than one subcommand reads, and
+//! the scan options `parse --preamble-only` reads.
 
 use std::ffi::OsStr;
 use std::fmt::Display;

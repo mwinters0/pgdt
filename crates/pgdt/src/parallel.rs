@@ -17,8 +17,9 @@ use crate::alloc::RETAINED_BOUND;
 #[derive(Args)]
 pub(crate) struct ParallelArgs {
     /// How many workers pgdt may ask for. Left unstated, the file decides: a
-    /// plain dump reads serially, and a local `.xz` one takes the CPUs this
-    /// process was given, or its own block count where that is smaller, a
+    /// plain dump reads serially, and a local `.xz` or indexed gzip one takes
+    /// the CPUs this process was given, or its own block count where that is
+    /// smaller, a gzip one's first pass its physical cores at most, a
     /// fetched one a single worker — lowered again
     /// to the number of readers the memory allowance can pay for, where that is
     /// fewer, whether that allowance was discovered or stated with `--memory`,
@@ -303,7 +304,7 @@ impl Discovered<'_> {
 /// One of `query`'s passes, the arrangement it runs under beside the
 /// statistics heap it was carved around ([`Discovered::resolve_pass`]).
 pub(crate) struct QueryPass {
-    /// The mapping pass's in [`pgdt_dump::ScanOptions::parallelism`], its
+    /// The mapping pass's handed whole to [`pgdt_query::Table::settle`], its
     /// count and budget on its own `scan started` line; the replay's handed
     /// whole to [`pgdt_query::Table::plan`], which `resolved the arrangement`
     /// announces and a plan note's origin clause quotes.
@@ -338,8 +339,8 @@ impl QueryPass {
     /// with `held_bytes=` where the settled table holds statistics and
     /// `line_bytes=` where its longest line was carved. Said once,
     /// after the pass: before it the line would name a count the held
-    /// statistics may lower, and the pass's own carve is printed where the
-    /// pass maps nothing.
+    /// statistics may lower; a pass that maps nothing prints no carve of
+    /// its own.
     pub(crate) fn announce_replay(&self) {
         self.resolved.announce_holding(self.held, self.line_charge);
     }

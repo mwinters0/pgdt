@@ -2,7 +2,8 @@
 //! it on its own, and how the pieces fold back into the block's totals
 //! (`docs/design/decisions.md`, "D52"). [`scan_piece`] is what one worker
 //! runs and [`merge`] what the leader does with the answers; both are
-//! synchronous and do no I/O, taking a `&[u8]` rather than a source.
+//! synchronous and do no I/O, [`scan_piece`] taking a `&[u8]` rather than
+//! a source.
 //!
 //! **Two invariants make the split sound, and no third is needed.** I15 puts a
 //! literal LF among the escaped things in COPY TEXT output, so every LF byte

@@ -208,7 +208,7 @@ fn trees(height: usize) -> Vec<ResolvedExpr> {
 /// The short-circuit is verdict-preserving: `matches` evaluates the root
 /// inexactly — an `And` may report `False` for an `Unknown` and stop —
 /// and nothing above the root tells the two apart. Asserted over every
-/// tree of height three.
+/// tree of at most two edges.
 #[test]
 fn the_root_verdict_survives_the_short_circuit() {
     let all = trees(2);

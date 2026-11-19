@@ -38,7 +38,7 @@ use pgdt_io::{Allowance, Arrangement, ArrangementRequest, Jobs, WorkerMemory};
 /// again, and what the process's allocator keeps of what it frees, where the
 /// binary choosing it states that ([`ScanBudget::retaining`],
 /// `docs/design/decisions.md`, "D165"). Where an allowance was found, all
-/// four come off the margin's ceiling alone, as [`ArrangementRequest::held`]; with none found there is no
+/// four come off the margin's ceiling alone, as [`ArrangementRequest::held`] and its `retained` do; with none found there is no
 /// margin and they come off nothing:
 /// the cap is the reserve's, standing for the scans' own excess over their
 /// budgets, and none of them is any of it. So they lower a scan's count

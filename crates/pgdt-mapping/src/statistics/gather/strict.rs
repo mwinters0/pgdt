@@ -221,7 +221,7 @@ pub(super) struct FieldCheck {
     /// ([`text_typmod`]).
     typmod: Option<Option<u32>>,
     /// Whether a field is read off its bytes where it lies: by `grammar`, or
-    /// by `plan` where it [`walks`] — a `bytea`, a text held to its typmod, a
+    /// by `plan` where it [`walks`] — a `bytea`, a character type, a
     /// nested, `json` or `jsonb` value.
     walks: bool,
 }

@@ -95,7 +95,7 @@ impl Segment {
     }
 
     /// The bytes this piece is responsible for, for balancing sub-streams
-    /// against each other. Approximate at both ends by exactly one row, which
+    /// against each other. Approximate at both ends by at most one row, which
     /// is why nothing reads it as an extent. Measured from the block's
     /// **data**, so the first piece is not charged for the header line it also
     /// covers.

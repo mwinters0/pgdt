@@ -610,8 +610,9 @@ fn escape_at(bytes: &[u8]) -> Option<(u8, usize)> {
 /// of it that was written: what [`escape_at`] could not yet say.
 fn escape_cut(bytes: &[u8]) -> u8 {
     match bytes {
-        // Trailing lone backslash: PostgreSQL's COPY would reject the
-        // line, but emitting it literally loses less than failing.
+        // Trailing lone backslash: PostgreSQL's COPY drops it at the end of
+        // input, and `*_out` never writes one; emitting it literally loses
+        // less than failing.
         [_] => b'\\',
         [_, b'x'] => b'x',
         [_, b'x', high] => hex_val(*high).map_or(b'x', |high| high as u8),

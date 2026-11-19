@@ -77,9 +77,9 @@ impl<'a> TableStream<'a> {
     /// `text` column with no `COLLATE` clause earns a note under `<` and none
     /// under `=`. A third channel beside `DumpIndex.diagnostics` (the model)
     /// and `ResolvedSchema::notes` (the codec), each a [`pgdt_model::Finding`] a
-    /// caller drains into one sink with the others. Like
-    /// [`Self::resolved_schema`], it describes the **last** block whose schema
-    /// resolved.
+    /// caller drains into one sink with the others. It describes the **last**
+    /// block whose schema resolved, where [`Self::resolved_schema`] is the
+    /// table's.
     pub fn comparison_notes(&self) -> Vec<ComparisonNote> {
         self.comparison_notes.lock().unwrap().clone()
     }

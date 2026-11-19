@@ -52,7 +52,8 @@ enum Order {
 /// ([`char_typmod_refuses`]) and which places none.
 #[derive(Clone, Copy)]
 enum Canonical {
-    /// `text`, `varchar`, `name`, bounded bytewise in any collation: the text.
+    /// `text`, `varchar`, `name`, bounded bytewise in any collation, and a
+    /// column with no plan or ordered as its text by DataFusion: the text.
     Text { length: Option<u32> },
     /// `character`: the text without its trailing blanks, which its comparison
     /// ignores — so a bound is stored unpadded.

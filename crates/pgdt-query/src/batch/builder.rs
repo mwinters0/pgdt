@@ -72,7 +72,9 @@ pub(crate) enum ColumnBuilder {
         precision: u16,
     },
     FixedSizeBinary16(FixedSizeBinaryBuilder),
-    /// `bytea`, decoded into the column in place (`docs/design/decisions.md`, "D141").
+    /// `bytea`, decoded into the column in place on a field's own path
+    /// (`docs/design/decisions.md`, "D141"), a nested element's and
+    /// `append_typed`'s into a buffer then copied in.
     Binary(ByteaBuilder),
     Dictionary(StringDictionaryBuilder<Int32Type>),
     /// `List<T>` filled from an `array_out` literal. Nested `Array`s are the
@@ -613,7 +615,8 @@ pub(super) fn text_refused(
 }
 
 /// Decode `text` (already COPY-unescaped) per `builder`'s type and append it,
-/// via `pgdt_codec::decode`'s per-type decoders, a nested value walked
+/// via `pgdt_codec::decode`'s per-type decoders, `std`'s integer parses and
+/// `float_field`, a nested value walked
 /// ([`append_walked`]). `Err` on a decode failure, unit as [`append_nested`]'s is — the
 /// caller wraps it into `Error::FieldDecode` with the table/column/row
 /// context and the field's quote, so no copy of `text` is made here. A
@@ -643,8 +646,9 @@ pub(crate) fn append_typed(
         ColumnBuilder::Int16(b) => b.append_value(text.parse::<i16>().map_err(drop)?),
         ColumnBuilder::Int32(b) => b.append_value(text.parse::<i32>().map_err(drop)?),
         ColumnBuilder::Int64(b) => b.append_value(text.parse::<i64>().map_err(drop)?),
-        // `u32`: `oidout` writes `%u`, so a field carrying a sign is the file
-        // contradicting its own DDL, same as any other undecodable field.
+        // `u32`: `oidout` writes `%u`, so a field carrying a minus is the file
+        // contradicting its own DDL, same as any other undecodable field; a
+        // leading `+` the parse takes.
         ColumnBuilder::UInt32(b) => b.append_value(text.parse::<u32>().map_err(drop)?),
         ColumnBuilder::Float32(b) => {
             b.append_value(float_field(text, invalid).ok_or(())?);
@@ -688,8 +692,8 @@ pub(crate) fn append_typed(
         // the column's enum does not declare, which `enum_in` refuses (I70),
         // reaches the batch: a field no default parse keyed — its column at
         // the metadata level, its block declined — is refused by no query but
-        // one whose ordering term keys it or whose term compares an array or
-        // composite holding it, though a strict parse refuses it
+        // one whose ordering term keys it in PostgreSQL's semantics or whose
+        // term compares an array, composite, range or multirange holding it, though a strict parse refuses it
         // wherever it sits. Refusing it here needs the labels and their
         // exactness, which this builder does not carry.
         ColumnBuilder::Dictionary(b) => b.append_value(text),

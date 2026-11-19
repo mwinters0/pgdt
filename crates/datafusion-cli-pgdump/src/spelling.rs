@@ -155,8 +155,8 @@ fn library(grammar: Grammar, refused: &pgdt_core::Error) -> Option<String> {
 }
 
 /// The `pgdt parse` that runs `pass`, putting `data_level` at the data level
-/// and keeping every other table's level, a parse never recording less than
-/// a cache holds.
+/// and keeping every other table's level but a table of its schema and name
+/// in another database's, a parse never recording less than a cache holds.
 fn parse(pass: &MappingPass, data_level: Option<&TableName>) -> String {
     let mut parse = format!("pgdt parse --source {}", pass.location);
     if let Some(path) = &pass.cache_path {

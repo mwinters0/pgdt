@@ -135,7 +135,8 @@ pub(crate) struct Shortfall {
 /// than the caller asked for, **once per pass**, and say what would buy the
 /// arrangement back (`docs/design/decisions.md`, "D64"). `scan started` names
 /// what was asked for, the source's advice not having been read when it fires;
-/// on a query the same fact is a `pgdt_query::PlanNote` on a `TableStream`.
+/// a query's mapping pass says it here too, its replay's cut falling short
+/// being a `pgdt_query::PlanNote` on a `TableStream`.
 ///
 /// What its silence means is [`Shortfall`]'s. A decline is *not* silent: the
 /// shortfall is computed before it and returned with it, so a region left
@@ -205,7 +206,8 @@ pub(crate) fn report_shortfall(flag: &mut bool, shortfall: Option<Shortfall>) {
 /// read and parsed before `merge` folds them and discards everything past the
 /// first terminator, so a dump whose blocks are far smaller than the window is
 /// read orders of magnitude over, worse at every worker added and reached with
-/// no flag typed (a compressed source's default worker count is one per core).
+/// no flag typed (a local compressed source's default worker count is its
+/// cores, up to its units).
 /// **(c) unowned.** Neither the cut width nor this floor is the fix: it is for
 /// the leader to learn a region's extent before committing a window.
 ///

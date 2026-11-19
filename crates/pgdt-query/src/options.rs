@@ -20,7 +20,7 @@ use crate::predicate::Expr;
 #[derive(Debug, Clone)]
 pub struct QueryOptions {
     /// Which columns to materialize, by name, in the order given. `None`
-    /// projects every column of the block; `Some(vec![])` projects none,
+    /// projects every column of the table, in its order; `Some(vec![])` projects none,
     /// which is the `COUNT(*)` shape — every batch then carries a row count
     /// and no arrays. Names are matched against the table's columns
     /// exactly as [`crate::predicate::Predicate::column`] is, so a name the

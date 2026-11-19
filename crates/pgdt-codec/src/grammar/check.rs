@@ -313,7 +313,8 @@ pub fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
 }
 
 /// **Whether a strict parse reads a field of a column compared by `plan` a
-/// byte at a time**, holding no copy of it and no tree but a range bound's
+/// byte at a time**, holding no copy of it and no tree but a range bound's,
+/// only a keyed scalar part's text
 /// (`docs/design/decisions.md`, "D142", "D143"): a nested value, `json` and
 /// `jsonb` and a `bytea` through [`FieldWalk`], and a character type counting
 /// its characters against [`text_typmod`]'s length.

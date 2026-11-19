@@ -19,7 +19,7 @@ use crate::memory::{DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE, margin_allowance};
 ///   the block pool's retention list and nothing every other source has.
 ///
 /// **The pool term is arithmetic from [`BufferPool`](crate::source::pool::BufferPool), not a safety margin.**
-/// [`BufferPool::slots`](crate::source::pool::BufferPool::slots) clamps a pool at `POOL_DEPTH.max(jobs)` and
+/// [`BufferPool::slots`](crate::source::pool::BufferPool::slots) clamps the block pool at `POOL_DEPTH` or the readers still reading, whichever is more, and
 /// [`BlockCache::slot`](crate::source::compressed::blocks::BlockCache::slot) drains the retention list to `slots − 1` *before*
 /// obtaining the buffer a landed decode (`Decoding::land`, of a [`BlockCache::claim`](crate::source::compressed::blocks::BlockCache::claim)) then pushes back onto it, so
 /// the pool holds `slots − 1` retained units beside the one unit each worker
@@ -164,7 +164,8 @@ impl WorkerMemory {
 /// **`Serial` is a state, not the number one.** One worker and the serial path
 /// are the same execution, so [`Parallelism::workers`] answers `Serial` for a
 /// count of one rather than a degenerate `Workers`, which keeps "is this
-/// parallel" a match on the value. The two numbers are independent, so the
+/// parallel" a match on any value they make; the variants are public, and a
+/// `Workers` of one built by hand is answered as parallel. The two numbers are independent, so the
 /// collapse takes only the count down: `Serial` carries the stated budget as
 /// an `Option`, and `None` is the distinct fact that nobody stated a budget at
 /// all ([`Parallelism::default`], answered by [`DEFAULT_MEMORY_BUDGET`]).

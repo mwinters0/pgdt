@@ -790,6 +790,15 @@ impl ResolvedExpr {
         out
     }
 
+    // deficiency: KD176 — three keys a term builds whole fall outside every
+    // factor: a membership's lookup (`Lookup::Decoded`, `Lookup::Nested`)
+    // unescapes a `jsonb`, multirange or nested field and keys its tree; a
+    // range's bound over `jsonb` or an array is keyed by `nested_key`, a tree,
+    // where `nested_key_factor` gives the bound's positions or none; and a
+    // nested term's escaped text leaf is collected whole (`FieldText`), which
+    // no text factor covers. Each holds a long field past its draw. A factor
+    // per shape, or a positions key for each, closes it. **(c) unowned**;
+    // promoted by P40, or a dump whose long field such a term reads.
     fn collect_key_factors(&self, out: &mut Vec<KeyFactor>) {
         match self {
             Self::Term(term) => {

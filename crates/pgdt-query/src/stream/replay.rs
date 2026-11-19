@@ -71,7 +71,7 @@ use crate::prune::SortedStop;
 /// stands where it reads before absorbing each read, and one asked emits the
 /// batch it holds rows of, then parks at its next read, dropping that read
 /// (its last one it still holds, `KD172`), resuming as
-/// the line that asked is admitted or its draw returned; it stands aside
+/// what passes the room falls, a draw returned or statistics freed; it stands aside
 /// before every yield, so a caller holding it back at a batch stalls no line
 /// (`docs/design/decisions.md`, "D163").
 // upstream: UF5 -- a plan may hold a yielded batch, and its line's copy, unreserved.
@@ -535,8 +535,9 @@ pub(super) fn replay<'a>(
                             }
                         }
                         // A replay segment covers exactly one block, so
-                        // the only non-row line in range is the `COPY`
-                        // header itself, which arrives as `CopyStart`.
+                        // the only non-row lines in range are the `COPY`
+                        // header, which arrives as `CopyStart`, and its
+                        // `\.`, as `CopyEnd`.
                         Event::Line(_) | Event::DollarQuoteEnd(_) => {}
                         Event::LargeObjectStart(_) | Event::LargeObjectEnd(_) => {}
                     }

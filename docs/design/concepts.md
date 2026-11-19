@@ -429,14 +429,15 @@ with each change marked, and everything of ours beside it.
 
 ## The `pgdt` CLI
 
-The three subcommands, their flags and what each prints
+The subcommands, their flags and what each prints, `sql` being
+`datafusion-cli-pgdump`'s
 ([`decisions.md`](decisions.md), "The CLI").
 
 - **pgdt** — `main.rs`, `version.rs`, `args.rs`, `parse.rs`,
   `info.rs`, `info/text.rs`, `info/json.rs`, `info/labels.rs`,
   `info/logical.rs`, `query.rs`: a
-  module a subcommand, each owning its flags; the root dispatches and holds
-  nothing a subcommand reads, and what more than one reads — the shared flag
+  module a subcommand, each owning its flags; the root dispatches, holding
+  only the signal handlers `parse` takes over, and what more than one reads — the shared flag
   groups, the source opened against its cache — sits beside them. `info`'s
   logical model counts over the cache's blocks what the model concludes —
   the declared schema's descendants, the TimescaleDB catalog's conclusions —

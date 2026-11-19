@@ -154,7 +154,8 @@ pub(super) fn margin_allowance(allowance: u64) -> u64 {
 /// included — once `budget`, the read-buffer budget that arrangement
 /// resolved to, comes off [`margin_allowance`]'s ceiling, which already
 /// stands [`MEMORY_UNPOOLED_BOUND`] below its fraction of the allowance.
-/// Less what others drew it is the room its [`Ledger`](crate::Ledger)
+/// Less what others drew and what the allocator retains
+/// (`ArrangementRequest::retained`) it is the room its [`Ledger`](crate::Ledger)
 /// lends, and less a read's longest line too what `pgdt_mapping`'s
 /// `StatisticsAccount` may hold
 /// ([`Arrangement::statistics_allowance`](crate::Arrangement::statistics_allowance))

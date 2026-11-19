@@ -253,8 +253,8 @@ allocation — is fitted by raising memory or narrowing intent, and the defaults
 are not bent to reach it. A long dump of ordinary rows is not such a shape.
 
 **The check.** A CLI test lists every flag taking a byte count or a count
-against an allowlist classifying each as hardware, intent, input contract or
-expert override, and fails on a flag nobody has classified — so a third
+against an allowlist classifying each as hardware, intent or expert override,
+and fails on a flag nobody has classified — so a third
 hardware knob is a decision somebody wrote down, not one that arrived quietly
 (`crates/pgdt/src/tests.rs`, `every_numeric_flag_is_classified`). **It skips `pgdt
 sql` alone**, whose flags are the DataFusion CLI's as upstream ships it — its
@@ -1176,7 +1176,7 @@ out. An option left only in a phase spec or a slice notes doc does not survive,
 which is what makes the difference worth minding at the moment one is found.
 
 - **A block cache whose retention floor tracks the reader count.**
-  `BufferPool::slots` clamps the block pool at `POOL_DEPTH.max(jobs)`, so the
+  `BufferPool::slots` clamps the block pool at `POOL_DEPTH` or the readers still reading, whichever is more, so the
   cache holds up to four *units* however few readers there are — at 128 MiB
   blocks that is roughly 512 MiB a compressed scan must be charged before it
   may decode a block at all, which is most of a small container and is what
@@ -1404,8 +1404,8 @@ which is what makes the difference worth minding at the moment one is found.
   than 6 leading braces (I25), so a longer run means the file is not `pg_dump`
   output — hand-edited, concatenated, or damaged. The census records it and
   resolution deliberately declines to treat it as evidence, so the column keeps
-  its optimistic type and the row surfaces as an ordinary `Error::FieldDecode`
-  when something reads it. Nothing reports it at *scan* time, so a file nobody
+  its optimistic type and the row surfaces when something reads it, as an
+  ordinary `Error::FieldDecode` short of the stack's depth (`KD175`). Nothing reports it at *scan* time, so a file nobody
   queries that column of stays silently damaged. The file-level `Diagnostic`
   channel is where this belongs; it is unscheduled because no fixture produces
   the shape.

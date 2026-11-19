@@ -462,12 +462,13 @@ impl ChunkCarry {
     /// deficiency: KD170 — that bound is drawn, up to the carried line and
     /// `next`, two read chunks, and a draw past the ledger's floor is refused
     /// (`docs/design/decisions.md`, "D161"): so under an allowance leaving
-    /// one reader less than two chunks — one short of `MEMORY_RESERVE`, what
-    /// the allocator retains and one reader's term
+    /// one reader less than two chunks — on a carved allowance, one short of
+    /// `MEMORY_RESERVE`, what the allocator retains, one reader's term and
+    /// two chunks, besides the statistics and other scans' lines
     /// (`docs/design/decisions.md`, "D165") — a parse, a census or a replay
     /// reading no field of the row is refused for a row it would have
-    /// streamed holding none of it. The charge is exact where the carry
-    /// knows, before absorbing `next`, that the row streams: its block
+    /// streamed holding none of it. Closing it is a charge exact where the
+    /// carry knows, before absorbing `next`, that the row streams: its block
     /// streams rows, `next` holds no newline, and the file goes on past it.
     pub fn charge_absorbing(&self, next: &[u8]) -> u64 {
         let held = match self.streamed {

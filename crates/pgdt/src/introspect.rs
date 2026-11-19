@@ -16,8 +16,8 @@
 //!
 //! A snapshot, and no sampler but `blocks_*`'s, read at a held line's
 //! moments: a quantity whose peak is reported carries its own high-water, or
-//! there the largest of those readings, `statistics_*` are read as the pass
-//! returned them, and the rest as they stand at exit:
+//! there the largest of those readings, `statistics_*` are read as a mapping
+//! pass returned them, or at exit where none did, and the rest as they stand at exit:
 //!
 //! * **`live_bytes` / `live_peak_bytes`** — exact bytes the *program* asked
 //!   for and had not freed, and the largest that figure ever reached, kept by

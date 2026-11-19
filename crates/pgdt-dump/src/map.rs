@@ -58,7 +58,8 @@
 //!   large-object region (I12), merged across however many archive entries
 //!   `pg_dump` split it into. `crate::scan` skips a large-object region
 //!   **unread**; `INSERT` runs stay a `feed_line`-level concern with no
-//!   scanner state, driving a [`StatementScan`] over raw line bytes. Only
+//!   scanner state, driving a [`StatementScan`] over raw line bytes on its
+//!   fast path and a line's lossy text elsewhere. Only
 //!   [`DataBlock::Copy`] carries inner offsets
 //!   (`docs/design/decisions.md`, "D33").
 //!
@@ -174,7 +175,8 @@ enum Mode {
     /// the run or ends it. `row_count` is complete statements folded in.
     ///
     /// This holds no statement *text*, nothing reading a run's bytes, so the
-    /// accumulation is a [`StatementScan`] over raw bytes. `prefix` is the
+    /// accumulation is a [`StatementScan`] over raw bytes on its fast path,
+    /// a line `Builder::step` reads being its lossy text. `prefix` is the
     /// `INSERT INTO <table>` byte prefix the run's first line spelled, kept so
     /// [`Builder::insert_run_line`] recognizes a continuing statement without
     /// re-parsing the identifier.
@@ -707,10 +709,10 @@ impl Builder {
             }
             Mode::Statement { start, buf, toc, toc_owned } => {
                 // A `--` line outside a quote closes a statement even
-                // though `buf` never reached `statement_complete`
-                // (`docs/design/decisions.md`, "D23") — the case a
-                // dollar-quoted body's invisible closing line creates, where
-                // nothing ever supplies the swallowed `;`. The `in_open_quote`
+                // though `buf` never reached `statement_complete`: one
+                // whose `;` its producer left off, a dollar-quoted body's
+                // closing line having ended its own (`on_dollar_quote_end`).
+                // The `in_open_quote`
                 // guard is what keeps a `--`-looking continuation line that
                 // is really multi-line string content from counting.
                 if trimmed.starts_with("--") && !in_open_quote(buf, self.standard_strings) {
@@ -887,7 +889,8 @@ impl Builder {
     }
 
     /// Whether [`on_row`](Self::on_row) reads the open `COPY` block's rows
-    /// whole: it does where the block is recorded, and otherwise counts them
+    /// whole: it does where the block is recorded, or censused with no fold
+    /// to take its fields, and otherwise counts them
     /// and folds their fields into its census and its observer, so its
     /// reader may stream them ([`crate::ChunkEvents::stream_rows`]), handing
     /// a streamed row's fields over as they go by

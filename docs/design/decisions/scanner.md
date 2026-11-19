@@ -71,10 +71,10 @@ own; `Option<&CancellationToken>` or a `Stop` trait inside the passes; `exit(128
 One SIMD validation of the largest line-terminated prefix per chunk, not one `from_utf8` per field, skipped where
 nothing is decoded; the escaped path still validates (`\xNN` synthesizes bytes). In D68's seven crates the sites are
 `append_view_unchecked` (`batch/chunks.rs`), its bounds from the `contains` that produced its coordinates and its
-validity from the decode's borrowed arm (D46), and `LineMapping`'s system calls and the memory they map (D139);
-`pgdt-gzip-seek`'s zlib module (UF4) and `pgdt`'s setting of mimalloc's purge delay (D13) are the other shipped sites.
-The workspace denies `unsafe` in every target and each root forbids it unless a site of its production tree allows it
-(`scripts/layering.py`). Four `unsafe` attempts lost to the safe shape.
+validity from the decode's borrowed arm (D46) or a decoded `String` it owns whole, and `LineMapping`'s system calls and
+the memory they map (D139); `pgdt-gzip-seek`'s zlib module (UF4) and `pgdt`'s setting of mimalloc's purge delay (D13)
+are the other shipped sites. The workspace denies `unsafe` in every target and each root forbids it unless a site of its
+production tree allows it (`scripts/layering.py`). Four `unsafe` attempts lost to the safe shape.
 
 ### D28 One row split, shared unconditionally
 One `RowSplit` per row, memoized and shared unconditionally by the filter's terms and the batcher, extending only as
@@ -83,7 +83,7 @@ defeats inlining); stopping the walk at the last projected column, the batcher's
 streamed one's count (D138) — being the only `ColumnCountMismatch` site. Evidence: `predicate-terms`.
 
 ### D29 Refused micro-optimizations on the row path
-Pre-sized Arrow builders (a one-row batch fills thousands of slots); a viewing builder for nested `Utf8View` (the prize
-is zero below arrow's inlining width); skipping a block with `memmem` (the row count and the census read every row); a
-proposal is sized against the per-row profile. Evidence: `nested-decode-micro`, `map-only`, `cross-file-floor`,
-`nested-end-to-end`.
+Pre-sized Arrow builders (a one-row batch fills thousands of slots) but a long nested value's (D154); a viewing builder
+for nested `Utf8View` (the prize is zero below arrow's inlining width); skipping a block with `memmem` (the row count
+and the census read every row); a proposal is sized against the per-row profile. Evidence: `nested-decode-micro`,
+`map-only`, `cross-file-floor`, `nested-end-to-end`.

@@ -1155,7 +1155,7 @@ account, none of it takes a marker, and nothing here needs a quiet machine.
 | `getrusage(RUSAGE_CHILDREN)` — `peak-rss` | peak RSS, one scalar | every term separately | a sitting per subtraction |
 | `mallinfo2()` | live bytes now, split arena-backed (`uordblks`) from mmap-backed (`hblkhd`); arena free bytes (`fordblks`) | the peak — it is a snapshot; non-heap pages | one call |
 | `malloc_info()` | the same per arena, **including each arena's high-water** (`system type="max"`) | mmap-backed blocks, which are not per-arena | one call |
-| a counting `#[global_allocator]` | exact live bytes and their **high-water**, allocator-independent | where they were allocated | two atomics and a thread-local read per allocation |
+| a counting `#[global_allocator]` | exact live bytes and their **high-water**, allocator-independent | where they were allocated | three atomics and a thread-local read per allocation and free, two more inside a statistics scope |
 | its block tracker — `PGDT_INTROSPECT_BLOCKS_FROM` | each block past a stated size, **live or freed**, by its **allocating call stack**, with its pages `mincore` finds resident at each held line's admission and return | blocks under the size; a freed range a smaller block took, read as retention | a stack per tracked block; a `mincore` per range per event |
 | `mi_stats_get_json()` | mimalloc's `committed` and `reserved`, each now and at its **high-water**, merged over its heaps | what C allocates through libc | one call |
 | jemalloc `prof` + `jeprof` | live heap attributed to **call stacks** | the shipped allocator's behaviour — it is a different allocator | a feature flag and a build |

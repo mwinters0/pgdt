@@ -30,7 +30,8 @@ use crate::statistics::stored::Summand;
 pub(super) struct Observed {
     /// What the column's heap grew by.
     pub(super) grew: i64,
-    /// Whether the field is one its type's `*_in` refuses, kept out of every
+    /// Whether the field is one PostgreSQL refuses — its type's `*_in` or its
+    /// column's `NOT NULL` — kept out of every
     /// statistic a read could contradict (D103) rather than stopping the
     /// block.
     pub(super) ignored: bool,

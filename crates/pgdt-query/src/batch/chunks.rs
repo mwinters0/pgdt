@@ -167,8 +167,8 @@ pub(super) fn push_utf8view_field(
                     // range as UTF-8. `contains` narrows to `u32`, so this
                     // holds while a retained chunk stays under 4 GiB, which
                     // every shipped chunk and block size is by orders of
-                    // magnitude; nothing clamps `ReadOptions::chunk_size_bytes` to
-                    // enforce it.
+                    // magnitude, and `ReadOptions::chunk` clamps a stated chunk
+                    // to the line bound, under 1 GiB.
                     #[allow(unsafe_code)]
                     unsafe {
                         builder.append_view_unchecked(block, local_offset, len)

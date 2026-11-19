@@ -189,9 +189,10 @@ impl ValueKey {
     /// semantics' engine resolves `a < b` between their orders without
     /// consulting a setting, with its answer: in PostgreSQL's, `smallint`
     /// against `bigint`, an integer against a `numeric`, a float or an `oid`,
+    /// `real` against `double precision`, a float against a `numeric`,
     /// two `numeric` scales, a `date` against a `timestamp`, a `time`
-    /// against an `interval` and a `character(n)` against a `text` or a
-    /// `character varying`, each its own way, their special values included;
+    /// against an `interval`, a `text` against a `character varying` and a
+    /// `character(n)` against either, each its own way, their special values included;
     /// and two nested keys of one type at every level, their leaves related
     /// so, as `numeric(5,1)[]` against `numeric[]`. They answer **`None`
     /// wherever it resolves none**: a `date` against an `integer`, a

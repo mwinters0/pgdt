@@ -132,13 +132,14 @@ pub(super) struct Gatherer {
     /// (`docs/design/decisions.md`, "D85"). A piece carries it into the block
     /// it folds into, the block having lost that piece's rows.
     declined: Option<u64>,
-    /// The first field this observer met that its type's `*_in` refuses: it
+    /// The first field this observer met that PostgreSQL refuses, by its
+    /// type's `*_in` or its column's `NOT NULL`: it
     /// frees what it holds and reads no further row, as a declined observer
     /// does, and a block answers [`BlockGathered::Refused`]. A piece carries
     /// it into the block it folds into.
     refused: Option<FieldRefusal>,
-    /// The fields its type's `*_in` refuses that this observer keyed and went
-    /// past, told to ignore them. A piece's is folded into its block's, its
+    /// The fields PostgreSQL refuses, by type or `NOT NULL`, that this
+    /// observer keyed and went past, told to ignore them. A piece's is folded into its block's, its
     /// first numbered past the block's rows, as a refusal is.
     ignored: Option<IgnoredRefusals>,
     /// The rows this observer has been handed, and, in a block, those of
@@ -377,7 +378,7 @@ impl Gatherer {
     }
 
     /// What gathering column `column`'s field answered: its growth, and a
-    /// value its type's `*_in` refuses, gone past or refused, quoted as
+    /// value PostgreSQL refuses, by type or `NOT NULL`, gone past or refused, quoted as
     /// `value` quotes the field.
     fn observed(
         &mut self,

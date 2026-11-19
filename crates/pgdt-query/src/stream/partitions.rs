@@ -75,8 +75,8 @@ use crate::summary::partition_orders;
 /// left unpolled mid-line keeps its draw and an earlier line waits on it.
 /// Where a line alone passes the room, the sub-streams reading later in the
 /// file are asked to park, each emitting the batch it holds rows of and then
-/// parking at its next read, holding no read, until the line is admitted or
-/// returned; one hears that only when polled, and the line waits on it only
+/// parking at its next read, holding only the read before it (`KD172`),
+/// until the lines and statistics past the room fall; one hears that only when polled, and the line waits on it only
 /// while it reads (`docs/design/decisions.md`, "D163"). **One left unpolled
 /// at a batch it yielded draws nothing and is asked nothing**: each returns
 /// its draw and stands aside before it yields, so a caller holding back a
@@ -242,7 +242,8 @@ impl TablePartitions {
     }
 
     /// **Never fewer text bytes than the plan's partitions emit of each
-    /// field together**, parallel to [`Self::resolved_schema`]'s fields and
+    /// field together**, parallel to [`Self::resolved_schema`]'s fields where
+    /// the plan holds a block, empty where it holds none, and
     /// settled as [`Self::kept_rows`] is: each field's values' text bytes over
     /// the groups pruning kept and every group of a block it did not consult
     /// ([`pgdt_model::ColumnStatistics::value_bytes`]). `None` for a
@@ -252,7 +253,7 @@ impl TablePartitions {
     }
 
     /// **The order every partition emits each column in**, parallel to
-    /// [`Self::resolved_schema`]'s fields: `Ascending` or `Descending` where
+    /// [`Self::resolved_schema`]'s fields where the plan holds a block: `Ascending` or `Descending` where
     /// the map's statistics prove that each partition's rows come out in that
     /// order under Arrow's comparator, with no NULL among them, and
     /// `Unsorted` wherever they do not — which says nothing about the rows,
@@ -303,7 +304,8 @@ impl TablePartitions {
     ///
     /// Refused, [`Error::ResumeQueryMismatch`](pgdt_core::Error::ResumeQueryMismatch),
     /// for a token another query produced — another table, filter,
-    /// projection, schema mode, semantics or unrepresentable mode — or one
+    /// projection, schema mode, semantics, unrepresentable mode or
+    /// inheritance — or one
     /// partition's ([`Self::stream`]), which knows nothing of the range it
     /// was confined to.
     pub fn resume(&self, token: ResumeToken, max_rows: usize) -> Result<TableStream<'static>> {

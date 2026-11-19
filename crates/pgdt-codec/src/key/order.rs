@@ -405,7 +405,8 @@ pub fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
 /// infinity past the type's range, and a `numeric` in either: read within `numeric_in`'s bounds in
 /// PostgreSQL's, and exactly, neither rounded to the scale nor refused past
 /// the precision, the server coercing a literal with no typmod where it puts a
-/// field through the typmod (I63) — and a text of any length and an `interval`
+/// field through the typmod (I63), but for one read as a `Decimal`, whose
+/// literal is its plain digits and refused past its scale (D55) — and a text of any length and an `interval`
 /// under no field qualifier for the same reason. In DataFusion's semantics a literal is
 /// DataFusion's value, not the server's (`roadmap.md`, "A literal is
 /// guaranteed in `*_out`'s form and never read past `*_in`'s").
