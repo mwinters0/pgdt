@@ -120,6 +120,7 @@ fn library(grammar: Grammar, refused: &pgdt_core::Error) -> Option<String> {
         | Lib::File { .. }
         | Lib::Join(_)
         | Lib::UnterminatedCopyBlock { .. }
+        | Lib::UnendedCopyTerminator { .. }
         | Lib::UnterminatedLargeObjectRegion { .. }
         | Lib::LineTooLong { .. }
         | Lib::ScanCancelled { .. }

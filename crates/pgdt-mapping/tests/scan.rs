@@ -287,17 +287,26 @@ async fn unterminated_copy_block_is_an_error() {
     );
 }
 
-/// A final line with no trailing newline still terminates the block.
+/// A final statement with no trailing newline is read, but a `\.` ending the
+/// file with none after it is refused, as a restore refuses it (I91).
 #[tokio::test]
-async fn missing_trailing_newline_is_tolerated() {
+async fn missing_trailing_newline_is_tolerated_but_after_the_terminator() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("no-final-newline.sql");
-    std::fs::write(&path, b"COPY public.t (a) FROM stdin;\n1\n\\.").unwrap();
+    std::fs::write(&path, b"COPY public.t (a) FROM stdin;\n1\n\\.\nSELECT 1;").unwrap();
     let source = LocalFileSource::open(&path).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     let blocks: Vec<_> = index.blocks().collect();
     assert_eq!(blocks.len(), 1);
     assert_eq!(blocks[0].row_count, 1);
+
+    std::fs::write(&path, b"COPY public.t (a) FROM stdin;\n1\n\\.").unwrap();
+    let source = LocalFileSource::open(&path).unwrap();
+    let err = build_index(&source, &ScanOptions::default()).await.unwrap_err();
+    assert!(
+        matches!(err, pgdt_core::Error::UnendedCopyTerminator { offset: 32, .. }),
+        "unexpected error: {err}"
+    );
 }
 
 #[tokio::test]

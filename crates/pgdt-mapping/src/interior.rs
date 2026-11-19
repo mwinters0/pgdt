@@ -287,6 +287,14 @@ pub(crate) async fn scan_region(
         None if cancel.is_cancelled() => RegionScan::Cancelled,
         // Every window ran to the end of the file and none held the
         // terminator: `UnterminatedCopyBlock`, reached the parallel way.
+        // deficiency: KD177 — a file ending in `\.` or `\.` CR with no LF
+        // after it ends here too, a piece never consuming a line the file's
+        // end closes, so the refusal denies the marker the serial scanner
+        // names (`Error::UnendedCopyTerminator`), and `\.` CR in a block of
+        // bare-CR rows, which the serial scanner reads (`KD101`), is refused.
+        // The fix is the leader reading the unconsumed tail, two or three
+        // bytes, and judging it against `BlockEndings`' first row as
+        // `CopyScanner` does.
         None => return Err(Error::UnterminatedCopyBlock { header_offset }),
     };
     Ok(RegionOutcome { scan, shortfall })

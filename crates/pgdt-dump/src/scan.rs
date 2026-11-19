@@ -382,6 +382,19 @@ impl Endings {
         }
         Ok(())
     }
+
+    /// Whether a restore refuses `marker`, a `\.` line the file's end closes
+    /// with no LF after it (I91): `\.` alone in any block, and `\.` CR where
+    /// the block's first row fixed LF or CR LF — the server reads it in a
+    /// block of no rows, and in one of bare-CR rows, which this scanner does
+    /// not split (`KD101`). A scanner resumed inside a block reads one its
+    /// mapping pass entered at the header and so held already.
+    fn refuses_unended(&self, marker: &[u8]) -> bool {
+        if !marker.ends_with(b"\r") {
+            return true;
+        }
+        matches!(self, Endings::Refused { first: Some(RowEnding::Lf | RowEnding::CrLf), .. })
+    }
 }
 
 #[derive(Debug)]
@@ -722,12 +735,15 @@ impl CopyScanner {
                 }
                 State::InCopy { rows, header_offset } => {
                     // The `\.` line is psql's to find, which it does whatever
-                    // the block's rows end in (I91).
-                    // deficiency: KD105 — at the file's end with no LF after
-                    // it, psql does not find it and the server refuses it, a
-                    // corrupt marker, or `\.` CR a mismatched one in a block
-                    // of rows (I91); here it ends the block all the same.
+                    // the block's rows end in, and only where an LF follows
+                    // it (I91).
                     if is_terminator(line) {
+                        if advance == unstripped.len() && self.endings.refuses_unended(unstripped) {
+                            return Err(Error::UnendedCopyTerminator {
+                                offset: line_offset,
+                                table: self.copy_table().map(str::to_owned),
+                            });
+                        }
                         self.state = State::Outside;
                         self.streams_rows = false;
                         return Ok(Some(Event::CopyEnd(Box::new(CopyEnd {

@@ -46,6 +46,16 @@ pub enum Error {
     Join(Cause),
     #[error("COPY block at offset {header_offset} has no terminating `\\.` line")]
     UnterminatedCopyBlock { header_offset: u64 },
+    /// **A `\.` line ending the file with no LF after it**, which a restore
+    /// refuses (I91): psql finds the marker only as `\.` LF or `\.` CR LF, and
+    /// the server refuses `\.` alone as corrupt and `\.` CR as mismatched in a
+    /// block whose rows end in LF or CR LF. `offset` is the marker's, and
+    /// `table` the block's where its reader knows one.
+    #[error(
+        "the `\\.` line at offset {offset}{} ends the file with no line ending after it, so psql does not read it as the end of the COPY and the server refuses it — restoring this dump fails there, and so does this read",
+        in_copy(table.as_deref())
+    )]
+    UnendedCopyTerminator { offset: u64, table: Option<String> },
     #[error("large-object data region at offset {start_offset} has no terminating `COMMIT;` line")]
     UnterminatedLargeObjectRegion { start_offset: u64 },
     /// **A line longer than PostgreSQL writes or reads**: past `bound`, its

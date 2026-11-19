@@ -58,6 +58,7 @@ pub(crate) fn about_the_source(err: &pgdt_core::Error) -> bool {
         | Lib::Codec { .. }
         | Lib::CacheEncode(_)
         | Lib::UnterminatedCopyBlock { .. }
+        | Lib::UnendedCopyTerminator { .. }
         | Lib::UnterminatedLargeObjectRegion { .. }
         | Lib::LineTooLong { .. }
         | Lib::LineOutgrowsMemory { .. }
@@ -143,6 +144,7 @@ pub(crate) fn spelling(err: &pgdt_core::Error) -> Option<String> {
         | Lib::File { .. }
         | Lib::Join(_)
         | Lib::UnterminatedCopyBlock { .. }
+        | Lib::UnendedCopyTerminator { .. }
         | Lib::UnterminatedLargeObjectRegion { .. }
         | Lib::LineTooLong { .. }
         | Lib::ScanCancelled { .. }

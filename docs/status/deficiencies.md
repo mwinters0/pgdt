@@ -24,7 +24,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD176 -->
+rather than being deleted. <!-- deficiency-watermark: KD177 -->
 **Every number up to that watermark is allocated, and none is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -365,11 +365,6 @@ than reading as a phase nobody has sliced.
   (I15). **(c) unowned**; promoted by a hand-written dump holding one.
   Detail: `crates/pgdt-dump/src/scan.rs`.
 
-- **KD105** — a `\.` line at the file's end with no LF after it ends its
-  block, where a restore refuses it as a corrupt or mismatched marker (I91);
-  `pg_dump` ends every line with an LF. **(b) owned by `M292`**. Detail:
-  `crates/pgdt-dump/src/scan.rs`.
-
 - **KD106** — an `INSERT` run that a `COPY` header, a large object's
   `BEGIN;` or a dollar-quoted line follows with no TOC comment between, or a
   comment block a dollar-quoted line follows, is dropped rather than closed:
@@ -598,3 +593,10 @@ than reading as a phase nobody has sliced.
   long field such a term reads is held past its draw. **(c) unowned**;
   promoted by P40, or a dump whose long field such a term reads. Detail:
   `crates/pgdt-query/src/predicate/resolve.rs`.
+
+- **KD177** — a `\.` line ending the file with no LF after it, in a block
+  the interior split cuts, is refused as a block with no terminator, where
+  the serial scanner names the marker a restore does not find, and `\.` CR
+  there is refused in a block of bare-CR rows too, which a restore reads.
+  **(c) unowned**; promoted by a dump ending so at `--jobs` above one.
+  Detail: `crates/pgdt-mapping/src/interior.rs`.

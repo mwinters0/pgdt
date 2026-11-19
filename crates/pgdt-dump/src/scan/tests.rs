@@ -150,6 +150,61 @@ fn the_rows_a_restore_reads_are_read_without_their_endings() {
     assert_eq!(rows_of(resumed, interior, 3).unwrap(), [&b"1"[..], b"2", b"3"].map(<[u8]>::to_vec));
 }
 
+/// **A `\.` line ending the file with no LF after it is refused where a
+/// restore refuses it** (I91), naming the marker's offset and its table,
+/// wherever a chunk boundary falls: `\.` alone in any block, and `\.` CR in
+/// one whose rows end in LF or CR LF. `\.` LF and `\.` CR LF still end a
+/// block there, and `\.` CR ends one of no rows, or of bare-CR rows
+/// (`KD101`), which the server reads.
+#[test]
+fn a_terminator_ending_the_file_with_no_lf_is_refused_where_a_restore_refuses_it() {
+    let header: &[u8] = b"COPY public.t (a) FROM stdin;\n";
+    let refused: [(&[u8], &[u8]); 5] = [
+        (b"1\n", b"\\."),
+        (b"1\r\n", b"\\."),
+        (b"", b"\\."),
+        (b"1\n", b"\\.\r"),
+        (b"1\r\n", b"\\.\r"),
+    ];
+    for (rows, marker) in refused {
+        let file = [header, rows, marker].concat();
+        let offset = (header.len() + rows.len()) as u64;
+        for chunk_size in [1usize, 2, 7, 4096] {
+            match rows_of(CopyScanner::new(), &file, chunk_size) {
+                Err(Error::UnendedCopyTerminator { offset: at, table }) => assert_eq!(
+                    (at, table.as_deref()),
+                    (offset, Some("public.t")),
+                    "{file:?} at chunk_size {chunk_size}"
+                ),
+                other => panic!("{file:?} at chunk_size {chunk_size}: {other:?}"),
+            }
+        }
+    }
+    /// A block's rows, its one row's bytes, and its marker.
+    type Read = (&'static [u8], Option<&'static [u8]>, &'static [u8]);
+    let read: [Read; 6] = [
+        (b"1\n", Some(b"1"), b"\\.\n"),
+        (b"1\n", Some(b"1"), b"\\.\r\n"),
+        (b"1\r\n", Some(b"1"), b"\\.\n"),
+        (b"1\r\n", Some(b"1"), b"\\.\r\n"),
+        (b"", None, b"\\.\r"),
+        (b"1\r2\n", Some(b"1\r2"), b"\\.\r"),
+    ];
+    for (rows, row, marker) in read {
+        let file = [header, rows, marker].concat();
+        for chunk_size in [1usize, 2, 7, 4096] {
+            let got = rows_of(CopyScanner::new(), &file, chunk_size);
+            let expected: Vec<Vec<u8>> = row.iter().map(|row| row.to_vec()).collect();
+            assert_eq!(got.ok(), Some(expected), "{file:?} at chunk_size {chunk_size}");
+        }
+    }
+    let resumed = CopyScanner::resume(0, Some((0, 1)));
+    assert!(matches!(
+        rows_of(resumed, b"2\n\\.", 3),
+        Err(Error::UnendedCopyTerminator { offset: 2, table: None })
+    ));
+}
+
 /// **A row's ending found a read at a time is the one its whole line has**,
 /// however its bytes are cut: every line of up to six bytes over a
 /// backslash, a CR and a byte that is neither, fed in every split into three
