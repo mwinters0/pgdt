@@ -528,6 +528,73 @@ fn a_line_alone_parks_no_reader_whose_parking_gives_nothing_back() {
     assert_eq!(ledger.parked(), 0);
 }
 
+/// **Lines and statistics past the room park the latest reader, not a line
+/// alone only**: a statistics draw passing it asks the later line to give up
+/// and the standing reader after the earliest line to park meanwhile — never
+/// the earliest line, a reader before it, or one whose line holds — and the
+/// reader is let go as the later line gives up.
+#[test]
+fn statistics_past_the_room_park_the_latest_reader_until_a_later_line_gives_up() {
+    let ledger = parking(100);
+    let source = crate::test_support::ParkCounting::default();
+    let (mut first, mut later, mut before, mut late) =
+        (ledger.holder(), ledger.holder(), ledger.holder(), ledger.holder());
+    assert_eq!(drawn_now(&mut first, 100, 30), Admission::Held);
+    assert_eq!(drawn_now(&mut later, 200, 30), Admission::Held);
+    assert!(!first.stand(130) && !later.stand(230) && !before.stand(50) && !late.stand(300));
+
+    // 60 drawn, 60 more: 20 past the room, which one reader's parking covers.
+    ledger.draw_statistics(60);
+    let asked = (first.stand(130), later.stand(230), before.stand(60), late.stand(310));
+    assert_eq!(asked, (false, false, false, true));
+    let parked_woken = Woken::new();
+    {
+        let mut parked = pin!(late.park(&source));
+        assert_eq!(parked_woken.poll(parked.as_mut()), Poll::Pending);
+        assert_eq!((ledger.parked(), source.parked()), (1, 1));
+        assert_eq!(drawn_now(&mut first, 100, 30), Admission::Held, "the earliest is never asked");
+        assert_eq!(drawn_now(&mut later, 200, 30), Admission::GiveUp);
+        assert_eq!(ledger.drawn(), 90);
+        assert_eq!(parked_woken.times(), 1, "the give-up lets it go");
+        assert_eq!(parked_woken.poll(parked), Poll::Ready(()));
+    }
+    assert_eq!((ledger.parked(), source.parked()), (0, 0));
+    assert!(!late.stand(320));
+}
+
+/// **Statistics past the room beside a line alone park readers, admitting
+/// nothing**: the latest first, as many as the excess needs, never the line's
+/// own reader, whose line is never asked to give up; as the draw falls the
+/// earliest of them is let go first, and the latest once nothing passes.
+#[test]
+fn statistics_past_the_room_beside_a_line_alone_park_the_latest_readers() {
+    let ledger = parking(100);
+    let source = crate::test_support::ParkCounting::default();
+    let (mut line, mut mid, mut late) = (ledger.holder(), ledger.holder(), ledger.holder());
+    assert_eq!(drawn_now(&mut line, 100, 60), Admission::Held);
+    assert!(!line.stand(160) && !mid.stand(200) && !late.stand(300));
+
+    // 60 held, 60 more: 20 past the room.
+    ledger.draw_statistics(60);
+    assert_eq!((line.stand(160), mid.stand(210), late.stand(310)), (false, false, true));
+    let parked_woken = Woken::new();
+    let mut parked = pin!(late.park(&source));
+    assert_eq!(parked_woken.poll(parked.as_mut()), Poll::Pending);
+    assert_eq!((ledger.parked(), ledger.drawn(), line.held()), (1, 120, 60), "nothing moves");
+    assert_eq!(drawn_now(&mut line, 100, 60), Admission::Held, "the line alone is never asked");
+
+    // 110 past: more than one reader's term, so the next latest too.
+    ledger.draw_statistics(150);
+    assert!(mid.stand(220));
+    ledger.draw_statistics(60);
+    assert!(!mid.stand(230), "the earliest asked is let go first");
+    assert_eq!(parked_woken.times(), 0, "the latest stays parked");
+    ledger.draw_statistics(0);
+    assert_eq!(parked_woken.times(), 1);
+    assert_eq!(parked_woken.poll(parked), Poll::Ready(()));
+    assert_eq!((ledger.parked(), source.parked()), (0, 0));
+}
+
 /// **Parking readers on threads of their own all finish**: each stands
 /// before each line and parks where asked, then grows its line past the
 /// room, re-reading where it gave up, and nothing is left drawn or parked.
