@@ -236,8 +236,8 @@ than reading as a phase nobody has sliced.
   complete cache plans at the default whatever `--chunk-size` states, and a
   provider's first scan after `SET pgdump.chunk_size` at the chunk before it,
   so the smaller chunk a plan note advises seats nothing more on that plan.
-  **(c) unowned**; promoted by a stated chunk seen not to seat what the note
-  promised. Detail: `crates/pgdt-query/src/stream/replay/partition.rs`.
+  **(b) owned by `M297`**. Detail:
+  `crates/pgdt-query/src/stream/replay/partition.rs`.
 
 - **KD53** — a dynamic filter's cut at the first poll is not made where it
   would put two blocks in one sub-stream that nothing proves in a declared
@@ -422,8 +422,7 @@ than reading as a phase nobody has sliced.
 - **KD131** — a complete map is saved before the reads that built it are
   completed: the forward pass's end-of-file save and the back-fill's run
   `SourceWatch::check` alone, so a block a source's `complete_reads` would
-  refuse can stand in a complete map on disk. **(c) unowned**; promoted by a
-  source whose completion refuses what the scan already handed out. Detail:
+  refuse can stand in a complete map on disk. **(b) owned by `M294`**. Detail:
   `crates/pgdt-mapping/src/forward.rs`.
 
 - **KD133** — two concatenated dumps of one database name resolve every block
@@ -435,8 +434,8 @@ than reading as a phase nobody has sliced.
 - **KD134** — a parallel interior region fails on what follows its block — a
   line past the line bound, a corrupt unit, a failed fetch — where the
   serial scanner stops at `\.`, so a cold `query` at `--jobs` above one can
-  refuse a table it answers serially. **(c) unowned**; promoted by such a
-  refusal reaching a user. Detail: `crates/pgdt-mapping/src/interior.rs`.
+  refuse a table it answers serially. **(b) owned by `M293`**. Detail:
+  `crates/pgdt-mapping/src/interior.rs`.
 
 - **KD136** — a `parse` over a fetched compressed file reads each run of DDL
   back after its scan through the indexed source, which fetches the unit
@@ -448,8 +447,7 @@ than reading as a phase nobody has sliced.
 - **KD137** — a read behind a gzip first pass's frontier, continuing a decode
   begun in the unit that was open, hands out that unit's bytes after the
   frontier has closed it, and those of every closed unit after it, unchecked
-  against the CRC-32 each recorded. **(c) unowned**; promoted by work
-  on the gzip first pass scheduling the fix. Detail:
+  against the CRC-32 each recorded. **(b) owned by `M296`**. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass/pass.rs`.
 
 - **KD138** — a fetched gzip first pass's download room falls to two pieces
@@ -480,8 +478,7 @@ than reading as a phase nobody has sliced.
 - **KD144** — a range type's own `collation` parameter is not read, so a
   `text`-bounded range is compared as though it stated none: a spurious note
   where it states `C`, and a byte equality where it states a non-deterministic
-  collation (I42) and the server's is not. **(c) unowned**; promoted by a dump
-  in hand declaring a collated range. Detail:
+  collation (I42) and the server's is not. **(b) owned by `M295`**. Detail:
   `crates/pgdt-codec/src/compare/walk.rs`.
 
 - **KD146** — a sorted column holding a NULL is declared in no order, even

@@ -416,8 +416,7 @@ async fn run_region(
         // fails the region where the serial scanner would have stopped at `\.`: a
         // cold `query` at `--jobs` above one refuses a table it answers
         // serially. The fix is a partition's error raised only where no
-        // earlier one held the terminator. **(c) unowned**; promoted by such
-        // a refusal reaching a user.
+        // earlier one held the terminator.
         // Whether an earlier partition held the terminator, past which a line
         // is no row of this table's.
         let mut terminated = false;

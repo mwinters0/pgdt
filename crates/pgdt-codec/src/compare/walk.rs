@@ -84,9 +84,8 @@ fn array_comparison(
 /// where it agrees outright, and a range stating a collation the same dump
 /// declares `deterministic = false` (I42) gets the same, which does not reach
 /// `=`/`!=`, where the server's equality is not a byte comparison and the row
-/// set differs. **(c) unowned**; closing it means reading the parameter into
-/// `TypeKind::Range` and passing it here as the bound's clause. Promoted by a
-/// dump in hand declaring a collated range.
+/// set differs. Closing it means reading the parameter into
+/// `TypeKind::Range` and passing it here as the bound's clause.
 ///
 /// A range whose DDL stated no subtype at all is [`ComparisonPlan::Refused`]
 /// outright rather than a tree with an unnameable position in it: there is no

@@ -146,10 +146,9 @@ fn compressed_first_pass(source: &dyn ByteRangeSource) -> Option<PlanNote> {
 /// pgdump.chunk_size` at the chunk before it. Only `max_source_span` follows
 /// the stated chunk, so the smaller chunk
 /// [`PlanNoteKind::ParallelismBudgetLimited`](crate::stream::note::PlanNoteKind::ParallelismBudgetLimited) advises does not seat more on
-/// the plan it advises. **(c) unowned**; promoted by a stated chunk seen not
-/// to seat what the note promised, the fix being `hint_read_size(chunk_size)`
-/// beside `hint_parallelism` — a plan announcing a read size to a source
-/// other scans share.
+/// the plan it advises. The fix is `hint_read_size(chunk_size)` beside
+/// `hint_parallelism` — a plan announcing a read size to a source other scans
+/// share.
 pub(super) fn plan_partitions(
     source: &dyn ByteRangeSource,
     matches: &[CopyBlock],
