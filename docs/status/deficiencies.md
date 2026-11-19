@@ -103,7 +103,7 @@ than reading as a phase nobody has sliced.
   scan warm and most of a cold NVMe scan's time (`measurements.md`,
   `scan-throughput-warm` and `scan-throughput-nvme`), and three cuts
   against that remainder are known and untaken. **(b) owned by P8**, whose
-  Track A row reader extends the very scan all three are in; the cold-NVMe
+  `--inserts` row reader extends the very scan all three are in; the cold-NVMe
   figure confirmed the entry where it might have retired it. Detail:
   `crates/pgdt-dump/src/map/statement.rs`.
 

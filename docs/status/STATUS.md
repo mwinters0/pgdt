@@ -58,7 +58,7 @@ quotes a number: every figure is in
 | Python bindings | not started; P24 | |
 | Device-bound scan performance | settled; parallelism is filed beside its own mechanisms | D10, D29 |
 | Per-row-group column statistics | working; `pgdt parse` and the library's `map_file` gather them by default, for every column `--statistics-level` leaves at the data level, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, and say on stderr how much memory they held, `info --detail` reports them per table and column and `--json` exports every group's, and a query — library and `pgdt query` — skips the row groups they rule out, and stops reading a block sorted past the filter's bound, saying after the fact what that left unread, unless told `--statistics none`; statistics stop where the account fills, so a long dump keeps a prefix (`KD33`); under an unstated group size a block's groups merge pairwise past `BLOCK_MAX_ROW_GROUPS` and, once it is read, until its median group holds the density minimum, never past a stated maximum, which turns the cap off and re-reads a block at the finer size its groups predict — a block another request sized being first re-read at the default, so twice in one run — each block recording the request that sized it; a block whose statistics the run's allowance cannot hold declines, says so, and is re-read only under a larger one | `crates/pgdt-mapping/src/statistics/`, `prune.rs`, `crates/pgdt/src/info/statistics.rs`; D19, D34, D54, D67, D75–D82, D85; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics-level`: what `parse` records for later queries" |
-| `--inserts` row reading; custom, directory and tar archives | not started; P8, and the map already locates `INSERT` runs (`KD9`) | D33 |
+| `--inserts` row reading; custom, directory and tar archives | not started; P8 for `--inserts`, P41 and P42 for the archives, and the map already locates `INSERT` runs (`KD9`) | D33 |
 
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
 the session stamp and its own account of what stands outside it; `cd scripts
@@ -160,8 +160,8 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
   source recommends, a memory limit discovered and filled under the reserve
   and the margin, and a `parse` saying what it delivered rather than what it
   was asked for — is in [`../design/decisions.md`](../design/decisions.md).
-  Twelve phases remain sketched — P32, P34, P37, P22, P21, P23, P26,
-  P18, P8, P24, P39, P40, in the roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
+  Fourteen phases remain sketched — P8, P41, P42, P32, P34, P37, P22, P21,
+  P23, P26, P18, P24, P39, P40, in the roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
   nothing about the order they run in. Each gets its own full grilling when it
   becomes current, and every one that carries an inbox must have it drained as
   part of that grilling.

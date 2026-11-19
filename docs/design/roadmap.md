@@ -17,6 +17,9 @@ reused, including a struck phase's.
 |---|---|---|
 | P1–P7, P9–P17, P19, P20, P25, P27–P31, P35, P36, P38 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P33 — every line PostgreSQL writes and reads | **Current** | [spec](roadmap-P33-line-bound.md); progress in [`../status/STATUS.md`](../status/STATUS.md) |
+| P8 — `--inserts` and `--column-inserts` rows | Sketched; not grilled | this file, below; [inbox](roadmap-P8-inserts-inbox.md) |
+| P41 — archive formats: the shared model, and `--format=custom` | Sketched; not grilled | this file, below; [inbox](roadmap-P41-archive-formats-inbox.md) |
+| P42 — `--format=directory` and `--format=tar` | Sketched; not grilled | this file, below |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
 | P34 — macOS | Sketched; not grilled | this file, below; [inbox](roadmap-P34-macos-inbox.md) — the maintainer sets its order |
 | P37 — Parquet export as a Parquet-native writer leaves it | Sketched; not grilled | this file, below; [inbox](roadmap-P37-parquet-export-inbox.md) — the maintainer sets its order |
@@ -25,7 +28,6 @@ reused, including a struck phase's.
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below; [inbox](roadmap-P23-resident-reserve-inbox.md) |
 | P26 — statistics refused on their cost, reconsidered | Sketched; not grilled | this file, below |
 | P18 — zstd and lz4 input | Sketched; not grilled | this file, below; [inbox](roadmap-P18-zstd-inbox.md) — carved out of the gzip work |
-| P8 — format coverage | Sketched; not grilled | this file, below; [inbox](roadmap-P8-format-coverage-inbox.md) |
 | P24 — Python bindings | Sketched; not grilled | this file, below; [inbox](roadmap-P24-python-inbox.md) |
 | P39 — PostgreSQL as a front end | Sketched; not grilled | this file, below; [inbox](roadmap-P39-postgres-extension-inbox.md) |
 | P40 — every reader streams | Sketched; not grilled | this file, below; [inbox](roadmap-P40-every-reader-streams-inbox.md) — the maintainer sets its order |
@@ -48,7 +50,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P40`** — nothing at or below it
+centering"). **Phase numbering continues from `P42`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -206,7 +208,7 @@ Four bounds, and they are what keep this from being "take everything":
 
 **Each source answers for its own defaults, worker count and budget alike.**
 That is why `ByteRangeSource::default_workers` is a trait method rather than a
-test for `.xz`: the gzip, zstd/lz4 and format-coverage phases each add a source
+test for `.xz`: the gzip, zstd/lz4 and archive-format phases each add a source
 whose right default is its own, and a conditional written against the one
 compressed source in the tree would be reopened by every one of them. A source
 that recommends a worker count also says what **one of those workers** needs,
@@ -686,13 +688,13 @@ and a DataFusion upgrade takes its `arrow` in the same change.
 
 Plain-format-only and single-threaded is a deliberate scope, not a limitation
 to design around. These four choices are what made the scan-performance work
-additive and are what make P8 additive rather than a rewrite, and they are cheap to hold to — so hold to them, even
+additive and are what make the archive phases, P41 and P42, additive rather than a rewrite, and they are cheap to hold to — so hold to them, even
 where the work in front of you would not require them.
 
 - **The COPY TEXT decoder stays independent of where its bytes came from.**
   `copy.rs` operates on a caller-owned slice and never assumes "a file at
   offset N". Every dump format stores table data as this same COPY TEXT
-  payload, so this decoder is the one component all of P8 reuses verbatim.
+  payload, so this decoder is the one component every archive format reuses verbatim.
 - **Structure discovery is a separate concern from row decoding.** `scan.rs`
   finds `COPY` boundaries in a plain file; an archive reads them from a TOC.
   Keeping "what entries exist and where are their bytes" apart from "decode
@@ -732,6 +734,98 @@ size, `--jobs`, the split or the resume point, and refused only past it; memory
 may slow a long line and never refuses one a single reader could hold. No
 setting governs it. The spec is
 [`roadmap-P33-line-bound.md`](roadmap-P33-line-bound.md).
+
+## P8 — `--inserts` and `--column-inserts` rows
+
+**Inbox:** [`roadmap-P8-inserts-inbox.md`](roadmap-P8-inserts-inbox.md) — facts earlier
+phases filed for this one. Drain it when grilling this phase.
+
+`--inserts` / `--column-inserts` output, and any other gap within plain format
+the compatibility matrix in `docs/design/pg-dump-compatibility.md` turns up as
+it fills in via the fixture tooling. A second row-source implementation feeding
+the same batch layer, and its target is **already located and attributed** —
+`InsertRun::table` and `row_count` come out of the map, so this phase adds
+parsing, not scanning. The scan it extends, `map::statement::StatementScan`,
+holds `KD9`'s three untaken cuts.
+
+**Not CSV-format `COPY` blocks** — see "Permanent non-goals" above. This phase
+is `--inserts`, and nothing else that once sat beside it.
+
+**Ahead of the archive phases** because an archive entry holds `INSERT`
+statements too: under `--inserts`, `dumpTableData()` sets no `copyStmt` and
+makes `dumpTableData_insert` the entry's dumper, which writes through the
+archive like any other (`pg_dump.c`). An archive reader of an `--inserts` dump
+needs this phase's row reader, or refuses those entries.
+
+## P41 — Archive formats: the shared model, and `--format=custom`
+
+**Inbox:** [`roadmap-P41-archive-formats-inbox.md`](roadmap-P41-archive-formats-inbox.md) — facts earlier
+phases filed for this one. Drain it when grilling this phase.
+
+`--format=custom`, `--format=directory` and `--format=tar`, the last two P42's.
+Formerly a permanent non-goal; now planned, because the project's ambition (an
+embeddable, Arrow-native, engine-integrated source) puts it in a different class
+from tools that only need to read a dump once. Reading a table out of a
+custom-format archive into a DataFusion query is squarely in scope for what this
+library is for.
+
+The work is a **container layer**, not a new parser. All four formats store
+table data as the same COPY TEXT payload the MVP already decodes; what
+differs is how you find an entry and how you get its bytes:
+
+| Format | How structure is found | Entry bytes |
+|---|---|---|
+| plain | scan for `COPY ... FROM stdin;` headers | raw, inline |
+| custom | parse the `PGDMP` header + TOC | per-entry compressed stream |
+| directory | read `toc.dat`, one file per entry | per-file compressed |
+| tar | read `toc.dat`, the archive's first member | uncompressed tar members |
+
+So the layer sits between `ByteRangeSource` (below) and the batch/stream API
+(above), and reuses `copy.rs` verbatim.
+
+**This phase builds the model all three containers share, and custom on it**;
+P42 adapts directory and tar to it. The shared model is most of the cost:
+
+- **The TOC.** Directory's and tar's `toc.dat` is the serialization custom's
+  header and TOC are (`WriteHead`/`WriteToc`, `pg_backup_archiver.c`); each
+  format adds only its own per-entry fields, custom a data offset and its
+  state, directory and tar a filename.
+- **The index built from the TOC rather than a scan**: DDL from each entry's
+  `defn`, attribution from its fields rather than `-- Name:` comment lines, and
+  I2's partition-root marker read from the entry.
+- **Entry-relative addressing.** A raw file offset is not a resumable position
+  inside a compressed stream, so `ResumeToken` stays opaque and the cache gains
+  an entry-relative addressing mode.
+- **Parallelism by entry**, a compressed entry not being split across readers.
+- **Per-entry decompression.** An archive compresses internally, so the layer
+  decompresses an entry rather than a file, and there is no whole-file byte
+  stream for a source below it to present. gzip's decoder exists; an entry
+  compressed with zstd or lz4 (PG 16 on) is P18's, which runs after this phase,
+  so whether such an entry is refused here or its decoder taken in is this
+  phase's grilling to settle.
+
+**Custom first** because it is the commonest non-plain format and exercises
+every hard part of the model, which is then not designed around the easy case.
+Custom's alone: an entry is one compressed stream cut into length-prefixed
+chunks, so a de-framing layer sits beneath the decoder; and an entry's data
+offset is unset when the archive was written to a pipe
+(`K_OFFSET_POS_NOT_SET`), found then by walking block headers as
+`_PrintTocData` does (`pg_backup_custom.c`). **The grilling settles the shared
+model against all three formats**, so that P42 inherits it rather than
+reopening it.
+
+## P42 — `--format=directory` and `--format=tar`
+
+Adapters over P41's model; neither needs a new decoder. A directory entry,
+`<dumpId>.dat` with `.gz`, `.lz4` or `.zst` after it, is a standalone
+compressed file the whole-file decoders read. A tar entry is an uncompressed
+byte range of one file — tar refuses compression, and an untarred tar archive
+is a directory-format one (`pg_backup_tar.c`) — so plain format's offsets,
+splits and resume apply.
+
+What this phase owns that P41 does not is directory's **multi-file input**: the
+source's identity (`decisions.md`, "D21", is of one file's size and weak
+signals), where the cache lives, and a source layer presenting many files.
 
 ## P32 — The schema model: every object and property a dump declares
 
@@ -998,65 +1092,11 @@ gzip-specific anything. Whether it is worth reading at all is this phase's to
 decide, and the honest answer may be no — it earns its place from a real dump
 somebody has, not from the flag existing.
 
-**Scheduled ahead of P8** because its Track B decodes each archive entry with
-the decoders whole-file input lands, and after gzip for no reason beyond gzip
-being the older and more likely input.
-
-## P8 — Format coverage beyond plain COPY TEXT
-
-**Inbox:** [`roadmap-P8-format-coverage-inbox.md`](roadmap-P8-format-coverage-inbox.md) — facts earlier
-phases filed for this one. Drain it when grilling this phase.
-
-Everything that widens the set of `pg_dump` outputs we can read. Two
-independent tracks; A is listed first because it is cheap, not because it
-matters more.
-
-**Track A — variants within plain format.** `--inserts` /
-`--column-inserts` output, and any other gaps the compatibility matrix in
-`docs/design/pg-dump-compatibility.md` turns up as it fills in via the fixture
-tooling. Small: a second row-source implementation feeding the same
-batch layer, and its target is **already located and attributed** —
-`InsertRun::table` and `row_count` come out of the map, so this track adds
-parsing, not scanning.
-
-**Not CSV-format `COPY` blocks** — see "Permanent non-goals" above. Track A is
-`--inserts`, and nothing else that once sat beside it.
-
-**Track B — archive container formats.** `--format=custom`,
-`--format=directory`, and `--format=tar`. Formerly a permanent non-goal;
-now planned, because the project's ambition (an embeddable, Arrow-native,
-engine-integrated source) puts it in a different class from tools that only
-need to read a dump once. Reading a table out of a custom-format archive into
-a DataFusion query is squarely in scope for what this library is for.
-
-The work is a **container layer**, not a new parser. All four formats store
-table data as the same COPY TEXT payload the MVP already decodes; what
-differs is how you find an entry and how you get its bytes:
-
-| Format | How structure is found | Entry bytes |
-|---|---|---|
-| plain | scan for `COPY ... FROM stdin;` headers | raw, inline |
-| custom | parse the `PGDMP` header + TOC | per-entry compressed block |
-| directory | read `toc.dat`, one file per entry | per-file compressed |
-| tar | read the tar member index + `toc.dat` | uncompressed tar members |
-
-So the layer sits between `ByteRangeSource` (below) and the batch/stream API
-(above), and reuses `copy.rs` verbatim. Two things
-in it are genuinely new and should be scoped as such when this phase becomes
-current:
-
-- **Per-entry streaming decompression** (gzip, and lz4/zstd for PG 16+
-  archives) — the decoders the gzip source and P18 land for whole-file input, applied per
-  entry.
-  What is new here is the *placement*: an archive compresses **internally**, so
-  the container layer decompresses an entry rather than a file, and there is no
-  whole-file byte stream for a source below it to present.
-- **Non-seekable positions within an entry.** A raw file offset is not a
-  resumable position inside a compressed stream, so `ResumeToken` stays
-  opaque and the cache gains an entry-relative addressing mode.
-
-The decisions that keep all of this additive rather than a rewrite are listed
-under "Four decisions that keep later phases additive" above.
+**Scheduled after the archive phases, P41 and P42**, by the maintainer's
+order, though an archive entry compressed with zstd or lz4 is read with the
+decoders this phase lands for whole-file input; P41's grilling settles what an
+archive does with such an entry before then. After gzip for no reason beyond
+gzip being the older and more likely input.
 
 ## P24 — Python bindings
 
@@ -1297,7 +1337,7 @@ which is what makes the difference worth minding at the moment one is found.
   own quoting rules, plus the fixtures to pin it, and `copy.rs`'s independence
   from its byte source ("Four decisions that keep later phases additive") is
   what makes it a variant rather than a rework. Not to be confused with
-  `--format`, which names the archive container and is P8 Track B.
+  `--format`, which names the archive container and is P41's and P42's.
 
 - **Views read as DataFusion views.** A dump's `CREATE VIEW` registered so
   the view is queried under its name: a PostgreSQL SQL body read by

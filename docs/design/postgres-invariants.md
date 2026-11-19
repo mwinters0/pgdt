@@ -755,8 +755,8 @@ carrying a trailing `WITH (...)` and treats it as ordinary SQL rather than
 guessing — safe because `pg_dump` never emits one, so such a line is either
 not `pg_dump` output or inside a dollar-quoted body, where it must be ignored
 anyway. CSV-format `COPY` blocks are a non-shape, not a compatibility gap:
-see `pg-dump-compatibility.md` and P8 Track A in `roadmap.md`. `--inserts`
-*is* a real output shape and a real gap, scheduled in P8 Track A.
+see `pg-dump-compatibility.md` and P8 in `roadmap.md`. `--inserts`
+*is* a real output shape and a real gap, scheduled in P8.
 
 **Verified against:** v13.23, v16.15 and v18.6 source (`dumpTableData()`,
 `dumpTableData_copy()`, `pg_backup_tar.c`'s `copyStmt` check) — the `COPY`
@@ -766,7 +766,7 @@ contains a `COPY` line with an options clause.
 **Relied on by:** `crates/pgdt-core/src/copy.rs`'s `parse_copy_header` (its doc
 comment states the deliberate non-match for `WITH (...)`);
 `pg-dump-compatibility.md` ("`COPY` header variants" and "CSV-format `COPY`
-blocks"); `roadmap.md` (P8 Track A).
+blocks"); `roadmap.md` (P8).
 **Re-verify:** `grep -n 'FROM stdin' src/bin/pg_dump/pg_dump.c` — confirm the
 statement is still built from a fixed format string with no options clause;
 `grep -rni csv src/bin/pg_dump/` — confirm it still matches nothing.
