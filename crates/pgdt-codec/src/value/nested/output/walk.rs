@@ -225,8 +225,7 @@ impl ArrayWalk {
     // input walk refuses past it (I25), so a brace run longer than the stack
     // holds frames aborts the process instead of answering `None`. Only a
     // file no `pg_dump` wrote holds one. Bounding the depth at `MAXDIM`, as
-    // the input side does, closes it. **(c) unowned**; promoted by a fixture
-    // or a user's file holding one.
+    // the input side does, closes it.
     fn braces(
         &mut self,
         text: &mut FieldText<'_>,

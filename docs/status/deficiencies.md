@@ -324,8 +324,7 @@ than reading as a phase nobody has sliced.
 - **KD89** — an `ALTER TYPE … ADD VALUE … BEFORE` or `AFTER`, which no
   `pg_dump` writes, is folded as if it appended the label, so an ordering
   filter and the bounds it prunes by order that label last where the server
-  does not. **(c) unowned**; promoted by a hand-written dump holding one.
-  Detail: `crates/pgdt-dump/src/ddl/types.rs`.
+  does not. **(b) owned by `M290`**. Detail: `crates/pgdt-dump/src/ddl/types.rs`.
 
 - **KD96** — a `varchar(n)` or `char(n)` field is read as written, not as
   PostgreSQL stores it (I75): one longer than `n` only by trailing blanks
@@ -373,8 +372,8 @@ than reading as a phase nobody has sliced.
 
 - **KD105** — a `\.` line at the file's end with no LF after it ends its
   block, where a restore refuses it as a corrupt or mismatched marker (I91);
-  `pg_dump` ends every line with an LF. **(c) unowned**; promoted by a
-  hand-written dump holding one. Detail: `crates/pgdt-dump/src/scan.rs`.
+  `pg_dump` ends every line with an LF. **(b) owned by `M292`**. Detail:
+  `crates/pgdt-dump/src/scan.rs`.
 
 - **KD106** — an `INSERT` run that a `COPY` header, a large object's
   `BEGIN;` or a dollar-quoted line follows with no TOC comment between, or a
@@ -576,15 +575,13 @@ than reading as a phase nobody has sliced.
 - **KD166** — a value no text form spells — a `time` past `24:00:00`, a
   `date` or timestamp past PostgreSQL's range — is rendered rather than
   refused as `FieldRender`; only a caller's own array holds one.
-  **(c) unowned**; promoted by a caller rendering such an array. Detail:
-  `crates/pgdt-query/src/render.rs`.
+  **(b) owned by `M291`**. Detail: `crates/pgdt-query/src/render.rs`.
 
 - **KD169** — a file opening on blank lines has them in no span of its
   preamble scan, and a `parse --preamble-only` banks that gap, so the whole
   map a later `parse` builds on that cache reports itself broken
-  (`TilingBroken`, an error). `pg_dump` never writes such a file. **(c)
-  unowned**; promoted by such a file met in use. Detail:
-  `crates/pgdt-dump/src/preamble.rs`.
+  (`TilingBroken`, an error). `pg_dump` never writes such a file. **(b)
+  owned by `M289`**. Detail: `crates/pgdt-dump/src/preamble.rs`.
 
 - **KD170** — a row a pass streams is drawn for once, before its carry knows
   it streams, up to two read chunks, so under an allowance whose floor is
@@ -621,9 +618,8 @@ than reading as a phase nobody has sliced.
 
 - **KD175** — a typed read of an array field recurses once per opening brace,
   bounded by no `MAXDIM`, so a brace run thousands long — which no `pg_dump`
-  writes — overflows the stack rather than failing the field. **(c)
-  unowned**; promoted by a fixture or a user's file holding one. Detail:
-  `crates/pgdt-codec/src/value/nested/output/walk.rs`.
+  writes — overflows the stack rather than failing the field. **(b) owned by
+  `M288`**. Detail: `crates/pgdt-codec/src/value/nested/output/walk.rs`.
 
 - **KD176** — a query's factor leaves out three keys a term builds whole: a
   membership's lookup over a `jsonb`, multirange or nested column, a range's

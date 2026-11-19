@@ -38,8 +38,7 @@ use pgdt_model::{Diagnostic, DumpIndex, DumpMetadata, Span, SpanBody};
 /// mapping pass's prepass and a query's settle splice these spans from byte
 /// 0, which covers them; [`preamble_only`] does not, so a `parse
 /// --preamble-only` banks the gap and the whole map a later `parse` builds
-/// on that cache carries a `TilingBroken` error. **(c) unowned**; promoted
-/// by such a file met in use.
+/// on that cache carries a `TilingBroken` error.
 ///
 /// **It takes no cancellation**, and a stop inside it would read as the first
 /// `COPY` header (`docs/design/decisions.md`, "D26"): a caller that has one
