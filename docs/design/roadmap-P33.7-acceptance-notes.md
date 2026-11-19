@@ -90,8 +90,9 @@ production code.
   196,608 KiB two 64 MiB steps under `RETAINED_BOUND` leave. One rep a leg,
   a trigger's reading, not a fit; and a floor carved to one reader, not
   parked, so it does not read what a parked floor keeps of what its readers
-  freed (D165's `Rejected`). Filed for the maintainer (STATUS's "Decisions
-  worth another look"), not acted on in 33.7.
+  freed (D165's `Rejected`). Reviewed with the maintainer: D165 stands, its
+  `Reopens` now names a parked floor, and its floor grid is P23's
+  ([`roadmap-P23-resident-reserve-inbox.md`](roadmap-P23-resident-reserve-inbox.md)).
 - **The query run read its rows and passed its `--memory`.** Taken at
   `4cb97fd4` (`runs/p33.7-query-hand-run-20261117-0320/`, `run.sh`, each
   run's `.csv` and `.err`): `pgdt sql`'s `SELECT count(*) AS n,

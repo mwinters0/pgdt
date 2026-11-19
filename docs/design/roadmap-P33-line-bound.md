@@ -482,8 +482,7 @@ long field a `text` column a parse streams; there the reserve and what the
 allocator retains (`decisions.md`, "D165") leave the reference dump one
 reader, so its readers and statistics are the allowance's, not the line's,
 taken once more at a zero purge delay, the peaks' difference read against
-D165's `Reopens`, a run at one reader with no repartition being the floor run
-it names; and a query whose batch reads its long field under a `--memory`
+D165's `Reopens`; and a query whose batch reads its long field under a `--memory`
 carving readers whose cut puts a cluster's longest lines in different pieces,
 each reached early in its piece, so the lines held at once charge past the
 ledger's room and its arrangement rather than its timing makes readers wait and

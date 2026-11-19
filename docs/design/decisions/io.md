@@ -155,11 +155,11 @@ Evidence: `allocator`, `purge-delay`, `purge-delay-resident`.
 
 ### D165 What the allocator keeps of what it frees is one bound the binary states, held beside every arrangement
 What mimalloc keeps under `pgdt`'s purge delay is one bound the binary states (`RETAINED_BOUND`); an embedder states its
-allocator's, or none. It comes off the margin's ceiling, the ledger's room, never a draw an account replaces, and the
-floor. It is read off a grid of reader counts as `MEMORY_UNPOOLED_BOUND` is (D3). Why: the allocator is the binary's
-(D13); what it keeps moves with the cut, not the count. Rejected: a term per reader; the count one run's allowance
-carves; a library constant; the margin, which runs overrun; off the count alone, as a grant, a holding ignored at
-the floor being an OOM kill (D161); a floor term at one reader's, a parked floor keeping what its readers freed.
-Reopens: a workload keeping more; a floor run at the shipped delay, carved or parked, no repartition, two steps under it
-over a zero delay; P23 re-fitting `MEMORY_UNPOOLED_BOUND` and `MEMORY_RESERVE` net of it. Code: `alloc.rs`,
-`ArrangementRequest::retained`. Evidence: `runs/p33.34-delay-readers-20261118/`, `arrangement/tests.rs`.
+allocator's, or none. It comes off the margin's ceiling, the ledger's room and the floor. It is read off a reader-count
+grid as `MEMORY_UNPOOLED_BOUND` is (D3). Why: the allocator is the binary's (D13); what it keeps moves with the cut,
+not the count. Rejected: a term per reader; the count one run's allowance carves; a library constant; the margin,
+which runs overrun; off the count alone, as a grant, a holding ignored at the floor being an OOM kill (D161); a floor
+term read at a carved floor, a parked one keeping what its readers freed. Reopens: a workload keeping more; a parked
+floor run at the shipped delay, no repartition, two steps under it over a zero delay; P23 re-fitting
+`MEMORY_UNPOOLED_BOUND` and `MEMORY_RESERVE` net of it. Code: `alloc.rs`, `ArrangementRequest::retained`. Evidence:
+`runs/p33.34-delay-readers-20261118/`, `runs/p33.7-strict-floor-20261119-0050/`, `arrangement/tests.rs`.

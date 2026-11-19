@@ -144,3 +144,33 @@ the repartition's copies, `KD174`.
 term netted out and `KD174` set apart reviewed with them, 2026-11-18.
 *Contingent on* mimalloc 3.3.2 and the ledger's line charge at the plan's
 factor ([`decisions.md`](decisions.md), "D160").
+
+## What the purge delay keeps at the floor is unread past one carved parse
+
+**Fact.** D165 bills `RETAINED_BOUND` at the floor in full, keeping it there for
+a parked floor, one whose readers parked down to one having freed what they
+held ([`decisions.md`](decisions.md), "D165"). The one floor run taken is
+carved, not parked: 33.7's strict `pgdt parse` of the reference dump at
+813 MiB, one reader and no repartition, kept a few percent of the bound at
+the 100 ms delay over zero, one rep a leg
+(`runs/p33.7-strict-floor-20261119-0050/readings.txt`). The bound's own grid is
+`pgdt sql` alone, a repartition above its scan
+(`runs/p33.34-delay-readers-20261118/readings.txt`). Under mimalloc 3.3.2 a
+delayed purge is process-wide: whichever thread next frees or abandons a page
+purges the expired arena ranges (`arena.c`, `mi_arenas_try_purge`), so a
+parked reader's freed pages are not obviously kept by its parking. Nothing has
+read a parked floor.
+
+**Why P23 cares.** It re-fits `MEMORY_RESERVE` and `MEMORY_UNPOOLED_BOUND`
+net of this term, and the three are billed together on the floor: with the
+reserve they set the smallest `--memory` a strict parse of the reference dump
+passes under (`roadmap-P33.7-acceptance-notes.md`, "The hand runs"). So the
+grid that re-fits them takes D165's floor runs too: carved and parked, at the
+shipped delay and zero, `parse` and `sql`, with `parse` parked from several
+readers so that a bound per command — `parse` holding no DataFusion plan and so
+no repartition, and its caller already stating `ArrangementRequest::retained`
+— is read rather than assumed. A parked floor two steps under the bound over a
+zero delay is D165's `Reopens`.
+
+**Origin.** 33.7's strict floor run, reviewed with the maintainer, 2026-11-19.
+*Contingent on* mimalloc 3.3.2 and the 100 ms `PURGE_DELAY_MS`.

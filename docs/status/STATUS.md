@@ -174,21 +174,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **D165's `Reopens` fired at 33.7's strict floor run, and 33.7 is ticked with
-  `RETAINED_BOUND` unmoved (33.7).** The call: the strict parse at 813 MiB,
-  one reader carved and no repartition, peaked 9,756 KiB higher at the
-  shipped 100 ms purge delay than at zero
-  (`runs/p33.7-strict-floor-20261119-0050/readings.txt`), under the
-  196,608 KiB two 64 MiB steps under the bound leave, which is D165's
-  trigger; the box was ticked on the 100 ms leg and D165, the bound and the
-  floor left as they stand. Why: the spec reads the difference against
-  D165's `Reopens` and the 2026-11-19 history entry files a firing for the
-  maintainer, not acted on in 33.7; it is one rep a leg, a trigger's reading,
-  not a fit. What reconsidering decides: whether D165 reopens now, taking its
-  own grid of floor runs at both delays, which this reading does not stand in
-  for, being carved to one reader rather than parked, the case D165's
-  `Rejected` keeps the bound for. A smaller floor term would lower the
-  smallest `--memory` a strict parse of the reference dump passes under,
-  which the bill now puts above about 750 MiB
-  (`roadmap-P33.7-acceptance-notes.md`, "The hand runs").
