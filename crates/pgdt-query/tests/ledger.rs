@@ -323,10 +323,10 @@ async fn a_read_whose_longest_line_passes_the_floor_is_refused_before_it_reads()
     assert_eq!((holds, beside), (charge - 1, statistics));
     assert!(message.contains(&format!("the {statistics} byte(s) of statistics")), "{message}");
 
-    // A streamed row draws at most two chunks, once, before its carry
-    // streams it (`ChunkCarry::charge_absorbing`).
+    // A streamed row draws nothing, not even as its carry starts streaming
+    // it (`ChunkCarry::charge_absorbing`), so a floor below one chunk reads it.
     let counted = QueryOptions { projection: Some(Vec::new()), ..every };
-    let floor = pgdt_fixtures::floored(2 * CHUNK as u64);
+    let floor = pgdt_fixtures::floored(1);
     let streamed = table.plan(reads(CHUNK), counted, &floor).unwrap();
     let batches: Vec<_> = streamed.stream(0, 8192).map(Result::unwrap).collect().await;
     assert_eq!(batches.iter().map(RecordBatch::num_rows).sum::<usize>(), 3, "no field held");

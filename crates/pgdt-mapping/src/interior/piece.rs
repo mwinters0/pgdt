@@ -275,6 +275,18 @@ pub(super) struct ReadScan {
     pub next: PieceEntry,
 }
 
+/// What a piece's streamed rows fold into: its census's `fold` and its
+/// block's observer `piece`, either where present — what [`scan_read`] hands
+/// its carry, and what a draw for that carry asks which fields it holds.
+pub(super) fn row_fold<'a>(
+    fold: Option<&'a mut CensusFold>,
+    piece: Option<&'a mut PieceObserver>,
+) -> Option<RowFold<'a>> {
+    let data_offset = piece.as_deref().map_or(0, |piece| piece.data_offset);
+    let block = piece.map(|piece| piece.observer.as_mut() as &mut dyn BlockObserver);
+    RowFold::new(fold, block, data_offset)
+}
+
 /// Scan `chunk`, the piece's bytes from absolute offset `offset`, after the
 /// line `carry` holds from the read before: that line completed by the
 /// chunk's first line-terminated prefix, then the rest of the chunk where it
@@ -308,10 +320,7 @@ pub(super) fn scan_read(
 ) -> Result<ReadScan> {
     let line_base = offset - carry.carried() as u64;
     debug_assert_eq!(census.is_some(), fold.is_some(), "a census folds what a piece streams");
-    let data_offset = observer.as_deref().map_or(0, |piece| piece.data_offset);
-    let block =
-        observer.as_deref_mut().map(|piece| piece.observer.as_mut() as &mut dyn BlockObserver);
-    let mut row_fold = RowFold::new(fold.as_deref_mut(), block, data_offset);
+    let mut row_fold = row_fold(fold.as_deref_mut(), observer.as_deref_mut());
     let row_fold = row_fold.as_mut().map(|fold| fold as &mut dyn FieldFold);
     let mut passes = carry.absorb(chunk, eof, line_base, row_fold);
     passes.streams(true);

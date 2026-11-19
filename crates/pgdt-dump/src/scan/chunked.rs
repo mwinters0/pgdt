@@ -338,10 +338,12 @@ fn held_alone(bytes: u64) -> u64 {
 }
 
 /// **Draw from `drawing` what `carry` holds past its chunk once it absorbs
-/// `chunk`**, the bytes a read loop read from `read_pos`, before it absorbs
-/// them (`docs/design/decisions.md`, "D157", "D158"): the line it carries, or the
-/// field of a streamed row it holds whole, keyed by where that starts
-/// ([`ChunkCarry::holding_from`]), or nothing, which returns the last draw.
+/// `chunk`**, the bytes a read loop read from `read_pos`, ending the file
+/// where `eof`, before it absorbs them, a streamed row's fields folded by
+/// `fold` (`docs/design/decisions.md`, "D157", "D158"): the line it carries,
+/// or the field of a streamed row `fold` holds whole, keyed by where that
+/// starts ([`ChunkCarry::holding_from`]), or nothing, which returns the last
+/// draw.
 ///
 /// **A draw that waits holds no read**: `chunk` is dropped and read again
 /// once the draw is admitted, so a reader waiting on an earlier line never
@@ -363,6 +365,8 @@ pub async fn draw_absorbing(
     source: &dyn ByteRangeSource,
     read_pos: u64,
     chunk: &mut Bytes,
+    eof: bool,
+    fold: Option<&mut (dyn FieldFold + '_)>,
 ) -> Result<()> {
     let Drawing { holder, charge: charged, parks } = drawing;
     if parks && holder.stand(read_pos) {
@@ -373,13 +377,17 @@ pub async fn draw_absorbing(
             *chunk = source.read_range(read_pos, len).await?;
         }
     }
-    let held = carry.charge_absorbing(chunk);
+    // Read in a scope no await crosses, a `&dyn FieldFold` being `!Send`.
+    let (held, start) = {
+        let fold = fold.as_deref();
+        let held = carry.charge_absorbing(chunk, eof, fold);
+        (held, carry.holding_from(read_pos, chunk, eof, fold))
+    };
     if held == 0 {
         holder.release();
         return Ok(());
     }
     let charge = charged(held);
-    let start = carry.holding_from(read_pos);
     let len = chunk.len();
     if admitted(holder, start, charge, chunk).await? == Admission::GiveUp {
         let given = carry.give_up();
@@ -451,41 +459,85 @@ impl ChunkCarry {
         self.held.len() - self.line_used + self.line.len() + self.tail.len() + streamed
     }
 
-    /// **What it holds past its chunk once it absorbs `next`**, in bytes: the
-    /// line it carries, completed by `next`'s first line-terminated prefix or
-    /// joined by the whole of it, or the field of a streamed row its fold
-    /// holds whole, grown to `next`'s first delimiter — zero where that is
-    /// no longer than a chunk, which the reader's own term holds. An upper
-    /// bound where `next` starts streaming a row, whose line its fold then
-    /// takes in part.
-    ///
-    /// deficiency: KD170 — that bound is drawn, up to the carried line and
-    /// `next`, two read chunks, and a draw past the ledger's floor is refused
-    /// (`docs/design/decisions.md`, "D161"): so under an allowance leaving
-    /// one reader less than two chunks — on a carved allowance, one short of
-    /// `MEMORY_RESERVE`, what the allocator retains, one reader's term and
-    /// two chunks, besides the statistics and other scans' lines
-    /// (`docs/design/decisions.md`, "D165") — a parse, a census or a replay
-    /// reading no field of the row is refused for a row it would have
-    /// streamed holding none of it. Closing it is a charge exact where the
-    /// carry knows, before absorbing `next`, that the row streams: its block
-    /// streams rows, `next` holds no newline, and the file goes on past it.
-    pub fn charge_absorbing(&self, next: &[u8]) -> u64 {
-        let held = match self.streamed {
-            Some(_) if self.field.is_empty() => return 0,
+    /// **What it holds past its chunk once it absorbs `next`**, in bytes, the
+    /// read ending the file where `eof`: the line it carries, completed by
+    /// `next`'s first line-terminated prefix or joined by the whole of it, or
+    /// the field of a streamed row its fold holds whole, grown to `next`'s
+    /// first delimiter — nothing for a row `next` starts streaming but the
+    /// field `fold` holds whole across their boundary, and zero where that is
+    /// no longer than a chunk, which the reader's own term holds. So a row a
+    /// pass streams is never drawn for (`docs/design/decisions.md`, "D158").
+    pub fn charge_absorbing(&self, next: &[u8], eof: bool, fold: Option<&dyn FieldFold>) -> u64 {
+        let (held, _) = self.holding(next, eof, fold);
+        if held > self.line.outgrows() { held as u64 } else { 0 }
+    }
+
+    /// What it holds past its chunk once it absorbs `next`
+    /// ([`charge_absorbing`](Self::charge_absorbing)), uncapped, and how many
+    /// of those bytes lie before `next`.
+    fn holding(&self, next: &[u8], eof: bool, fold: Option<&dyn FieldFold>) -> (usize, usize) {
+        match self.streamed {
+            Some(_) if self.field.is_empty() => (0, 0),
             Some(row) => {
-                let grows = memchr::memchr2(b'\t', b'\n', next).unwrap_or(next.len());
-                self.field.len() + usize::from(row.cr) + grows
+                let before = self.field.len() + usize::from(row.cr);
+                (before + memchr::memchr2(b'\t', b'\n', next).unwrap_or(next.len()), before)
             }
             None => {
                 let line = self.held.len() - self.line_used + self.line.len() + self.tail.len();
                 if line == 0 {
-                    return 0;
+                    return (0, 0);
                 }
-                line + memchr::memchr(b'\n', next).map_or(next.len(), |nl| nl + 1)
+                let newline = memchr::memchr(b'\n', next);
+                if self.streams_from(line, next.len(), newline.is_none(), eof) {
+                    return self.starting_field(next, fold);
+                }
+                (line + newline.map_or(next.len(), |nl| nl + 1), line)
             }
-        };
-        if held > self.line.outgrows() { held as u64 } else { 0 }
+        }
+    }
+
+    /// **Whether the row it carries, `line` bytes so far, streams from the
+    /// next chunk on**, `next_len` bytes long, ending no line where
+    /// `unfinished`: its block streams rows, a whole chunk passes inside it
+    /// short of the file's end, and it is longer than the terminator
+    /// (`docs/design/decisions.md`, "D138").
+    fn streams_from(&self, line: usize, next_len: usize, unfinished: bool, eof: bool) -> bool {
+        unfinished && !eof && self.streams && line + next_len > STREAM_AFTER_BYTES
+    }
+
+    /// The field of the row it carries that `fold` holds whole as the row
+    /// starts streaming over `next`, and how many of its bytes lie before
+    /// `next`: the one the line's last delimiter opens, to `next`'s first,
+    /// or none where it holds no such field. Any other field it holds lies
+    /// in the line or in `next`, each within a chunk — but for a line held
+    /// past its chunk before its reader streamed its rows, charged as a line
+    /// joined whole, an upper bound.
+    fn starting_field(&self, next: &[u8], fold: Option<&dyn FieldFold>) -> (usize, usize) {
+        let line = self.carried_line();
+        if line.len() > self.line.outgrows() {
+            return (line.len() + next.len(), line.len());
+        }
+        match fold {
+            Some(fold) if fold.holds(delimiters(line)) => {
+                let before =
+                    memchr::memrchr(b'\t', line).map_or(line.len(), |tab| line.len() - tab - 1);
+                (before + memchr::memchr(b'\t', next).unwrap_or(next.len()), before)
+            }
+            _ => (0, 0),
+        }
+    }
+
+    /// The line carried into the next chunk, wherever the last one's passes
+    /// left it: what its carry pass left of its line, the line still
+    /// waiting, or the in-place pass's tail — never two ([`absorb`](Self::absorb)).
+    fn carried_line(&self) -> &[u8] {
+        if self.line_used < self.held.len() {
+            &self.held[self.line_used..]
+        } else if !self.line.is_empty() {
+            self.line.bytes()
+        } else {
+            &self.tail
+        }
     }
 
     /// **Whether absorbing `next` carries the line it holds past `bound`**:
@@ -501,15 +553,19 @@ impl ChunkCarry {
         carried > 0 && carried + memchr::memchr(b'\n', next).map_or(next.len(), |nl| nl + 1) > bound
     }
 
-    /// Where what it holds of the line it carries starts in the file, its
-    /// next chunk being read from `read_pos`: the field of a streamed row its
-    /// fold holds whole, or else the line — what a draw for it is keyed by,
+    /// Where what it holds past its chunk once it absorbs `next` starts in
+    /// the file, `next` being read from `read_pos` ([`charge_absorbing`](Self::charge_absorbing)):
+    /// the field of a streamed row its fold holds whole, or of a row `next`
+    /// starts streaming, or else the line — what a draw for it is keyed by,
     /// so a row's next held field is a line of its own to the ledger.
-    pub fn holding_from(&self, read_pos: u64) -> u64 {
-        match self.streamed {
-            Some(row) => read_pos - usize::from(row.cr) as u64 - self.field.len() as u64,
-            None => read_pos - self.carried() as u64,
-        }
+    pub fn holding_from(
+        &self,
+        read_pos: u64,
+        next: &[u8],
+        eof: bool,
+        fold: Option<&dyn FieldFold>,
+    ) -> u64 {
+        read_pos - self.holding(next, eof, fold).1 as u64
     }
 
     /// **Drop what it holds of the line it carries**, a ledger having asked
@@ -609,11 +665,7 @@ impl ChunkCarry {
             self.unfinished = newline.is_none();
             // A row a whole chunk passes inside, which its reader does not
             // read, is streamed from here: its bytes are folded in, not kept.
-            if self.unfinished
-                && !eof
-                && self.streams
-                && self.line.len() + chunk.len() > STREAM_AFTER_BYTES
-            {
+            if self.streams_from(self.line.len(), chunk.len(), self.unfinished, eof) {
                 let mut line = StreamedLine::default();
                 if let Some(fold) = fold.as_deref_mut() {
                     fold.begin_row(line_start);
@@ -817,7 +869,7 @@ impl ChunkedScanner {
     pub async fn next_chunk_folding(
         &mut self,
         source: &dyn ByteRangeSource,
-        fold: Option<&mut dyn FieldFold>,
+        mut fold: Option<&mut dyn FieldFold>,
         drawing: Option<Drawing<'_>>,
     ) -> Result<ChunkEvents<'_>> {
         // deficiency: KD172 — `self.chunk`, the read before this one, is
@@ -842,7 +894,11 @@ impl ChunkedScanner {
         };
         self.hold_to_bound(&bytes)?;
         if let Some(drawing) = drawing {
-            draw_absorbing(&mut self.carry, drawing, source, self.read_pos, &mut bytes).await?;
+            // As `feed` reads the end, but before `read_pos` moves past it.
+            let eof = self.end.is_some_and(|end| self.read_pos + bytes.len() as u64 >= end);
+            let (carry, at) = (&mut self.carry, self.read_pos);
+            let folding = fold.as_deref_mut();
+            draw_absorbing(carry, drawing, source, at, &mut bytes, eof, folding).await?;
         }
         Ok(self.feed(bytes, fold))
     }

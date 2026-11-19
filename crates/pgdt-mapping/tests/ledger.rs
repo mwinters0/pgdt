@@ -146,7 +146,7 @@ async fn a_parse_waiting_on_its_ledger_maps_what_one_reader_does() {
 /// parse collects whole, its reads far shorter, is read under a floor of its
 /// length and refused under one far below it, naming where it starts, what
 /// it needs and the allowance — while a metadata-level parse, streaming the
-/// row, reads it under that floor.
+/// row, reads it under that floor and under one below a read.
 #[tokio::test]
 async fn a_parse_holding_a_field_past_its_floor_is_refused_for_memory() {
     let dir = tempfile::tempdir().unwrap();
@@ -178,6 +178,14 @@ async fn a_parse_holding_a_field_past_its_floor_is_refused_for_memory() {
     let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
     let metadata = &StatisticsRequest::METADATA;
     let run = map_file(opened, read, &arrangement, default, metadata, &cancel).await.unwrap();
+    assert_eq!(run.index.blocks().map(|block| block.row_count).sum::<u64>(), 3);
+
+    // Its streamed row is drawn for nothing, not even as its carry starts
+    // streaming it, so a floor below one read holds it too.
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
+    let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
+    let under = floored(1);
+    let run = map_file(opened, read, &under, default, metadata, &cancel).await.unwrap();
     assert_eq!(run.index.blocks().map(|block| block.row_count).sum::<u64>(), 3);
 }
 

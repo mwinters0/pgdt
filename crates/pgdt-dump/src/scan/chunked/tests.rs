@@ -64,8 +64,15 @@ fn drive(file: &[u8], chunk_size: usize) -> Driven {
 /// A carry holding `line`, reached the way a read loop reaches one: a chunk
 /// the scanner could not finish, whose tail it kept.
 fn carrying(line: &[u8]) -> ChunkCarry {
+    carrying_streamed(line, false)
+}
+
+/// [`carrying`], the line a row of a block whose rows are streamed where
+/// `streams`.
+fn carrying_streamed(line: &[u8], streams: bool) -> ChunkCarry {
     let mut carry = ChunkCarry::new(4);
     let mut passes = carry.absorb(line, false, 0, None);
+    passes.streams(streams);
     passes.consumed(ChunkPass::Carry, 0);
     passes.consumed(ChunkPass::InPlace, 0);
     assert_eq!(carry.carried(), line.len());
@@ -561,7 +568,8 @@ fn stream_giving_up(
         let want = read.chunk().min(file.len() - read_pos);
         let bytes = Bytes::copy_from_slice(&file[read_pos..read_pos + want]);
         chunked.hold_to_bound(&bytes)?;
-        if give_up && chunked.carry.charge_absorbing(&bytes) > 0 {
+        let eof = read_pos + want >= file.len();
+        if give_up && chunked.carry.charge_absorbing(&bytes, eof, Some(&fold)) > 0 {
             let given = chunked.carry.give_up();
             let range = given.range(read_pos as u64);
             let (start, end) = (range.start as usize, range.end as usize);
@@ -724,10 +732,46 @@ fn a_line_after_a_streamed_block_is_held() {
 #[test]
 fn a_carry_charges_what_it_will_hold_past_its_chunk() {
     let carry = carrying(b"abcdef");
-    assert_eq!(carry.charge_absorbing(b"gh\nij"), 9, "completed by the prefix");
-    assert_eq!(carry.charge_absorbing(b"ghij"), 10, "joined whole");
-    assert_eq!(carrying(b"ab").charge_absorbing(b"c\nde"), 0, "no longer than its chunk");
-    assert_eq!(ChunkCarry::new(4).charge_absorbing(b"abcdefgh"), 0, "nothing carried");
+    assert_eq!(carry.charge_absorbing(b"gh\nij", false, None), 9, "completed by the prefix");
+    assert_eq!(carry.charge_absorbing(b"ghij", false, None), 10, "joined whole");
+    let short = carrying(b"ab");
+    assert_eq!(short.charge_absorbing(b"c\nde", false, None), 0, "no longer than its chunk");
+    let nothing = ChunkCarry::new(4);
+    assert_eq!(nothing.charge_absorbing(b"abcdefgh", false, None), 0, "nothing carried");
+}
+
+/// **A row its carry starts streaming over the next chunk is drawn for
+/// nothing** but the field its fold holds whole across their boundary,
+/// keyed by where that field starts, as the next chunk keys it once the row
+/// streams; a row the chunk ends, the file ends or whose block reads its
+/// rows whole is held, and charged as a line, as is a line held past its
+/// chunk before its block streamed rows.
+#[test]
+fn a_row_a_carry_starts_streaming_draws_only_the_field_its_fold_holds() {
+    let carry = carrying_streamed(b"1\tab", true);
+    let holding = |field| Recorder { holds: Some(field), ..Recorder::default() };
+    let charge = |next: &[u8], eof, fold: Option<&Recorder>| {
+        carry.charge_absorbing(next, eof, fold.map(|fold| fold as &dyn FieldFold))
+    };
+    assert_eq!(charge(b"efgh", false, None), 0, "streamed, read by no fold");
+    assert_eq!(charge(b"efgh", false, Some(&Recorder::default())), 0, "its fold holds none");
+    assert_eq!(charge(b"efgh", false, Some(&holding(0))), 0, "the field held lies in a chunk");
+    assert_eq!(charge(b"efgh", false, Some(&holding(1))), 6, "the field held, joined whole");
+    assert_eq!(charge(b"efg\th", false, Some(&holding(1))), 5, "to its delimiter");
+    assert_eq!(charge(b"efgh", true, None), 8, "the file ends: held");
+    assert_eq!(charge(b"ef\ngh", false, None), 7, "the chunk ends it: held");
+    let whole = carrying_streamed(b"1\tab", false);
+    assert_eq!(whole.charge_absorbing(b"efgh", false, None), 8, "rows read whole: held");
+    let held = carrying_streamed(b"1\tabcd", true);
+    assert_eq!(held.charge_absorbing(b"efgh", false, None), 10, "held before it streamed");
+
+    let mut fold = holding(1);
+    let mut carry = carrying_streamed(b"1\tab", true);
+    let start = carry.holding_from(4, b"efgh", false, Some(&fold));
+    assert_eq!(start, 2, "where the held field starts");
+    let _ = carry.absorb(b"efgh", false, 0, Some(&mut fold));
+    assert_eq!(carry.holding_from(8, b"ij", false, Some(&fold)), start, "streamed, keyed alike");
+    assert_eq!(carry.charge_absorbing(b"ij", false, Some(&fold)), 8, "grown on");
 }
 
 /// **A carry that gives up what it holds and takes it back reads as one that
@@ -743,9 +787,10 @@ fn a_carry_given_up_and_taken_back_reads_as_one_never_given_up() {
         let file = streamable(200, block, long);
         for chunk_size in [1usize, 2, 3, 5, 13, 64, 199] {
             let read = options(chunk_size);
-            for (stream, holds) in [(false, None), (true, Some(1)), (true, Some(2))] {
-                let context =
-                    format!("{block:?} block, {long:?} row, chunk {chunk_size}, {stream}");
+            for (stream, holds) in [(false, None), (true, Some(1)), (true, Some(3))] {
+                let context = format!(
+                    "{block:?} block, {long:?} row, chunk {chunk_size}, {stream} {holds:?}"
+                );
                 let kept = stream_giving_up(&file, read, stream, holds, false);
                 let given = stream_giving_up(&file, read, stream, holds, true);
                 match (&kept.events, &given.events) {
@@ -756,7 +801,10 @@ fn a_carry_given_up_and_taken_back_reads_as_one_never_given_up() {
                     (kept, got) => panic!("{context}: kept {kept:?}, given up {got:?}"),
                 }
                 assert_eq!(kept.given_up, 0);
-                assert!(given.given_up > 0, "{context}: nothing given up");
+                // Field 3 is long only in the sixth row, which a block
+                // refused at its second never reaches.
+                let reached = holds != Some(3) || kept.events.is_ok();
+                assert!(!reached || given.given_up > 0, "{context}: nothing given up");
             }
         }
     }

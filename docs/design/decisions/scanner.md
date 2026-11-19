@@ -36,13 +36,13 @@ its block's longest; I71's bound reserved per line, counted whole by an address-
 
 ### D158 A reader draws what its carry will hold before absorbing a chunk, holding no read while it waits
 A read loop handed its run's ledger draws on it (D157) what its carry would hold past its chunk once it absorbs the
-chunk in hand — a line completed or joined, or a held field grown to its next delimiter — keyed by where that starts
-(`draw_absorbing`). A waiting draw drops the chunk, read again once admitted; one told to give up drops what it holds
-and reads it again from its start. Why: the charge is known before the copy, an upper bound where the row then streams
-(`KD170`), and a waiter keeping a pooled read could starve the earliest line's (D5). Rejected: drawing before the read
-(every carried tail charged a chunk); after absorbing (a field ending in the chunk grows uncharged); keying a field by
-its row (a later field keeps the largest draw); holding the chunk while waiting. Code: `scan/chunked.rs`. Evidence:
-`chunked/tests.rs`, `tests/ledger.rs`.
+chunk in hand — a line completed or joined, or a held field grown to its next delimiter, nothing else of a row it starts
+streaming (D138) — keyed by where that starts (`draw_absorbing`). A waiting draw drops the chunk, read again once
+admitted; one told to give up drops what it holds and reads it again. Why: the charge is exact before the copy, and a
+waiter keeping a pooled read could starve the earliest line's (D5). Rejected: drawing before the read (every carried
+tail charged a chunk); after absorbing (a field ending in the chunk grows uncharged); charging a row starting to stream
+its line (refused under a floor below two chunks); keying a field by its row (a later field keeps the largest draw);
+holding the chunk while waiting. Code: `scan/chunked.rs`. Evidence: `chunked/tests.rs`, `tests/ledger.rs`.
 
 ### D164 A line is held to I71's bound, a constant measured before each read is absorbed
 Every read loop holds a line, its terminator included, to `LINE_BOUND` (I71), measured before a read is drawn for or

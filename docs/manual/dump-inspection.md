@@ -829,10 +829,11 @@ carved up in exactly the same way, so the two are one setting reached two ways:
   a further 256 MiB and the 320 MiB set aside for what the allocator keeps of
   what pgdt frees (below), is predicted to stay unspent**, because what kills
   a container is one run's peak. That 320 MiB also comes off what one reader
-  may hold of a long line. Any pass holds a row longer than a read chunk
-  while it reads it, so under an allowance short of the 384 MiB, the 320 MiB
-  and one reader's worth together, a dump holding such a row is refused there
-  rather than read slowly.
+  may hold of a long line. Any pass holds a row longer than a read chunk and
+  no longer than two while it reads it, and a longer one only where it reads
+  the value that makes it long, so under an allowance short of the 384 MiB,
+  the 320 MiB and one reader's worth together, a dump holding such a row is
+  refused there rather than read slowly.
 - **pgdt takes inside that what the *file* asks for**, not the whole of it —
   one reader's worth for each worker it would run.
 - **The statistics a cache already holds are counted before the workers**: a

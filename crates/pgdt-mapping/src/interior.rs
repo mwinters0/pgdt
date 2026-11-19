@@ -20,7 +20,7 @@
 use std::ops::Range;
 
 use pgdt_core::{Error, Result};
-use pgdt_dump::internal::{ChunkCarry, Drawing, draw_absorbing};
+use pgdt_dump::internal::{ChunkCarry, Drawing, FieldFold, draw_absorbing};
 use pgdt_dump::{CopyEnd, ScanOptions};
 use pgdt_io::{
     ByteRangeSource, Extent, Ledger, PartitionRead, Partitioning, WaitPolicy,
@@ -34,7 +34,7 @@ use tokio_util::sync::CancellationToken;
 mod piece;
 
 use self::piece::{
-    BlockEndings, PieceEntry, PieceObserver, PieceScan, empty_census, merge, scan_read,
+    BlockEndings, PieceEntry, PieceObserver, PieceScan, empty_census, merge, row_fold, scan_read,
 };
 pub(crate) use self::piece::{CensusPlan, Interior};
 
@@ -554,9 +554,11 @@ async fn scan_partition(
             return Err(Error::LineTooLong { offset, table: None, bound });
         }
         // Drawn in this half, which can wait: the blocking half absorbs it.
-        draw_absorbing(&mut carry, Drawing::held(&mut holder).parking(), source, at, &mut bytes)
-            .await?;
         let eof = end >= size;
+        let mut folding = row_fold(fold.as_mut(), piece.as_mut());
+        let folding = folding.as_mut().map(|fold| fold as &mut dyn FieldFold);
+        let drawing = Drawing::held(&mut holder).parking();
+        draw_absorbing(&mut carry, drawing, source, at, &mut bytes, eof, folding).await?;
         // The observer, the carry and its fold go to the blocking pool with
         // the bytes and come back with the scan, one read of the piece at a
         // time.
