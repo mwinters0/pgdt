@@ -12,22 +12,23 @@ fold it into the spec or discard it as stale, and delete this file. See
 **Fact.** mimalloc 3.3.2 exports `mi_options_print_out(out, arg)`
 (`src/options.c`), which writes each option's name and value as mimalloc holds
 it, through a caller's output function. `libmimalloc-sys` 0.1.49 does not
-declare it, nor v3's purge options; the symbol is linked regardless, as
-`mi_option_set` is. `pgdt` reads one option back instead, the purge delay it
-sets, by an index into `mi_option_e` counted by hand
-(`crates/pgdt/src/alloc.rs`, `MI_OPTION_PURGE_DELAY`), held to mimalloc's
-reading of `MIMALLOC_PURGE_DELAY` by `crates/pgdt/tests/allocator.rs`.
+declare it, nor v3's purge options (`UF6`). `pgdt` reaches the one option it
+sets, the purge delay, through a C shim compiled against mimalloc's own header
+(`crates/pgdt/src/alloc/purge.c`, built by `crates/pgdt/build.rs`), so the
+compiler names it; reading a further option back, or all of them through
+`mi_options_print_out`, is one more shim function, with no index to count.
 
 **Why P23 cares.** If P23 confirms the unit mimalloc keeps by switching an
 option off, or sets one as the remedy, the instrument has to show the option
-reached mimalloc rather than assume it. Reading all of them by name needs no
-index to drift at an upgrade; a hand count for each further option, each
-needing a test of its own, is the obvious route and the worse one.
+reached mimalloc rather than assume it. Whether it reads back the options it
+switches or every one is P23's call; neither needs a hand-counted index or a
+test guarding one.
 
 **Origin.** 2026-10-06
 ([`../status/history/2026-10-06.md`](../status/history/2026-10-06.md),
-"30.8's read-back goes with it"). *Contingent on* mimalloc still exporting
-`mi_options_print_out`, and on `libmimalloc-sys` still not declaring it.
+"30.8's read-back goes with it"); the shim, 2026-11-19 (`M284`). *Contingent
+on* mimalloc still exporting `mi_options_print_out`, and on
+`libmimalloc-sys` still exporting its include directory.
 
 ---
 

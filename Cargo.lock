@@ -3698,6 +3698,7 @@ dependencies = [
  "anyhow",
  "arrow",
  "bytes",
+ "cc",
  "clap",
  "datafusion-cli-pgdump",
  "flate2",

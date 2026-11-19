@@ -573,11 +573,10 @@ mod tests {
     /// freed and resident at the next, mimalloc told never to purge.
     #[test]
     fn a_block_is_read_live_then_freed_and_resident_at_line_moments() {
-        // SAFETY: an option's setter takes any value; -1 never purges.
-        // upstream: UF6
+        // SAFETY: no other test sets a mimalloc option; -1 never purges.
         #[allow(unsafe_code)]
         unsafe {
-            libmimalloc_sys::mi_option_set(crate::alloc::MI_OPTION_PURGE_DELAY, -1)
+            crate::alloc::set_purge_delay_for_test(-1)
         };
         const LEN: usize = 48 << 20;
         arm_from(32 << 20, |line| observed(line, 0));

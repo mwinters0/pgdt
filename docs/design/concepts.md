@@ -450,8 +450,8 @@ runs under, as `pgdt --version` names them, and what that delay keeps, which
 every arrangement `pgdt` resolves holds beside its readers
 ([`decisions.md`](decisions.md), "D13", "D105", "D165", "D166").
 
-- **pgdt** — `alloc.rs`, `profile.rs`: the binary's choice, never the
-  library's.
+- **pgdt** — `alloc.rs` and the C it calls, `alloc/purge.c`, `profile.rs`:
+  the binary's choice, never the library's.
 
 ## The fixture vocabulary
 

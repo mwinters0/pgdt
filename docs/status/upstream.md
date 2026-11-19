@@ -211,12 +211,12 @@ back. **`UF1`–`UF6` are allocated, and none is reused.**
 ## UF6 — `libmimalloc-sys` declares no constant for mimalloc v3's purge delay
 
 - **The issue.** `libmimalloc-sys` 0.1.49 declares a dozen of mimalloc v3's
-  47 `mi_option_e` entries, `mi_option_purge_delay` (15) not among them, nor
+  47 `mi_option_e` entries, `mi_option_purge_delay` not among them, nor
   `mi_options_print_out`, which reads every option back by name. `pgdt` sets
   the purge delay as its default and reads it back for `--version`
-  (`../design/decisions.md`, "D166"), so it names the option by a number
-  counted from `mimalloc.h`, which an upgrade renumbering the enum would point
-  at another option.
+  (`../design/decisions.md`, "D166"), so it compiles a C shim of its own
+  against mimalloc's header to name the option, and carries a `cc`
+  build-dependency for it.
 - **Upstream.** No issue, PR or discussion found asking for v3's option
   constants or `mi_options_print_out` (searched
   `purpleprotocol/mimalloc_rust` issues and PRs for "purge", "option" and
@@ -226,19 +226,20 @@ back. **`UF1`–`UF6` are allocated, and none is reused.**
   for no constant. 0.1.49 is the newest release, read 2026-11-17.
 - **Fixed when.** The pinned `libmimalloc-sys` declares
   `mi_option_purge_delay` for v3 (`not(feature = "v2")`).
-- **Workaround.** `crates/pgdt/src/alloc.rs`'s `MI_OPTION_PURGE_DELAY`, 15,
-  held to mimalloc's own reading of `MIMALLOC_PURGE_DELAY` by
-  `crates/pgdt/tests/allocator.rs`. `M284` replaces the number with the name,
-  resolved by a C shim compiled against `DEP_MIMALLOC_INCLUDE_DIR`
-  ([`../design/out-of-band.md`](../design/out-of-band.md)). Rejected: finding
-  the index at startup by counting `mi_options_print_out`'s lines, a printed
-  format parsed at every start in place of a header counted once, and a route
-  that reads an option but cannot set one.
+- **Workaround.** `crates/pgdt/src/alloc/purge.c`, which `crates/pgdt/build.rs`
+  compiles against the header `libmimalloc-sys` exports as
+  `DEP_MIMALLOC_INCLUDE_DIR` wherever mimalloc is linked, setting the default,
+  setting the delay for the block tracker's test and reading it back, called
+  from `crates/pgdt/src/alloc.rs`'s `purge`: the C compiler resolves
+  `mi_option_purge_delay`, so a reordered enum is followed and a renamed
+  option fails the build. Rejected: an index counted by hand from
+  `mimalloc.h`, which a renumbering points at another option unnoticed until
+  the suite runs; finding the index at startup by counting
+  `mi_options_print_out`'s lines, a printed format parsed at every start, and a
+  route that reads an option but cannot set one.
 - **Watch.** No test fails at the fix, which is a constant appearing;
   `upgrade-deps` reads `extended.rs` at each `libmimalloc-sys` bump.
-  `tests/allocator.rs` fails at a bump renumbering the enum.
 - **When it lands.** Name the option by `libmimalloc-sys`'s constant in
-  `alloc.rs`'s `purge` and in the block tracker's test
-  (`crates/pgdt/src/introspect/blocks.rs`), dropping the hand count or
-  `M284`'s shim, whichever is there, and `tests/allocator.rs`'s account of
-  guarding the index.
+  `alloc.rs`'s `purge`, calling `mi_option_set_default`, `mi_option_set` and
+  `mi_option_get` through it, and drop `purge.c`, `build.rs`'s `purge_shim` and
+  `pgdt`'s `cc` build-dependency.

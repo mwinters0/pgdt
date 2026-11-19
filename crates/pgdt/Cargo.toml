@@ -67,11 +67,12 @@ futures = { workspace = true }
 # `introspect` only: `mallinfo2`, `malloc_info` and the `open_memstream` the
 # second one writes into, and the block tracker's `sysconf` and `mincore`. A default build does not depend on it directly.
 libc = { workspace = true, optional = true }
-# `mi_option_set_default` and `mi_option_get`, behind `extended`, for the
-# purge delay `src/alloc.rs` sets; and under `introspect`, `mi_stats_get_json`
-# and `mi_free`, as upstream DataFusion's benchmarks read mimalloc's
-# statistics. `extended` declares functions and builds the same C. The version
-# is the one `mimalloc` itself links, so the two name one library.
+# Its include directory, which `build.rs` compiles the purge-delay shim
+# against (`DEP_MIMALLOC_INCLUDE_DIR`, exported only to a direct dependent);
+# and under `introspect`, `mi_stats_get_json` and `mi_free`, behind
+# `extended`, as upstream DataFusion's benchmarks read mimalloc's statistics.
+# `extended` declares functions and builds the same C. The version is the one
+# `mimalloc` itself links, so the two name one library.
 libmimalloc-sys = { version = "0.1.49", optional = true, default-features = false, features = ["extended"] }
 # The shipped allocator. No default features, as upstream's `datafusion-cli`
 # links it: no `override`, so `liblzma` and `aws-lc` keep libc's `malloc` and
@@ -124,6 +125,11 @@ tracing = { workspace = true }
 # koji orchestrator logs already use. No `ansi`: these lines are as likely to land
 # in a redirected log file as a terminal.
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "time"] }
+
+# `build.rs`'s purge-delay shim (`src/alloc/purge.c`), the version
+# `libmimalloc-sys` compiles mimalloc with.
+[build-dependencies]
+cc = "1.4.4"
 
 [dev-dependencies]
 # The one type `ByteRangeSource`'s signature names that the library does not

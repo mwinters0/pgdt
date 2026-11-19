@@ -89,7 +89,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// of freed blocks committed before it purges it. On a build linking mimalloc,
 /// the default, and under `introspect`, whose heap is this one with a counter
 /// in front of it. This crate's one `unsafe` site outside `introspect`, two
-/// calls into mimalloc (`docs/design/decisions.md`, "D27").
+/// calls into mimalloc through `build.rs`'s shim (`docs/design/decisions.md`,
+/// "D27").
 #[cfg(all(
     any(feature = "mimalloc", feature = "introspect"),
     not(feature = "jemalloc"),
@@ -122,13 +123,17 @@ mod purge {
     /// same pages live.
     pub const RETAINED_BOUND: u64 = 320 << 20;
 
-    /// `mi_option_purge_delay`'s place in `mimalloc.h`'s `mi_option_e`, which
-    /// `libmimalloc-sys` does not declare. Counted by hand, so held to
-    /// mimalloc's own reading of `MIMALLOC_PURGE_DELAY` by
-    /// `tests/allocator.rs`: an index naming another option would leave the
-    /// variable's value unread here.
+    // The shim `build.rs` compiles against mimalloc's own header
+    // (`src/alloc/purge.c`), naming the option `libmimalloc-sys` declares no
+    // constant for. Its setters write mimalloc's option table unsynchronized.
     // upstream: UF6
-    pub const MI_OPTION_PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
+    #[allow(unsafe_code)]
+    unsafe extern "C" {
+        fn pgdt_purge_delay_set_default(ms: std::ffi::c_long);
+        #[cfg(all(test, feature = "introspect"))]
+        fn pgdt_purge_delay_set(ms: std::ffi::c_long);
+        fn pgdt_purge_delay() -> std::ffi::c_long;
+    }
 
     /// Sets [`PURGE_DELAY_MS`] as the purge delay unless the environment
     /// stated one, which mimalloc read as the process loaded and which this
@@ -138,21 +143,34 @@ mod purge {
     /// page the commands free is purged under it (`docs/design/decisions.md`,
     /// "D166").
     pub fn configure() {
-        // SAFETY: an option's setter takes any option index and value, and
-        // runs here before a second thread exists.
+        // SAFETY: the setter takes any value, and runs here before a second
+        // thread exists.
         #[allow(unsafe_code)]
         unsafe {
-            libmimalloc_sys::mi_option_set_default(MI_OPTION_PURGE_DELAY, PURGE_DELAY_MS)
+            pgdt_purge_delay_set_default(PURGE_DELAY_MS)
         };
+    }
+
+    /// Sets `ms` as the purge delay over whatever is set, for the block
+    /// tracker's test: -1 never purges.
+    ///
+    /// # Safety
+    ///
+    /// No other thread may set a mimalloc option meanwhile.
+    #[cfg(all(test, feature = "introspect"))]
+    #[allow(unsafe_code)]
+    pub unsafe fn set_for_test(ms: std::ffi::c_long) {
+        // SAFETY: the caller's.
+        unsafe { pgdt_purge_delay_set(ms) };
     }
 
     /// ` (purge delay: <ms> ms)`: the delay mimalloc runs under once
     /// [`configure`] has run, [`PURGE_DELAY_MS`] or what the environment
     /// stated, read back from mimalloc.
     pub fn marker() -> String {
-        // SAFETY: an option's getter takes any option index.
+        // SAFETY: the getter reads one option, set before a second thread.
         #[allow(unsafe_code)]
-        let delay = unsafe { libmimalloc_sys::mi_option_get(MI_OPTION_PURGE_DELAY) };
+        let delay = unsafe { pgdt_purge_delay() };
         format!(" (purge delay: {delay} ms)")
     }
 }
@@ -177,7 +195,7 @@ mod purge {
 
 /// For the block tracker's test, which tells mimalloc never to purge.
 #[cfg(all(test, feature = "introspect", not(feature = "jemalloc"), not(feature = "system")))]
-pub use purge::MI_OPTION_PURGE_DELAY;
+pub use purge::set_for_test as set_purge_delay_for_test;
 
 /// Sets the allocator's defaults: mimalloc's purge delay (`purge`), first
 /// thing in `main`.

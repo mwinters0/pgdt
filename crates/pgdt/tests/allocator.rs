@@ -20,12 +20,10 @@ fn version_under(delay: Option<&str>) -> String {
 }
 
 /// With nothing stated the binary runs under its default, and a stated delay
-/// replaces it. **The stated case is what holds `MI_OPTION_PURGE_DELAY`, an
-/// index counted by hand, to mimalloc's purge delay**: mimalloc reads the
-/// variable into its own option, so an index naming another one would read
-/// back the default here, not the value stated. Two stated values, so a
-/// default happening to equal one cannot pass it.
-// upstream: UF6
+/// replaces it: mimalloc reads the variable into its own option, so the
+/// stated case holds the option `pgdt` sets and reads back to the one the
+/// variable names. Two stated values, so a default happening to equal one
+/// cannot pass it.
 #[test]
 fn the_purge_delay_is_pgdt_s_default_unless_the_environment_states_one() {
     let default = version_under(None);
