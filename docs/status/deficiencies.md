@@ -577,12 +577,6 @@ than reading as a phase nobody has sliced.
   refused as `FieldRender`; only a caller's own array holds one.
   **(b) owned by `M291`**. Detail: `crates/pgdt-query/src/render.rs`.
 
-- **KD169** — a file opening on blank lines has them in no span of its
-  preamble scan, and a `parse --preamble-only` banks that gap, so the whole
-  map a later `parse` builds on that cache reports itself broken
-  (`TilingBroken`, an error). `pg_dump` never writes such a file. **(b)
-  owned by `M289`**. Detail: `crates/pgdt-dump/src/preamble.rs`.
-
 - **KD171** — an emitted batch's views pin each whole read chunk or decoded
   block they point into while its consumer holds it, which no carve bills: a
   reader is billed its in-flight span or unit, so `pgdt query`'s merge (`KD57`)

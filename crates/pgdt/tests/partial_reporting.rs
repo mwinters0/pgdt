@@ -457,6 +457,39 @@ async fn preamble_only_moved_to_parse_and_leaves_a_cache_info_reads() {
     assert!(text.contains("no COPY blocks found"), "{text}");
 }
 
+/// **A file opening on blank lines tiles from byte 0 whichever pass mapped
+/// its preamble**: `--preamble-only`'s scan holds them in its first span, as
+/// the mapping pass's prepass does, so a `parse` finishing that cache tiles
+/// the file whole. `pg_dump` writes no such file; a hand-edited one does.
+#[tokio::test]
+async fn a_file_opening_on_blank_lines_tiles_after_a_preamble_only_parse() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("dump.sql");
+    let mut bytes = b"\n\n".to_vec();
+    bytes.extend(std::fs::read(fixture(16, "types", "default")).unwrap());
+    std::fs::write(&dump, bytes).unwrap();
+    let source = dump.to_str().unwrap();
+
+    for args in
+        [&["parse", "--source", source, "--preamble-only"][..], &["parse", "--source", source]]
+    {
+        let out = run(args);
+        assert!(out.status.success(), "{args:?}: {}", stderr_of(&out));
+        let said = format!("{}{}", stdout_of(&out), stderr_of(&out));
+        assert!(!said.contains("does not tile the file"), "{args:?}: {said}");
+    }
+    let cache::CacheStatus::Loaded(loaded) =
+        cache::OfflineCache::new(cache::colocated_path(&dump)).load().await.unwrap()
+    else {
+        panic!("the parse wrote a cache");
+    };
+    assert!(loaded.is_complete(), "the second parse finished the map");
+    let spans = &loaded.index.spans;
+    assert_eq!(spans.first().map(|span| span.start), Some(0), "{spans:?}");
+    let size = std::fs::metadata(&dump).unwrap().len();
+    assert!(pgdt_dump::check_tiling(spans, size).is_empty(), "{spans:?}");
+}
+
 // ---------------------------------------------------------------------------
 // Machine-readable resolution
 // ---------------------------------------------------------------------------

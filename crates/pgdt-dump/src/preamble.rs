@@ -27,18 +27,10 @@ use pgdt_model::{Diagnostic, DumpIndex, DumpMetadata, Span, SpanBody};
 /// Returns the recovered metadata, the spans tiling `[0, preamble_end)` (no
 /// `COPY` block among them, the scan stopping before the first `COPY` block
 /// rather than walking into it — though a file with large objects and
-/// no `COPY` block maps that region as a `Data` span; leading blank lines
-/// are in none, below), that offset itself — a safe watermark
-/// for a later scan to continue from — and whatever roles/tablespaces the
-/// preamble region referenced (`DumpIndex::roles`/`tablespaces`'s own
-/// partial-scan caveat applies).
-///
-/// deficiency: KD169 — a file opening on blank lines, which `pg_dump` never
-/// writes, has its first span start past them, those bytes in no span. The
-/// mapping pass's prepass and a query's settle splice these spans from byte
-/// 0, which covers them; [`preamble_only`] does not, so a `parse
-/// --preamble-only` banks the gap and the whole map a later `parse` builds
-/// on that cache carries a `TilingBroken` error.
+/// no `COPY` block maps that region as a `Data` span), that offset itself — a
+/// safe watermark for a later scan to continue from — and whatever
+/// roles/tablespaces the preamble region referenced
+/// (`DumpIndex::roles`/`tablespaces`'s own partial-scan caveat applies).
 ///
 /// **It takes no cancellation**, and a stop inside it would read as the first
 /// `COPY` header (`docs/design/decisions.md`, "D26"): a caller that has one
@@ -90,7 +82,13 @@ pub async fn scan_preamble(
     let end = stop.or(reached).expect("a scan not stopped by its callback reached the end");
     let roles = spans.roles().clone();
     let tablespaces = spans.tablespaces().clone();
-    let spans = spans.finish(end);
+    let mut spans = spans.finish(end);
+    // Blank lines open no span, so the first one recognized may start past
+    // a file opening on them; it is floored at byte 0, as
+    // `pgdt_mapping`'s `forward::splice` floors a segment's first span.
+    if let Some(first) = spans.first_mut() {
+        first.start = 0;
+    }
     let metadata = dump_metadata_from_spans(&spans);
     Ok((metadata, spans, end, roles, tablespaces))
 }
