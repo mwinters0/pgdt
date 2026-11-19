@@ -376,7 +376,7 @@ async fn a_state_moving_inside_a_group_is_read_at_the_next_chunk() {
     let block = index.blocks().find(|b| b.header.matches("public.t")).unwrap();
     assert_eq!(block.statistics.as_deref().unwrap().groups.len(), 1);
     let scan = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: SMALL_CHUNK, ..ReadOptions::default() },
+        read: ReadOptions::default().with_chunk_size(SMALL_CHUNK),
         ..ScanOptions::default()
     };
     let past = || term("id", PredicateOp::Gt, "1500");
@@ -417,7 +417,7 @@ async fn a_state_read_inside_a_group_it_rules_out_skips_the_rest() {
     let dump = long_block(dir.path());
     let index = mapped(&dump, 1 << 20).await;
     let scan = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: SMALL_CHUNK, ..ReadOptions::default() },
+        read: ReadOptions::default().with_chunk_size(SMALL_CHUNK),
         ..ScanOptions::default()
     };
     let beyond = || term("id", PredicateOp::Gt, "5000");
@@ -843,7 +843,7 @@ async fn a_row_a_plan_reading_no_field_streams_is_kept_whatever_the_state_reads(
     let name = index.tables().into_iter().find(|t| t.qualified_name() == "public.t").unwrap();
     let table = opened(&path).await.table(&name.into()).unwrap().unwrap();
     let options = QueryOptions { projection: Some(Vec::new()), ..QueryOptions::default() };
-    let read = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    let read = ReadOptions::default().with_chunk_size(64);
     assert_eq!(table.line_charge(read, &options).unwrap(), 0);
     let plan = Arc::new(table.plan(read, options, &arranged(1)).unwrap());
 

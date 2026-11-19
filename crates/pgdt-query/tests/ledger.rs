@@ -94,7 +94,7 @@ fn lending(jobs: usize, capacity: u64) -> Arrangement {
 
 /// `chunk`-byte reads.
 fn reads(chunk: usize) -> ReadOptions {
-    ReadOptions { chunk_size_bytes: chunk, ..ReadOptions::default() }
+    ReadOptions::default().with_chunk_size(chunk)
 }
 
 /// `table` settled by a typed cold mapping pass over `source`, writing no

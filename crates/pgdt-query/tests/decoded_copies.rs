@@ -128,7 +128,7 @@ async fn query(path: &Path) -> (Vec<RecordBatch>, usize) {
 /// [`query`] as `options` ask, under its span cap.
 async fn query_with(path: &Path, options: QueryOptions) -> (Vec<RecordBatch>, usize) {
     let scan = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: CHUNK, ..ReadOptions::default() },
+        read: ReadOptions::default().with_chunk_size(CHUNK),
         ..ScanOptions::default()
     };
     let cold = Cold { scan, ..Cold::default() };
@@ -460,7 +460,7 @@ async fn a_normalized_term_holds_its_positions() {
 /// reading values as `invalid` says, or the parse's error.
 async fn parse(path: &Path, invalid: PostgresInvalidValues) -> pgdt_core::Result<usize> {
     let opened = CacheMode::DISABLED.open_source(source(path)).await.unwrap();
-    let read = ReadOptions { chunk_size_bytes: CHUNK, ..ReadOptions::default() };
+    let read = ReadOptions::default().with_chunk_size(CHUNK);
     let before = window();
     let run = map_file(
         opened,

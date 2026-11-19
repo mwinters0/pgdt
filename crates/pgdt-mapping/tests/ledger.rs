@@ -89,7 +89,7 @@ async fn outcome_over(
     arrangement: &Arrangement,
     invalid: PostgresInvalidValues,
 ) -> Result<Vec<CopyBlock>, String> {
-    let read = ReadOptions { chunk_size_bytes: chunk, ..ReadOptions::default() };
+    let read = ReadOptions::default().with_chunk_size(chunk);
     let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
     let (statistics, cancel) = (&StatisticsRequest::DATA, CancellationToken::new());
     let run = map_file(opened, read, arrangement, invalid, statistics, &cancel).await;
@@ -160,7 +160,7 @@ async fn a_parse_holding_a_field_past_its_floor_is_refused_for_memory() {
     assert_eq!(read.iter().map(|block| block.row_count).sum::<u64>(), 3);
 
     let floor = 1 << 10;
-    let read = ReadOptions { chunk_size_bytes: chunk, ..ReadOptions::default() };
+    let read = ReadOptions::default().with_chunk_size(chunk);
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
     let (data, cancel) = (&StatisticsRequest::DATA, CancellationToken::new());
@@ -289,7 +289,7 @@ async fn a_parse_parking_its_readers_maps_what_one_reader_does() {
 /// left parked.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_back_fill_parking_its_readers_checks_every_block() {
-    let read = ReadOptions { chunk_size_bytes: 61, ..ReadOptions::default() };
+    let read = ReadOptions::default().with_chunk_size(61);
     let strict = PostgresInvalidValues::Strict;
     for version in VERSIONS {
         let fixture = types_fixture(version, "default");

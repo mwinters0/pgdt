@@ -9,7 +9,7 @@ fn each_event(
     chunk_size: usize,
     mut on_event: impl FnMut(Event<'_>),
 ) -> Result<()> {
-    let read = ReadOptions { chunk_size_bytes: chunk_size, ..ReadOptions::default() };
+    let read = ReadOptions::default().with_chunk_size(chunk_size);
     let mut chunked = ChunkedScanner::new(scanner, file.len() as u64, read);
     let mut read_pos = 0usize;
     loop {

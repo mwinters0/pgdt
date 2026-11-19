@@ -118,7 +118,7 @@ async fn every_pass_records_each_blocks_longest_line() {
     let path = dir.path().join("lines.sql");
     let file = dump();
     std::fs::write(&path, &file).unwrap();
-    let read = ReadOptions { chunk_size_bytes: CHUNK, ..ReadOptions::default() };
+    let read = ReadOptions::default().with_chunk_size(CHUNK);
 
     for (level, statistics) in
         [("metadata", StatisticsRequest::METADATA), ("data", StatisticsRequest::DATA)]

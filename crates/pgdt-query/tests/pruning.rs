@@ -1149,10 +1149,8 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
         starts: std::sync::Mutex::new(Vec::new()),
     });
     let cache = cache::colocated_path(&dump);
-    let scan = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
+    let scan =
+        ScanOptions { read: ReadOptions::default().with_chunk_size(64), ..ScanOptions::default() };
     let plan = async |query: Query| {
         let source: Arc<dyn ByteRangeSource> = Arc::clone(&source) as _;
         planned(source, &cache, None, "public.ordered", scan, query).await.unwrap().unwrap()
@@ -1269,10 +1267,8 @@ async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
         starts: std::sync::Mutex::new(Vec::new()),
     });
     let cache = cache::colocated_path(&dump);
-    let scan = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
+    let scan =
+        ScanOptions { read: ReadOptions::default().with_chunk_size(64), ..ScanOptions::default() };
     let single = |column, op, value| Expr::Term(term(column, op, value));
 
     // A filter, its row count, and where its stop ends reading.

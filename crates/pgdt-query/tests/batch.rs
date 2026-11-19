@@ -501,7 +501,7 @@ async fn max_source_span_splits_batches() {
                 ..Default::default()
             };
             let scan = ScanOptions {
-                read: ReadOptions { chunk_size_bytes: chunk_size, ..ReadOptions::default() },
+                read: ReadOptions::default().with_chunk_size(chunk_size),
                 ..Default::default()
             };
             let cold = Cold { scan, max_rows: usize::MAX, ..Cold::default() };
@@ -554,7 +554,7 @@ async fn batch_contents_are_independent_of_chunk_size() {
             .1;
     for chunk_size in [1, 2, 3, 7, 13, 64, 511, 4096] {
         let scan = ScanOptions {
-            read: ReadOptions { chunk_size_bytes: chunk_size, ..ReadOptions::default() },
+            read: ReadOptions::default().with_chunk_size(chunk_size),
             ..Default::default()
         };
         let cold = Cold { scan, ..Cold::default() };
@@ -609,10 +609,8 @@ async fn a_long_nested_value_is_a_batch_of_its_own() {
          COPY public.t (a, b) FROM stdin;\n1\t{{1}}\n2\t\\N\n3\t{long}\n4\t{{4,4}}\n5\t{{5}}\n\\.\n\n"
     );
     std::fs::write(&path, file).unwrap();
-    let scan = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 1 << 10, ..ReadOptions::default() },
-        ..Default::default()
-    };
+    let scan =
+        ScanOptions { read: ReadOptions::default().with_chunk_size(1 << 10), ..Default::default() };
     let cold = Cold { scan, ..Cold::default() };
     let expected = [(1, Some(1)), (2, None), (3, Some(4096)), (4, Some(2)), (5, Some(1))];
 
@@ -753,7 +751,7 @@ async fn a_long_value_is_a_view_into_its_carried_line() {
         most: Default::default(),
     });
     let scan = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: chunk_size, ..ReadOptions::default() },
+        read: ReadOptions::default().with_chunk_size(chunk_size),
         ..Default::default()
     };
     let cold = Cold { scan, ..Cold::default() };

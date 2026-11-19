@@ -5,9 +5,9 @@
 //! gzip source, a pass resumed from an interrupted cache, and a query's
 //! replay, serial and cut into segments.
 //!
-//! Each is read at a small bound (`ReadOptions`'s `line_bound` field, which
-//! only a `test-support` build has) so a dump of a few kilobytes reaches it; the
-//! real bound's wiring is `pgdt`'s `tests/line_bound.rs`.
+//! Each is read at a small bound (`pgdt_dump::internal::with_line_bound`) so a
+//! dump of a few kilobytes reaches it; the real bound's wiring is `pgdt`'s
+//! `tests/line_bound.rs`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -17,6 +17,7 @@ use futures::StreamExt;
 use pgdt_core::Error;
 use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::{CacheMode, colocated_path};
+use pgdt_dump::internal::with_line_bound;
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
@@ -113,7 +114,7 @@ fn dump(dir: &Path, line: usize, ahead: bool) -> (PathBuf, u64) {
 
 /// `bound`'s reads, `chunk` bytes apiece.
 fn read(chunk: usize, bound: usize) -> ReadOptions {
-    ReadOptions { chunk_size_bytes: chunk, line_bound: bound }
+    with_line_bound(ReadOptions::default().with_chunk_size(chunk), bound)
 }
 
 /// `result` is what a path answers of the dump whose long line is `line`:

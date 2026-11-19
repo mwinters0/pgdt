@@ -157,8 +157,7 @@ async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
                         format!("{schema_dir}/{flag_set}, {jobs} jobs, {chunk_size}B chunk");
                     let mode =
                         CacheMode::enabled(dir.path().join(format!("{chunk_size}-{jobs}.pgdt")));
-                    let options =
-                        ReadOptions { chunk_size_bytes: chunk_size, ..ReadOptions::default() };
+                    let options = ReadOptions::default().with_chunk_size(chunk_size);
                     let run = map_file(
                         mode.open_source(Arc::clone(&source)).await.unwrap(),
                         options,
@@ -444,7 +443,7 @@ async fn an_interrupted_map_file_leaves_a_resumable_cache() {
     assert!(first_block_end < size, "sanity: there is a file left after the first block");
 
     let dying = FailsPast { inner: Arc::clone(&source), fail_at: first_block_end };
-    let slow = ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() };
+    let slow = ReadOptions::default().with_chunk_size(1);
     let err = map_file(
         mode.open_source(Arc::new(dying)).await.unwrap(),
         slow,
@@ -674,7 +673,7 @@ async fn a_cancelled_parallel_region_banks_nothing_and_stays_resumable() {
     let cancel = CancellationToken::new();
     let tripping =
         CancelsPast { inner: Arc::clone(&source), trip: data_offset, cancel: cancel.clone() };
-    let options = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    let options = ReadOptions::default().with_chunk_size(64);
 
     let run = map_file(
         mode.open_source(Arc::new(tripping)).await.unwrap(),
@@ -805,7 +804,7 @@ async fn the_lowest_offset_error_is_the_one_a_split_region_raises() {
     let mode = CacheMode::DISABLED;
 
     let failing = FailsOutOfOrder { inner: Arc::clone(&source), fail_at: data_offset };
-    let options = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    let options = ReadOptions::default().with_chunk_size(64);
 
     let err = map_file(
         mode.open_source(Arc::new(failing)).await.unwrap(),
@@ -852,7 +851,7 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
     let cancel = CancellationToken::new();
     let tripping =
         CancelsPast { inner: Arc::clone(&source), trip: first_block_end, cancel: cancel.clone() };
-    let options = ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() };
+    let options = ReadOptions::default().with_chunk_size(1);
 
     let run = map_file(
         mode.open_source(Arc::new(tripping)).await.unwrap(),
@@ -917,7 +916,7 @@ async fn a_dropped_read_is_the_same_interrupt_as_the_flag() {
     let cancel = CancellationToken::new();
     let dropping =
         DropsPast { inner: Arc::clone(&source), trip: first_block_end, cancel: cancel.clone() };
-    let options = ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() };
+    let options = ReadOptions::default().with_chunk_size(1);
 
     let run = map_file(
         mode.open_source(Arc::new(dropping)).await.unwrap(),
@@ -1036,7 +1035,7 @@ async fn a_dropped_read_inside_the_backfill_reports_the_backfills_counts() {
 
     let cancel = CancellationToken::new();
     let dropping = DropsPast { inner: Arc::clone(&source), trip: second, cancel: cancel.clone() };
-    let options = ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() };
+    let options = ReadOptions::default().with_chunk_size(1);
     let run = map_file(
         mode.open_source(Arc::new(dropping)).await.unwrap(),
         options,
@@ -1080,7 +1079,7 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
 
     let cancel = CancellationToken::new();
     let tripping = CancelsPast { inner: Arc::clone(&source), trip: second, cancel: cancel.clone() };
-    let options = ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() };
+    let options = ReadOptions::default().with_chunk_size(1);
     let run = map_file(
         mode.open_source(Arc::new(tripping)).await.unwrap(),
         options,
@@ -1237,7 +1236,7 @@ async fn an_interrupted_scans_banked_blocks_resolve_against_real_ddl() {
 
     let cancel = CancellationToken::new();
     let tripping = CancelsPast { inner: Arc::clone(&source), trip, cancel: cancel.clone() };
-    let options = ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() };
+    let options = ReadOptions::default().with_chunk_size(1);
     let run = map_file(
         mode.open_source(Arc::new(tripping)).await.unwrap(),
         options,
@@ -1295,7 +1294,7 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
     let cancel = CancellationToken::new();
     let tripping =
         CancelsPast { inner: Arc::clone(&source), trip: end - 1, cancel: cancel.clone() };
-    let options = ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() };
+    let options = ReadOptions::default().with_chunk_size(1);
     let run = map_file(
         mode.open_source(Arc::new(tripping)).await.unwrap(),
         options,

@@ -68,7 +68,7 @@ fn dump_holding(dir: &Path, b_type: &str, long: &[u8]) -> PathBuf {
 /// began with; and the census its pass recorded of `public.t`.
 async fn cold_query(path: &Path, jobs: usize, cache: &Path) -> (usize, usize, BlockCensus) {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(path).unwrap());
-    let read = ReadOptions { chunk_size_bytes: CHUNK, ..ReadOptions::default() };
+    let read = ReadOptions::default().with_chunk_size(CHUNK);
     let scan = ScanOptions { read, parallelism: Parallelism::workers(jobs, 1 << 30) };
     let cold = Cold { scan, cache: CacheMode::enabled(cache), ..Cold::default() };
     // `5` resets the peak resident set to the current one (`proc(5)`).
@@ -163,7 +163,7 @@ async fn a_streamed_census_is_the_census_held() {
         for (chunk, jobs) in [(16usize, 1usize), (61, 1), (16, 4), (61, 4)] {
             let dir = tempfile::tempdir().unwrap();
             let cache = dir.path().join("dump.pgdt");
-            let read = ReadOptions { chunk_size_bytes: chunk, ..ReadOptions::default() };
+            let read = ReadOptions::default().with_chunk_size(chunk);
             let scan = ScanOptions { read, parallelism: Parallelism::workers(jobs, 1 << 30) };
             let cold = Cold {
                 scan,

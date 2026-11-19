@@ -51,7 +51,8 @@ start, never held past it; a read is clamped to the bound, so a line one read ho
 offset-bounded column flushes at `OFFSET_CUT_BYTES` whatever its caps. Rejected: a setting (a cap below the bound
 refuses a valid line for memory, which `--memory` governs); the check where a chunk's passes end (exact only to a chunk,
 after the row is handed out); a cut tested before every row (code each row runs, for a cut no default batch reaches).
-Code: `ChunkCarry::passes_bound`, `ReadOptions::line_bound`, `OFFSET_CUT_BYTES`. Evidence: both crates' `line_bound.rs`.
+Code: `ChunkCarry::passes_bound`, `ReadOptions::line_bound`, `with_line_bound`, `OFFSET_CUT_BYTES`. Evidence: both
+crates' `line_bound.rs`.
 
 ### D25 Parallelize what is CPU-bound
 One core's rate against the device's offer decides each kind of work (decode, extraction, discovery) per source; D2

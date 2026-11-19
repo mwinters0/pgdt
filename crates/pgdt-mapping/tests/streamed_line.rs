@@ -99,7 +99,7 @@ async fn largest_under(
     statistics: &StatisticsRequest,
     invalid: PostgresInvalidValues,
 ) -> (Held, u64) {
-    let read = ReadOptions { chunk_size_bytes: CHUNK, ..ReadOptions::default() };
+    let read = ReadOptions::default().with_chunk_size(CHUNK);
     LARGEST.store(0, Ordering::Relaxed);
     // `5` resets the peak resident set to the current one (`proc(5)`).
     std::fs::write("/proc/self/clear_refs", "5").unwrap();
@@ -256,7 +256,7 @@ async fn outcome(
     jobs: usize,
     invalid: PostgresInvalidValues,
 ) -> Result<Vec<CopyBlock>, String> {
-    let read = ReadOptions { chunk_size_bytes: chunk, ..ReadOptions::default() };
+    let read = ReadOptions::default().with_chunk_size(chunk);
     let index = mapped(dump, read, jobs, &StatisticsRequest::DATA, invalid).await;
     index.map(|index| index.blocks().cloned().collect()).map_err(|e| e.to_string())
 }

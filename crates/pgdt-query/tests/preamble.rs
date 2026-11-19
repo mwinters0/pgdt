@@ -1301,7 +1301,7 @@ async fn a_raw_cr_inside_a_literal_is_the_value_s_own_byte() {
              COPY public.p1 (m) FROM stdin;\n{row}\n\\.\n\n"
         )
     };
-    let chunked = ReadOptions { chunk_size_bytes: 7, ..ReadOptions::default() };
+    let chunked = ReadOptions::default().with_chunk_size(7);
     let strict = PostgresInvalidValues::Strict;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cr.sql");

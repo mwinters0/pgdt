@@ -35,6 +35,9 @@ pub mod internal {
     pub use crate::cache::store::{load, load_offline, save};
     pub use crate::map::{Builder, RowFold, derived_diagnostics};
     pub use crate::preamble::scan_preamble;
+    /// [`ReadOptions`](crate::ReadOptions) at a line bound a test states.
+    #[cfg(any(test, feature = "test-support"))]
+    pub use crate::scan::with_line_bound;
     pub use crate::scan::{
         ChunkCarry, ChunkPass, CopyScannerExt, Drawing, FieldFold, GivenUp, LineMapping, Passes,
         PieceEndings, RowEnding, StreamedLine, announce_read_loop, draw_absorbing,

@@ -342,7 +342,7 @@ async fn a_run_ended_by_a_dropped_read_is_checked_too() {
     std::fs::write(&dump, &file).unwrap();
     let cancel = CancellationToken::new();
     let shifting = Shifting::dropping(dump, 1, data_offset, cancel.clone());
-    let options = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    let options = ReadOptions::default().with_chunk_size(64);
     let err = map_file(
         CacheMode::DISABLED.open_source(Arc::new(shifting)).await.unwrap(),
         options,
@@ -375,10 +375,8 @@ async fn a_failing_read_is_checked_before_it_is_reported() {
     }
     file.extend_from_slice(b"\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &file).unwrap();
-    let options = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
+    let options =
+        ScanOptions { read: ReadOptions::default().with_chunk_size(64), ..ScanOptions::default() };
     let changed = |err: &Error| matches!(err, Error::SourceChangedWhileRead { .. });
     let short =
         |err: &Error| matches!(err, Error::Io(e) if e.kind() == std::io::ErrorKind::UnexpectedEof);

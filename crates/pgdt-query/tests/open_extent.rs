@@ -153,7 +153,7 @@ async fn a_pass_over_an_open_extent_maps_what_the_plain_file_maps() {
         let plain: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
         let expected = mapped(&dump, plain, 1, ReadOptions::default()).await;
 
-        let odd = ReadOptions { chunk_size_bytes: 977, ..ReadOptions::default() };
+        let odd = ReadOptions::default().with_chunk_size(977);
         for (jobs, read) in [(1, ReadOptions::default()), (4, ReadOptions::default()), (4, odd)] {
             std::fs::remove_file(cache::colocated_path(&dump)).unwrap();
             let label = format!("{schema}/{flag_set} at {jobs} job(s), {read:?}");
@@ -181,7 +181,7 @@ async fn a_pass_stopped_short_saves_an_open_extent_and_resumes() {
 
     // The preamble alone, read in chunks far shorter than the file, so the
     // scan stops before any read meets the end.
-    let small = ReadOptions { chunk_size_bytes: 512, ..ReadOptions::default() };
+    let small = ReadOptions::default().with_chunk_size(512);
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
     preamble_only(
         mode.open_source(OpenUntilEnd::over(&dump)).await.unwrap(),

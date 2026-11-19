@@ -3,6 +3,7 @@ use super::*;
 use pgdt_core::Error;
 use pgdt_dump::internal::Builder;
 use pgdt_dump::internal::ChunkCarry;
+use pgdt_dump::internal::with_line_bound;
 use pgdt_dump::{CopyScanner, Event};
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_fixtures::{edge_cases, fixture};
@@ -346,7 +347,7 @@ fn a_cut_inside_a_row_whose_tail_is_a_backslash_dot_is_resynced_past() {
 fn scheduled(source: &LocalFileSource, jobs: usize) -> ScanOptions {
     source.hint_read_size(8);
     ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 8, ..ReadOptions::default() },
+        read: ReadOptions::default().with_chunk_size(8),
         parallelism: Parallelism::workers(jobs, pgdt_io::DEFAULT_MEMORY_BUDGET),
     }
 }
@@ -937,7 +938,7 @@ async fn a_worker_holds_a_line_to_the_bound_exactly() {
     for read in [PartitionRead::Chunked, PartitionRead::Whole { unit: 1 << 20 }] {
         for (bound, refused) in [(LONG + 1, false), (LONG, true)] {
             let mut options = scheduled(&source.inner, 2);
-            options.read.line_bound = bound;
+            options.read = with_line_bound(options.read, bound);
             source.reads.lock().unwrap().clear();
             let scanned = scan_partition(
                 &source,

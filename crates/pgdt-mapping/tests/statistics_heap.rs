@@ -198,7 +198,7 @@ async fn a_split_blocks_pieces_are_charged_and_released() {
     std::fs::write(&dump, &text).unwrap();
     for jobs in [2, 4, 8] {
         let _ = std::fs::remove_file(pgdt_dump::cache::colocated_path(&dump));
-        let read = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+        let read = ReadOptions::default().with_chunk_size(64);
         let run = parse(&dump, read, jobs, &request(256)).await;
         let label = format!("{jobs} jobs");
         assert_only_blocks_are_held(&run, &label);

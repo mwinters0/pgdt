@@ -1081,13 +1081,20 @@ pub struct ReadOptions {
     /// ([`chunk`](Self::chunk)). Defaults to
     /// [`SCAN_CHUNK_DEFAULT_SIZE_BYTES`].
     pub chunk_size_bytes: usize,
-    /// The bound a line is held to in place of [`LINE_BOUND`], so a test
-    /// reads at a small one what every read loop reads at the real one: a
-    /// build without `test-support` has no such field and no way to state
-    /// one.
-    #[cfg(any(test, feature = "test-support"))]
-    #[doc(hidden)]
-    pub line_bound: usize,
+    /// The bound a line is held to: [`LINE_BOUND`] from [`Default`], and
+    /// another only from a test, through [`with_line_bound`]. Private, so a
+    /// caller outside this crate states a chunk by
+    /// [`with_chunk_size`](Self::with_chunk_size) and never a struct literal.
+    line_bound: usize,
+}
+
+/// `read`, its lines held to `line_bound` in place of [`LINE_BOUND`], so a
+/// test reads at a small bound what every read loop reads at the real one.
+/// Reached outside this crate only through `internal`, as no caller states a
+/// bound (`docs/design/decisions.md`, "D164").
+#[cfg(any(test, feature = "test-support"))]
+pub fn with_line_bound(read: ReadOptions, line_bound: usize) -> ReadOptions {
+    ReadOptions { line_bound, ..read }
 }
 
 impl ReadOptions {
@@ -1095,15 +1102,11 @@ impl ReadOptions {
     /// refuses one longer as [`Error::LineTooLong`]: [`LINE_BOUND`]
     /// (`docs/design/postgres-invariants.md`, "I71").
     pub fn line_bound(&self) -> usize {
-        #[cfg(any(test, feature = "test-support"))]
-        return self.line_bound;
-        #[cfg(not(any(test, feature = "test-support")))]
-        LINE_BOUND
+        self.line_bound
     }
 
     /// These options, reading `chunk_size_bytes` a read: how a caller outside
-    /// this crate states a chunk whether or not its build has
-    /// [`line_bound`](Self::line_bound)'s field.
+    /// this crate states a chunk.
     pub fn with_chunk_size(mut self, chunk_size_bytes: usize) -> Self {
         self.chunk_size_bytes = chunk_size_bytes;
         self
@@ -1119,11 +1122,7 @@ impl ReadOptions {
 
 impl Default for ReadOptions {
     fn default() -> Self {
-        Self {
-            chunk_size_bytes: SCAN_CHUNK_DEFAULT_SIZE_BYTES,
-            #[cfg(any(test, feature = "test-support"))]
-            line_bound: LINE_BOUND,
-        }
+        Self { chunk_size_bytes: SCAN_CHUNK_DEFAULT_SIZE_BYTES, line_bound: LINE_BOUND }
     }
 }
 

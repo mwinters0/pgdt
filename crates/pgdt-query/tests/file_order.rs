@@ -227,7 +227,7 @@ async fn the_earliest_failing_piece_is_the_error() {
     };
     let dump = dump_over(Arc::new(failing), &index, dir.path()).await.unwrap();
     let table = dump.table(&pgdt_query::TableSelector::named("t")).unwrap().unwrap();
-    let read = ReadOptions { chunk_size_bytes: 4096, ..ReadOptions::default() };
+    let read = ReadOptions::default().with_chunk_size(4096);
     let mut split = false;
     for jobs in [1usize, 2, 3, 4, 8] {
         let replay = arranged_as(Parallelism::workers(jobs, 1 << 30));

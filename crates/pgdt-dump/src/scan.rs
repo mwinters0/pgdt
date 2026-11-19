@@ -35,6 +35,8 @@ use pgdt_core::{CopyHeader, is_terminator, parse_copy_header};
 use pgdt_core::{Error, Result, RowEndingRefusal};
 use pgdt_model::LongestLine;
 
+#[cfg(any(test, feature = "test-support"))]
+pub use self::chunked::with_line_bound;
 pub use self::chunked::{
     ChunkCarry, ChunkEvents, ChunkPass, ChunkedScanner, Drawing, FieldFold, GivenUp, LineMapping,
     Passes, ReadOptions, ScanOptions, StreamedLine, announce_read_loop, draw_absorbing, scan,

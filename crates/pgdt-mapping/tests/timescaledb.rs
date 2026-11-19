@@ -330,7 +330,7 @@ async fn a_parallel_pass_records_the_catalog_and_its_cache_keeps_it() {
         ArrangementRequest { jobs: Jobs::Stated(4), ..ArrangementRequest::recommended(4, None) };
     let run = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
+        ReadOptions::default().with_chunk_size(64),
         &Arrangement::resolve(&Allowance::NoneFound, request),
         PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,

@@ -143,7 +143,7 @@ async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_ba
     let dump = dir.path().join("dump.sql");
     std::fs::copy(edge_cases(), &dump).unwrap();
     let source = Arc::new(RecordingSource::wrap(LocalFileSource::open(&dump).unwrap()));
-    let options = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    let options = ReadOptions::default().with_chunk_size(64);
     map_file(
         CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
         options,

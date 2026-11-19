@@ -10,6 +10,7 @@ use std::sync::Arc;
 use pgdt_core::RowEndingRefusal;
 use pgdt_core::{escape_field, split_fields, unescape_field};
 use pgdt_dump::cache::CacheMode;
+use pgdt_dump::internal::with_line_bound;
 use pgdt_dump::{Event, ReadOptions, ScanOptions, scan};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::statistics::StatisticsRequest;
@@ -33,7 +34,7 @@ fn arranged(jobs: usize) -> pgdt_io::Arrangement {
 /// Render the whole event stream, decoded, as stable text.
 async fn render(path: &Path, chunk_size: usize) -> String {
     let source = LocalFileSource::open(path).unwrap();
-    let read = ReadOptions { chunk_size_bytes: chunk_size, ..ReadOptions::default() };
+    let read = ReadOptions::default().with_chunk_size(chunk_size);
     let mut out = String::new();
 
     scan(&source, &ScanOptions { read, ..ScanOptions::default() }, |event| {
@@ -345,10 +346,7 @@ async fn decoded_blocks(path: &Path) -> Vec<(String, Vec<Vec<Option<String>>>)> 
 /// A mapping pass read serially, and one split four ways at a size that cuts
 /// a fixture's blocks into pieces.
 fn serial_and_split() -> [(ReadOptions, usize); 2] {
-    [
-        (ReadOptions::default(), 1),
-        (ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() }, 4),
-    ]
+    [(ReadOptions::default(), 1), (ReadOptions::default().with_chunk_size(64), 4)]
 }
 
 /// **A dump converted to CR LF reads as the dump it was converted from**, and
@@ -460,7 +458,7 @@ async fn a_row_past_the_line_bound_is_refused() {
     std::fs::write(&path, &content).unwrap();
 
     let source = LocalFileSource::open(&path).unwrap();
-    let read = |line_bound| ReadOptions { chunk_size_bytes: 64, line_bound };
+    let read = |bound| with_line_bound(ReadOptions::default().with_chunk_size(64), bound);
     build_index(&source, &ScanOptions { read: read(4097), ..ScanOptions::default() })
         .await
         .unwrap();

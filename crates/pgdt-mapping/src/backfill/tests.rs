@@ -70,10 +70,7 @@ async fn gathered_at(
 
 /// A scan reading 64 bytes at a time, serially.
 fn serial() -> ScanOptions {
-    ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    }
+    ScanOptions { read: ReadOptions::default().with_chunk_size(64), ..ScanOptions::default() }
 }
 
 /// **A block past its cap gathers, split by the leader, what the serial pass
@@ -358,7 +355,7 @@ async fn a_dropped_read_the_leader_dispatched_interrupts_the_backfill() {
     let dropping =
         DropsPast { inner: Arc::clone(&source), trip: data_offset, cancel: cancel.clone() };
     let opened = mode.open_source(Arc::new(dropping)).await.unwrap();
-    let chunked = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    let chunked = ReadOptions::default().with_chunk_size(64);
     let run = map_file(opened, chunked, &parallel, invalid, &StatisticsRequest::DATA, &cancel)
         .await
         .expect("a dropped read is an interrupted run, not an error");

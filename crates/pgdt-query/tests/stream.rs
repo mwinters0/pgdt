@@ -440,7 +440,7 @@ async fn notes_rows(
     options: QueryOptions,
 ) -> pgdt_core::Result<Vec<Vec<Option<String>>>> {
     let scan = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: chunk_size, ..ReadOptions::default() },
+        read: ReadOptions::default().with_chunk_size(chunk_size),
         ..ScanOptions::default()
     };
     let cold = Cold { scan, ..Cold::default() };

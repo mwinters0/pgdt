@@ -997,7 +997,7 @@ async fn the_span_floors_at_the_announced_chunk_not_the_shipped_one() {
     let expected = serial_rows(source.clone(), "public.t_int", QueryOptions::default()).await;
 
     let scan = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64 << 10, ..ReadOptions::default() },
+        read: ReadOptions::default().with_chunk_size(64 << 10),
         ..ScanOptions::default()
     };
     let floor = scan.read.chunk_size_bytes as u64;
@@ -1209,7 +1209,7 @@ async fn a_segment_inside_a_line_reads_only_to_its_limit() {
 
     let chunk = 64usize;
     let scan = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: chunk, ..ReadOptions::default() },
+        read: ReadOptions::default().with_chunk_size(chunk),
         ..ScanOptions::default()
     };
     let options = QueryOptions {

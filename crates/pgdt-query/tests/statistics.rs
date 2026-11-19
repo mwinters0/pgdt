@@ -613,7 +613,7 @@ async fn a_gathering_scan_is_the_serial_scan_whatever_the_worker_count() {
     text.push_str("\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &text).unwrap();
     let wanted = request(StatisticsSelection::DATA, 256);
-    let serial = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    let serial = ReadOptions::default().with_chunk_size(64);
     let serial_index =
         gathered_with(&dump, serial, &arranged(1), PostgresInvalidValues::Default, &wanted).await;
     for jobs in [2, 4, 8] {
@@ -1496,7 +1496,7 @@ async fn a_block_breaking_a_stated_maximum_is_reread_at_the_size_it_predicts() {
         let exact = statistics(block(&exact, table));
         assert_eq!((&exact.groups, &exact.columns), (&held.groups, &held.columns), "{table}");
     }
-    let parallel = ReadOptions { chunk_size_bytes: 1 << 16, ..ReadOptions::default() };
+    let parallel = ReadOptions::default().with_chunk_size(1 << 16);
     let split =
         gathered_with(&dump, parallel, &arranged(4), PostgresInvalidValues::Default, &bounded)
             .await;
@@ -1563,7 +1563,7 @@ async fn a_backfill_the_leader_splits_is_the_serial_scan() {
     text.push_str("\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &text).unwrap();
     let wanted = request(StatisticsSelection::DATA, 256);
-    let serial = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    let serial = ReadOptions::default().with_chunk_size(64);
     let reference =
         gathered_with(&dump, serial, &arranged(1), PostgresInvalidValues::Default, &wanted).await;
     for jobs in [2, 4, 8] {
@@ -1642,7 +1642,7 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
         other => panic!("{at}: expected the parse to refuse `70000`, got {other:?}"),
     };
     let wanted = request(StatisticsSelection::DATA, 256);
-    let serial = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    let serial = ReadOptions::default().with_chunk_size(64);
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     refused(
         map_file(
@@ -1757,7 +1757,7 @@ async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
     text.push_str("\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &text).unwrap();
     let wanted = request(StatisticsSelection::DATA, 256);
-    let serial = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    let serial = ReadOptions::default().with_chunk_size(64);
     let ignoring = PostgresInvalidValues::Ignore;
     let check = |index: &DumpIndex, at: &str| {
         let t = statistics(block(index, "public.t"));
@@ -2113,7 +2113,7 @@ async fn a_recorded_refusal_fails_exactly_the_parses_tracking_its_column() {
 /// Reading in 64-byte chunks, at whatever worker count the arrangement beside
 /// it states.
 fn reading() -> ReadOptions {
-    ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() }
+    ReadOptions::default().with_chunk_size(64)
 }
 
 /// One table `public.t (a smallint, v smallint[], n numeric(10,2), r
@@ -2533,7 +2533,7 @@ async fn a_parse_fails_where_an_input_function_refuses_and_not_where_it_reads() 
         std::fs::write(&dump, text).unwrap();
     };
     let wanted = request(StatisticsSelection::DATA, 256);
-    let serial = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    let serial = ReadOptions::default().with_chunk_size(64);
     for (at, [column, declared_type, _, _, refused]) in columns.iter().enumerate() {
         dump_with(Some(at));
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
@@ -2596,7 +2596,7 @@ async fn a_parse_fails_at_an_undeclared_label_only_where_the_labels_are_exact() 
         std::fs::write(&dump, text).unwrap();
     };
     let wanted = request(StatisticsSelection::DATA, 64);
-    let serial = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    let serial = ReadOptions::default().with_chunk_size(64);
     let exact: [&[&str]; 2] = [
         &[declared],
         &[
@@ -2785,7 +2785,7 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
         let (_cache_dir, dump) = sandboxed(&dump, "long_block.sql");
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
         let mode = CacheMode::enabled(cache::colocated_path(&dump));
-        let scan = ReadOptions { chunk_size_bytes: 4096, ..ReadOptions::default() };
+        let scan = ReadOptions::default().with_chunk_size(4096);
         let (tight, invalid) = (holding(jobs, allowance), PostgresInvalidValues::Default);
         let at = format!("{jobs} job(s)");
 
