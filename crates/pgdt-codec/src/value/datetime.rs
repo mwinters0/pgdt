@@ -163,6 +163,12 @@ const DATE_MIN_DAYS: i64 = -2_440_588;
 /// — in days from 1970.
 const DATE_END_DAYS: i64 = 2_145_042_906;
 
+/// Whether `days` from 1970 is a day a `date` holds, `IS_VALID_DATE`'s range:
+/// what [`decode_date32`] reads and a renderer may write.
+pub fn date_in_range(days: i64) -> bool {
+    (DATE_MIN_DAYS..DATE_END_DAYS).contains(&days)
+}
+
 /// The days in month `m` (1–12) of astronomical year `y`, by `day_tab` and
 /// `isleap` over the proleptic Gregorian calendar, so 1 BC (year 0) is leap.
 fn days_in_month(y: i64, m: i64) -> i64 {
@@ -239,7 +245,7 @@ pub(crate) fn date_days(s: &str) -> Read<i32> {
     let (rest, bc) = split_era(s);
     let days = civil_days(rest, bc)?;
     // pg-refuses: I61 — `IS_VALID_DATE`'s range.
-    if !(DATE_MIN_DAYS..DATE_END_DAYS).contains(&days) {
+    if !date_in_range(days) {
         return Err(Unread::Refused);
     }
     // pg-refuses: I83 — past `date_in`'s work buffer.
@@ -300,7 +306,7 @@ pub(crate) fn parse_time_of_day(s: &str) -> Read<(i64, i64)> {
     }
     let (seconds, micros) = (h * 3600 + mi * 60 + se, micros * POW10[6 - frac.len()]);
     // pg-refuses: I61 — and past `24:00:00` as a whole.
-    if seconds * 1_000_000 + micros > DAY_MICROS {
+    if !time_in_range(seconds * 1_000_000 + micros) {
         return Err(Unread::Refused);
     }
     Ok((seconds, micros))
@@ -326,6 +332,13 @@ fn format_hms_frac_into(out: &mut String, total_micros: i64) {
 
 /// Arrow's `Time64` day, in microseconds: the first value past it.
 const DAY_MICROS: i64 = 86_400_000_000;
+
+/// Whether `micros` since midnight is a time of day a `time` holds,
+/// `24:00:00` included, as `time_overflows` bounds it: what
+/// [`time_of_day_micros`] reads and a renderer may write.
+pub fn time_in_range(micros: i64) -> bool {
+    (0..=DAY_MICROS).contains(&micros)
+}
 
 /// `None` for anything unparseable, and for `24:00:00`: a real, valid
 /// boundary value (PostgreSQL's inclusive upper bound for `time`) that
@@ -418,8 +431,7 @@ pub(crate) fn timestamp_micros_wide(s: &str, with_tz: bool) -> Read<i128> {
     let utc = local_micros - i128::from(offset_secs) * 1_000_000;
     // pg-refuses: I61 — `IS_VALID_TIMESTAMP`, of the instant: an offset can
     // carry a local time on either side of the range across its edge.
-    let postgres = utc - POSTGRES_EPOCH_UNIX_MICROS;
-    if !(i128::from(MIN_TIMESTAMP)..i128::from(END_TIMESTAMP)).contains(&postgres) {
+    if !timestamp_in_range(utc) {
         return Err(Unread::Refused);
     }
     // pg-refuses: I83 — past the timestamp inputs' work buffer.
@@ -435,6 +447,15 @@ const MIN_TIMESTAMP: i64 = -211_813_488_000_000_000;
 /// `END_TIMESTAMP`, `294277-01-01 00:00:00`, the first instant past a
 /// timestamp's range, in microseconds from PostgreSQL's epoch (I49).
 const END_TIMESTAMP: i64 = 9_223_371_331_200_000_000;
+
+/// Whether `unix_micros` from the 1970 UTC epoch is an instant a timestamp
+/// holds, `IS_VALID_TIMESTAMP`'s range: what [`timestamp_micros_wide`] reads
+/// and a renderer may write. Wide because the range's end is past what `i64`
+/// counts from 1970.
+pub fn timestamp_in_range(unix_micros: i128) -> bool {
+    let postgres = unix_micros - POSTGRES_EPOCH_UNIX_MICROS;
+    (i128::from(MIN_TIMESTAMP)..i128::from(END_TIMESTAMP)).contains(&postgres)
+}
 
 /// PostgreSQL's epoch, 2000-01-01 00:00:00 UTC, in microseconds from the
 /// Unix epoch.

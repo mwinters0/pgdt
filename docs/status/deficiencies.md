@@ -564,11 +564,6 @@ than reading as a phase nobody has sliced.
     matched literally. **(c) unowned**; promoted by such a table met in use.
   Detail: `crates/pgdt/src/query.rs`.
 
-- **KD166** — a value no text form spells — a `time` past `24:00:00`, a
-  `date` or timestamp past PostgreSQL's range — is rendered rather than
-  refused as `FieldRender`; only a caller's own array holds one.
-  **(b) owned by `M291`**. Detail: `crates/pgdt-query/src/render.rs`.
-
 - **KD171** — an emitted batch's views pin each whole read chunk or decoded
   block they point into while its consumer holds it, which no carve bills: a
   reader is billed its in-flight span or unit, so `pgdt query`'s merge (`KD57`)

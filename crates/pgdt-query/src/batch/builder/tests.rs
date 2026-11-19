@@ -2,7 +2,10 @@ use arrow::datatypes::Field;
 
 use std::sync::Arc;
 
-use arrow::array::{Array, BooleanArray, Int32Array, RecordBatch};
+use arrow::array::{
+    Array, BooleanArray, Date32Array, Int32Array, RecordBatch, Time64MicrosecondArray,
+    TimestampMicrosecondArray,
+};
 
 use super::*;
 use crate::render::render_plan;
@@ -147,6 +150,101 @@ fn render_refuses_an_int2vector_holding_a_null_element() {
                 if reason.contains("NULL element")),
         "{err}"
     );
+}
+
+/// A one-row list holding every value of `values`, as a caller might
+/// assemble one.
+fn list_holding(values: ArrayRef) -> ListArray {
+    let len = values.len();
+    ListArray::new(
+        Arc::new(Field::new("item", values.data_type().clone(), true)),
+        OffsetBuffer::from_lengths([len]),
+        values,
+        None,
+    )
+}
+
+/// Each value of `values` rendered alone, the first and last its range
+/// holds, and the list holding them all with `outside`, which no `*_in`
+/// reads, appended: that list is refused, as each value with no text form
+/// is, rather than written as computed. Built by hand for the reason the
+/// `interval` refusal above is — `append_typed` decodes only what the
+/// type's range holds.
+#[track_caller]
+fn refuses_past_its_range(
+    values: ArrayRef,
+    outside: ArrayRef,
+    declared: &'static str,
+) -> Vec<String> {
+    let rendered: Vec<String> = (0..values.len())
+        .map(|i| render_plan(values.as_ref(), i, &NestedPlan::Scalar).unwrap().unwrap())
+        .collect();
+    for i in 0..outside.len() {
+        let err = render_plan(outside.as_ref(), i, &NestedPlan::Scalar).unwrap_err();
+        assert!(
+            matches!(&err, Error::FieldRender { declared_type, .. } if *declared_type == declared),
+            "{err}"
+        );
+    }
+    let plan = NestedPlan::array(NestedPlan::Scalar);
+    assert!(render_plan(&list_holding(values.clone()), 0, &plan).is_ok());
+    let both = arrow::compute::concat(&[values.as_ref(), outside.as_ref()]).unwrap();
+    let err = render_plan(&list_holding(both), 0, &plan).unwrap_err();
+    assert!(
+        matches!(&err, Error::FieldRender { declared_type, .. } if *declared_type == declared),
+        "{err}"
+    );
+    rendered
+}
+
+/// A `date` is refused a day before `4714-11-24 BC` or from
+/// `5874898-01-01`, and each end of its range reads back.
+#[test]
+fn render_refuses_a_date_past_its_range() {
+    let (first, last) = (-2_440_588, 2_145_042_905);
+    let values = Arc::new(Date32Array::from(vec![first, last])) as ArrayRef;
+    let outside = Arc::new(Date32Array::from(vec![first - 1, last + 1, i32::MIN, i32::MAX]));
+    let rendered = refuses_past_its_range(values, outside, "date");
+    assert_eq!(rendered, ["4714-11-24 BC", "5874897-12-31"]);
+    assert_eq!(decode::decode_date32(&rendered[0]), Some(first));
+    assert_eq!(decode::decode_date32(&rendered[1]), Some(last));
+}
+
+/// A `time` is refused below midnight or past `24:00:00`, which it holds,
+/// though a `Time64` read from a dump never does.
+#[test]
+fn render_refuses_a_time_past_its_range() {
+    let day = 86_400_000_000;
+    let values = Arc::new(Time64MicrosecondArray::from(vec![0, day - 1, day])) as ArrayRef;
+    let outside = Arc::new(Time64MicrosecondArray::from(vec![-1, day + 1, 25 * 3_600_000_000]));
+    let rendered = refuses_past_its_range(values, outside, "time without time zone");
+    assert_eq!(rendered, ["00:00:00", "23:59:59.999999", "24:00:00"]);
+    assert_eq!(decode::decode_time64_micros(&rendered[0]), Some(0));
+    assert_eq!(decode::decode_time64_micros(&rendered[1]), Some(day - 1));
+}
+
+/// A timestamp of either kind is refused before `4714-11-24 00:00:00 BC`;
+/// its range's end is past what `i64` counts from 1970, so `i64::MAX` is
+/// written and read back.
+#[test]
+fn render_refuses_a_timestamp_past_its_range() {
+    let first: i64 = -210_866_803_200_000_000;
+    for (tz, declared, suffix) in [
+        (None, "timestamp without time zone", ""),
+        (Some(Arc::from("+00:00")), "timestamp with time zone", "+00"),
+    ] {
+        let values = Arc::new(
+            TimestampMicrosecondArray::from(vec![first, i64::MAX]).with_timezone_opt(tz.clone()),
+        ) as ArrayRef;
+        let outside = Arc::new(
+            TimestampMicrosecondArray::from(vec![first - 1, i64::MIN]).with_timezone_opt(tz),
+        );
+        let rendered = refuses_past_its_range(values, outside, declared);
+        assert_eq!(rendered[0], format!("4714-11-24 00:00:00{suffix} BC"));
+        let with_tz = !suffix.is_empty();
+        assert_eq!(decode::decode_timestamp_micros(&rendered[0], with_tz), Some(first));
+        assert_eq!(decode::decode_timestamp_micros(&rendered[1], with_tz), Some(i64::MAX));
+    }
 }
 
 #[test]

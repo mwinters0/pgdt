@@ -12,7 +12,10 @@ use arrow::datatypes::{DataType, Int32Type, IntervalUnit, TimeUnit};
 
 use pgdt_codec::ResolvedColumn;
 use pgdt_codec::decode;
-use pgdt_codec::internal::{push_array_null, push_integer, quote_array_element};
+use pgdt_codec::internal::{
+    date_in_range, push_array_null, push_integer, quote_array_element, time_in_range,
+    timestamp_in_range,
+};
 use pgdt_codec::nested::{
     RangeLiteral, RecordLiteral, render_int2vector, render_range, render_record,
 };
@@ -95,12 +98,6 @@ pub fn decode_field(column: &ResolvedColumn, text: &str) -> Option<ArrayRef> {
 ///
 /// **An error may leave a partial value behind**, so the discipline this asks
 /// for is not to publish a buffer an error came out of.
-///
-/// deficiency: KD166 — `Error::FieldRender` is raised only for an
-/// `int2vector`'s NULL element and an `interval` with a sub-microsecond part:
-/// a `time` past `24:00:00`, or a `date` or timestamp outside PostgreSQL's
-/// range, is written as computed (`25:00:00`), a text its `*_in` refuses. No
-/// batch a dump decodes holds one; a caller's own array can.
 pub fn render_field_into(
     array: &dyn Array,
     row: usize,
@@ -225,18 +222,46 @@ pub(crate) fn render_plan_into(
         DataType::Float64 => out.push_str(&decode::render_f64(
             column.as_any().downcast_ref::<Float64Array>().unwrap().value(row),
         )),
-        DataType::Date32 => decode::render_date32_into(
-            column.as_any().downcast_ref::<Date32Array>().unwrap().value(row),
-            out,
-        ),
+        // A date or time value past the range its `*_in` reads is refused
+        // here, the codec's renderers writing whatever they are given.
+        DataType::Date32 => {
+            let days = column.as_any().downcast_ref::<Date32Array>().unwrap().value(row);
+            if !date_in_range(i64::from(days)) {
+                return Err(Error::FieldRender {
+                    declared_type: "date",
+                    reason: format!("{days} days from 1970 is outside the days `date_in` reads"),
+                });
+            }
+            decode::render_date32_into(days, out);
+        }
         DataType::Timestamp(TimeUnit::Microsecond, tz) => {
             let v = column.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap().value(row);
+            if !timestamp_in_range(i128::from(v)) {
+                return Err(Error::FieldRender {
+                    declared_type: if tz.is_some() {
+                        "timestamp with time zone"
+                    } else {
+                        "timestamp without time zone"
+                    },
+                    reason: format!(
+                        "{v} µs from 1970 is before the first instant a timestamp's input reads, `4714-11-24 00:00:00 BC`"
+                    ),
+                });
+            }
             decode::render_timestamp_micros_into(v, tz.is_some(), out);
         }
-        DataType::Time64(TimeUnit::Microsecond) => decode::render_time64_micros_into(
-            column.as_any().downcast_ref::<Time64MicrosecondArray>().unwrap().value(row),
-            out,
-        ),
+        DataType::Time64(TimeUnit::Microsecond) => {
+            let v = column.as_any().downcast_ref::<Time64MicrosecondArray>().unwrap().value(row);
+            if !time_in_range(v) {
+                return Err(Error::FieldRender {
+                    declared_type: "time without time zone",
+                    reason: format!(
+                        "{v} µs since midnight is below zero or past `24:00:00`, the times `time_in` reads"
+                    ),
+                });
+            }
+            decode::render_time64_micros_into(v, out);
+        }
         DataType::Interval(IntervalUnit::MonthDayNano) => {
             let v = column.as_any().downcast_ref::<IntervalMonthDayNanoArray>().unwrap().value(row);
             let rendered = decode::render_interval(v.months, v.days, v.nanoseconds).ok_or_else(|| {
