@@ -284,20 +284,23 @@ impl BlockCensusExt for BlockCensus {
     /// array-shape census, one [`ArrayShape`] per column, growing it for a row
     /// holding a `{` or `[` that turns out to have more fields than the header
     /// named — a malformed row, which the mapping pass does not refuse — and each field `counter`
-    /// tests into the unrepresentable count. Every pass recording a census
-    /// calls it for a row it holds — the serial mapping pass, an interior
-    /// worker and a re-read — and folds one it streams by [`CensusFold`].
+    /// tests ([`FieldCount::tested`]) into the unrepresentable count, no
+    /// other field asked of. Every pass recording a census calls it for a row
+    /// it holds — the serial mapping pass, an interior worker and a re-read —
+    /// and folds one it streams by [`CensusFold`].
     ///
     /// The row is rejected wholesale before it is split where neither needs
     /// it: an array literal always contains a `{`, the only other thing that
     /// can start one is an `[lb:ub]=` prefix, so a row holding neither byte
-    /// in a block whose counter tests no column costs one `memchr2` pass.
+    /// in a block whose counter tests no column costs one `memchr2` pass; and
+    /// such a row is split no further than its last tested column.
     ///
     /// What it costs a scan is read off a profile of a data-level `parse`
     /// (`scripts/measure.py`, `PROFILE_SHAPES`), not off a build without it.
     fn observe_row(&mut self, counter: &dyn FieldCount, raw: &[u8]) {
         let shaped = memchr::memchr2(b'{', b'[', raw).is_some();
-        if !shaped && !counter.counts_any() {
+        let mut tested = counter.tested().iter().map(|&(column, _)| column).peekable();
+        if !shaped && tested.peek().is_none() {
             return;
         }
         for (i, field) in split_fields(raw).enumerate() {
@@ -307,7 +310,12 @@ impl BlockCensusExt for BlockCensus {
                 }
                 self.shapes[i].observe(field);
             }
-            self.count(i, counter.tier(i, field));
+            if tested.next_if_eq(&i).is_some() {
+                self.count(i, counter.tier(i, field));
+            }
+            if !shaped && tested.peek().is_none() {
+                break;
+            }
         }
     }
 
@@ -348,18 +356,19 @@ impl BlockCensus {
 /// type — a contract over a block's rows, as `statistics`' `BlockObserver` is
 /// (`docs/design/decisions.md`, "D74").
 pub trait FieldCount: Send + Sync {
-    /// Whether any column is tested, so a row is split for its count.
-    fn counts_any(&self) -> bool;
+    /// **The columns tested**, ascending, each with what of its field
+    /// [`tier`](Self::tier) needs, so a row no reader holds whole keeps only
+    /// that much of it as it goes by ([`CensusFold`]). No field of a column
+    /// it leaves out is past a tier, and neither route into a census asks
+    /// [`tier`](Self::tier) of one; empty, a row is split only for its shape.
+    fn tested(&self) -> &[(usize, Kept)];
     /// The tier `field` — column `column`'s still-escaped bytes — is past,
-    /// `None` for a value its column holds and for a column past the header.
+    /// `None` for a value its column holds. Asked only of a column
+    /// [`tested`](Self::tested) names.
     fn tier(&self, column: usize, field: &[u8]) -> Option<UnrepresentableTier>;
-    /// What of column `column`'s field [`tier`](Self::tier) needs, so a row
-    /// no reader holds whole keeps only that much of it as it goes by
-    /// ([`CensusFold`]).
-    fn keeps(&self, column: usize) -> Kept;
 }
 
-/// **What a count needs of one column's field** ([`FieldCount::keeps`]).
+/// **What a count needs of one tested column's field** ([`FieldCount::tested`]).
 ///
 /// Per column, not per block: a block holding its lines wherever its counter
 /// tests a container would hold a long `text` line for a short
@@ -371,8 +380,6 @@ pub trait FieldCount: Send + Sync {
 /// reading it refuses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kept {
-    /// None of it: no field of the column is past a tier.
-    Nothing,
     /// Its first this many bytes, still escaped: no field longer is past a
     /// tier, so a field that outgrows its head counts nothing — a counted
     /// scalar, whose tier test answers for literals no longer than a bound.
@@ -386,14 +393,18 @@ pub enum Kept {
 /// each field's bytes handed in order as they go by, however they are split,
 /// and folded as [`BlockCensusExt::observe_row`] folds a held row's — the
 /// shape census by the same [`ShapeFold`], and the count from what
-/// [`FieldCount::keeps`] says of the field: nothing, a head, or the field
-/// whole, which its reader holds and hands over once
+/// [`FieldCount::tested`] says of the field: nothing where it leaves its
+/// column out, a head, or the field whole, which its reader holds and hands
+/// over once
 /// (`docs/design/decisions.md`, "D138"). What it answers is unioned into
 /// the block's own ([`BlockCensusExt::merge`]).
 pub struct CensusFold {
     census: BlockCensus,
     width: usize,
     counter: Arc<dyn FieldCount>,
+    /// What each of the block's columns keeps of a field, read once off
+    /// [`FieldCount::tested`]: `None` for a column it leaves out.
+    kept: Vec<Option<Kept>>,
     /// The field being folded: its shape so far, and its head where its
     /// column keeps one.
     shape: ShapeFold,
@@ -415,10 +426,18 @@ impl CensusFold {
     /// Nothing folded yet, for a block `width` columns wide counted against
     /// `counter`.
     pub fn new(width: usize, counter: Arc<dyn FieldCount>) -> Self {
+        let mut kept = vec![None; width];
+        // A column past the header counts nothing, so keeps nothing.
+        for &(column, keeps) in counter.tested() {
+            if let Some(slot) = kept.get_mut(column) {
+                *slot = Some(keeps);
+            }
+        }
         Self {
             census: BlockCensus::new(width),
             width,
             counter,
+            kept,
             shape: ShapeFold::default(),
             head: Vec::new(),
             outgrown: false,
@@ -429,7 +448,12 @@ impl CensusFold {
     /// Whether column `column`'s field is folded whole: its reader holds it
     /// and hands it over once, as its last bytes.
     pub fn holds(&self, column: usize) -> bool {
-        self.counter.keeps(column) == Kept::Whole
+        self.kept(column) == Some(Kept::Whole)
+    }
+
+    /// What column `column`'s field keeps, `None` where it is not tested.
+    fn kept(&self, column: usize) -> Option<Kept> {
+        self.kept.get(column).copied().flatten()
     }
 
     /// Fold in `bytes`, the next of field `column` of the row being folded,
@@ -438,8 +462,8 @@ impl CensusFold {
     pub fn fold(&mut self, column: usize, bytes: &[u8], ends: bool) {
         self.shaped |= memchr::memchr2(b'{', b'[', bytes).is_some();
         self.shape.feed(bytes);
-        let kept = self.counter.keeps(column);
-        if let Kept::Head(bound) = kept
+        let kept = self.kept(column);
+        if let Some(Kept::Head(bound)) = kept
             && !self.outgrown
         {
             if self.head.len() + bytes.len() > bound {
@@ -450,7 +474,7 @@ impl CensusFold {
             }
         }
         if !ends {
-            debug_assert!(kept != Kept::Whole, "a held field handed over in pieces");
+            debug_assert!(kept != Some(Kept::Whole), "a held field handed over in pieces");
             return;
         }
         let shape = std::mem::take(&mut self.shape);
@@ -461,10 +485,10 @@ impl CensusFold {
             self.census.shapes[column].apply(shape);
         }
         let tier = match kept {
-            Kept::Nothing => None,
-            Kept::Head(_) if self.outgrown => None,
-            Kept::Head(_) => self.counter.tier(column, &self.head),
-            Kept::Whole => self.counter.tier(column, bytes),
+            None => None,
+            Some(Kept::Head(_)) if self.outgrown => None,
+            Some(Kept::Head(_)) => self.counter.tier(column, &self.head),
+            Some(Kept::Whole) => self.counter.tier(column, bytes),
         };
         self.census.count(column, tier);
         self.head.clear();
@@ -548,23 +572,15 @@ mod tests {
     struct Infs;
 
     impl FieldCount for Infs {
-        fn counts_any(&self) -> bool {
-            true
+        fn tested(&self) -> &[(usize, Kept)] {
+            &[(0, Kept::Head(3)), (1, Kept::Whole)]
         }
 
         fn tier(&self, column: usize, field: &[u8]) -> Option<UnrepresentableTier> {
             match column {
                 0 => (field == b"inf").then_some(UnrepresentableTier::Format),
                 1 => field.windows(3).any(|w| w == b"inf").then_some(UnrepresentableTier::Engine),
-                _ => None,
-            }
-        }
-
-        fn keeps(&self, column: usize) -> Kept {
-            match column {
-                0 => Kept::Head(3),
-                1 => Kept::Whole,
-                _ => Kept::Nothing,
+                _ => panic!("column {column} is not tested"),
             }
         }
     }

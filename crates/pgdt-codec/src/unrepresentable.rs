@@ -154,6 +154,9 @@ impl Leaf {
 #[derive(Debug, Clone)]
 struct Counter {
     columns: Vec<Leaf>,
+    /// Each column some leaf of which a value can be past a tier, with what
+    /// its test needs of a field ([`FieldCount::tested`]).
+    tested: Vec<(usize, Kept)>,
     /// The first microsecond past the calendar, from 1970 UTC.
     calendar_past_micros: i128,
     calendar_end_days: i32,
@@ -441,7 +444,11 @@ impl Counter {
     fn new(columns: Vec<Leaf>, calendar_end_days: i32) -> Self {
         let calendar_past_micros = (i128::from(calendar_end_days) + 1) * 86_400_000_000;
         let candidate_year = candidate_year(calendar_end_days);
-        Counter { columns, calendar_past_micros, calendar_end_days, candidate_year }
+        let tested = (columns.iter().enumerate())
+            .filter(|(_, leaf)| **leaf != Leaf::Held)
+            .map(|(column, leaf)| (column, kept(leaf)))
+            .collect();
+        Counter { columns, tested, calendar_past_micros, calendar_end_days, candidate_year }
     }
 
     /// The tier `text`, one value of `leaf`, is past — a container's worst
@@ -589,19 +596,17 @@ fn interval(text: &str) -> Option<UnrepresentableTier> {
 /// than this many times a text's length unescapes to a longer text.
 const ESCAPED_BYTES_PER_BYTE: usize = 4;
 
-impl FieldCount for Counter {
-    fn counts_any(&self) -> bool {
-        self.columns.iter().any(|leaf| *leaf != Leaf::Held)
-    }
+/// What a test of a `leaf` other than [`Leaf::Held`] needs of its field: a
+/// scalar's head, every field unescaping to a text its test counts, and a
+/// container's whole field.
+fn kept(leaf: &Leaf) -> Kept {
+    leaf.longest_counted()
+        .map_or(Kept::Whole, |longest| Kept::Head(longest * ESCAPED_BYTES_PER_BYTE))
+}
 
-    /// A scalar's head: every field unescaping to a text its test counts.
-    fn keeps(&self, column: usize) -> Kept {
-        match self.columns.get(column) {
-            None | Some(Leaf::Held) => Kept::Nothing,
-            Some(leaf) => leaf
-                .longest_counted()
-                .map_or(Kept::Whole, |longest| Kept::Head(longest * ESCAPED_BYTES_PER_BYTE)),
-        }
+impl FieldCount for Counter {
+    fn tested(&self) -> &[(usize, Kept)] {
+        &self.tested
     }
 
     fn tier(&self, column: usize, field: &[u8]) -> Option<UnrepresentableTier> {
@@ -633,6 +638,12 @@ mod tests {
     /// The calendar `chrono` 0.4.45 ends at, `262142-12-31` (RT21).
     fn counter(leaf: Leaf) -> Counter {
         Counter::new(vec![leaf], calendar_end())
+    }
+
+    /// What `counter` keeps of column `column`'s field, `None` where it is
+    /// not tested.
+    fn kept_of(counter: &Counter, column: usize) -> Option<Kept> {
+        counter.tested().iter().find(|&&(at, _)| at == column).map(|&(_, kept)| kept)
     }
 
     fn tier(leaf: Leaf, text: &str) -> Option<UnrepresentableTier> {
@@ -922,19 +933,21 @@ mod tests {
             assert!(read.len() + MAXDATEFIELDS + MAX_SPACES >= longest, "{read}: stopped short");
             assert!(read.len() <= longest, "{read}: {} bytes past {longest}", read.len());
             let escaped: String = read.bytes().map(|b| format!("\\{b:03o}")).collect();
-            let Kept::Head(head) = counter(leaf.clone()).keeps(0) else { panic!("a head") };
+            let Some(Kept::Head(head)) = kept_of(&counter(leaf.clone()), 0) else {
+                panic!("a head")
+            };
             assert!(escaped.len() <= head, "{read}");
             assert_eq!(counter(leaf.clone()).tier(0, escaped.as_bytes()), past, "{read}");
         }
         for (leaf, kept) in [
-            (Leaf::Time, Kept::Head(32)),
-            (Leaf::Decimal, Kept::Head(12)),
-            (Leaf::Held, Kept::Nothing),
-            (Leaf::Array(Box::new(Leaf::Date)), Kept::Whole),
+            (Leaf::Time, Some(Kept::Head(32))),
+            (Leaf::Decimal, Some(Kept::Head(12))),
+            (Leaf::Held, None),
+            (Leaf::Array(Box::new(Leaf::Date)), Some(Kept::Whole)),
         ] {
-            assert_eq!(counter(leaf).keeps(0), kept);
+            assert_eq!(kept_of(&counter(leaf), 0), kept);
         }
-        assert_eq!(counter(Leaf::Date).keeps(1), Kept::Nothing, "a column past the header");
+        assert_eq!(kept_of(&counter(Leaf::Date), 1), None, "a column past the header");
     }
 
     /// The most spaces a text the tests above pad holds, so the padding is
@@ -950,7 +963,15 @@ mod tests {
             &NestedPlan::array(NestedPlan::Scalar),
         );
         assert_eq!(leaf, Leaf::Held);
-        assert!(!Counter::new(vec![leaf, Leaf::Held], calendar_end()).counts_any());
-        assert!(counter(Leaf::Date).counts_any());
+        assert!(Counter::new(vec![leaf, Leaf::Held], calendar_end()).tested().is_empty());
+        assert_eq!(
+            Counter::new(vec![Leaf::Held, Leaf::Date, Leaf::Held, Leaf::Time], calendar_end())
+                .tested()
+                .iter()
+                .map(|&(column, _)| column)
+                .collect::<Vec<_>>(),
+            [1, 3],
+            "the tested columns, ascending",
+        );
     }
 }

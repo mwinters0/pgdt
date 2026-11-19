@@ -23,28 +23,31 @@ fn cancelled() -> CancellationToken {
 }
 
 /// Counts every field spelled `infinity` past the format spec, as a
-/// `date` column's count would: what a split must count exactly as the
+/// `date` column's count would, in every column a table can have
+/// (`MaxHeapAttributeNumber`): what a split must count exactly as the
 /// serial pass does.
-struct Infinities;
+struct Infinities(Vec<(usize, Kept)>);
+
+impl Infinities {
+    fn new() -> Arc<Self> {
+        Arc::new(Self((0..1600).map(|column| (column, Kept::Head(b"infinity".len()))).collect()))
+    }
+}
 
 impl FieldCount for Infinities {
-    fn counts_any(&self) -> bool {
-        true
+    fn tested(&self) -> &[(usize, Kept)] {
+        &self.0
     }
 
     fn tier(&self, _column: usize, field: &[u8]) -> Option<UnrepresentableTier> {
         (field == b"infinity").then_some(UnrepresentableTier::Format)
-    }
-
-    fn keeps(&self, _column: usize) -> Kept {
-        Kept::Head(b"infinity".len())
     }
 }
 
 /// How a block `columns` wide is censused and counted here, `None` at
 /// the metadata level.
 fn plan(columns: Option<usize>) -> Option<CensusPlan> {
-    columns.map(|width| CensusPlan { width, counter: Arc::new(Infinities) })
+    columns.map(|width| CensusPlan { width, counter: Infinities::new() })
 }
 
 /// One `COPY` block as the **serial** pass states it: the reference every
@@ -71,7 +74,7 @@ fn reference(file: &[u8]) -> Vec<Reference> {
             Event::CopyStart(start) => {
                 columns.push(start.header.columns.len());
                 builder.on_copy_start(*start, true);
-                builder.count_block(Arc::new(Infinities));
+                builder.count_block(Infinities::new());
             }
             Event::Row(row) => builder.on_row(row.offset, row.raw),
             Event::StreamedRow(_) => unreachable!("one buffer streams no row"),

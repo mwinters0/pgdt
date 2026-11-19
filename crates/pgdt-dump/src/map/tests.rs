@@ -11,16 +11,12 @@ use pgdt_model::{
 struct NoCount;
 
 impl FieldCount for NoCount {
-    fn counts_any(&self) -> bool {
-        false
+    fn tested(&self) -> &[(usize, Kept)] {
+        &[]
     }
 
-    fn tier(&self, _column: usize, _field: &[u8]) -> Option<UnrepresentableTier> {
-        None
-    }
-
-    fn keeps(&self, _column: usize) -> Kept {
-        Kept::Nothing
+    fn tier(&self, column: usize, _field: &[u8]) -> Option<UnrepresentableTier> {
+        panic!("column {column} is not tested")
     }
 }
 

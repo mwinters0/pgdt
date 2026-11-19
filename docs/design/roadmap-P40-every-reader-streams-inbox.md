@@ -66,7 +66,7 @@ integer's digits, and a container's tier is read by `decode_*`'s grammar, the
 output grammar's walk testing each leaf as it reads it and staging none (D153).
 No `pg_dump` writes an escape in such a column. The copy is a parse's
 collected scalar text, drawn from the ledger. A mapping pass's census holds a
-counted container's field whole for the same reason (`FieldCount::keeps`,
+counted container's field whole for the same reason (`FieldCount::tested`,
 `Kept::Whole`), walked off its bytes with no copy, so a cold query is charged
 for a long `timestamptz[]` field in a table it reads beside it; the `*_in`
 walks a parse streams cannot stand in, reading spellings `decode_*` refuses
