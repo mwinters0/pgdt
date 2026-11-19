@@ -473,10 +473,17 @@ the copies, and re-taken once the ledger lands, confirming the factors or
 re-setting them, and showing a parse flat in its line length. **The
 acceptance is two hand runs on the reference dump**, read with no setting and
 recorded in `runs/` and the day's history entry: a data-level, strict parse
-under a stated `--memory` below its longest line, flat and never waiting on a
-line, holding none, its long field a `text` column a parse streams — below
-that line the reserve leaves the reference dump one reader, so its readers
-and statistics are the allowance's, not the line's; and a query whose batch reads its long field under a `--memory`
+under the smallest whole MiB of `--memory` whose floor holds two of its read
+chunks, the most it holds of any line — a row ending in the chunk after its
+own held whole (`decisions.md`, "D138"), one running on drawn for once before
+its carry knows it streams — so that floor is far below its longest line,
+flat and never waiting on a line, holding none past those two chunks, its
+long field a `text` column a parse streams; there the reserve and what the
+allocator retains (`decisions.md`, "D165") leave the reference dump one
+reader, so its readers and statistics are the allowance's, not the line's,
+taken once more at a zero purge delay, the peaks' difference read against
+D165's `Reopens`, a run at one reader with no repartition being the floor run
+it names; and a query whose batch reads its long field under a `--memory`
 carving readers whose cut puts a cluster's longest lines in different pieces,
 each reached early in its piece, so the lines held at once charge past the
 ledger's room and its arrangement rather than its timing makes readers wait and
@@ -485,7 +492,10 @@ give up their lines, read as not refused, its peak resident within that
 a real dump; that `--memory` is the smallest whole MiB whose `EXPLAIN` carves
 its count, so the room is that count's tightest. **That query is `pgdt sql`
 over the one block holding the dump's longest line, under `SET pgdump.memory`**,
-so a block's cluster is cut across readers. Rejected: lines past the room
+so a block's cluster is cut across readers. Rejected: the parse under a
+`--memory` below its longest line, where what the allocator retains leaves
+one reader no floor, so the parse is refused at its first row held past a
+chunk whatever a streamed row draws; lines past the room
 alone, which may carve one reader, where nothing waits or parks; a `--memory`
 below what the lines held at once charge, which counts what the allowance holds
 beside the room as room, a bill beside the line raising every count's allowance

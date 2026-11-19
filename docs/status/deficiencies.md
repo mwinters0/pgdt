@@ -587,9 +587,8 @@ than reading as a phase nobody has sliced.
 
 - **KD170** — a row a pass streams is drawn for once, before its carry knows
   it streams, up to two read chunks, so under an allowance whose floor is
-  below that a pass holding none of the row is refused for memory. **(c)
-  unowned**; promoted by a run refused so. Detail:
-  `crates/pgdt-dump/src/scan/chunked.rs`.
+  below that a pass holding none of the row is refused for memory. **(b)
+  owned by `M287`**. Detail: `crates/pgdt-dump/src/scan/chunked.rs`.
 
 - **KD171** — an emitted batch's views pin each whole read chunk or decoded
   block they point into while its consumer holds it, which no carve bills: a

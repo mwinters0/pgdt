@@ -829,7 +829,10 @@ carved up in exactly the same way, so the two are one setting reached two ways:
   a further 256 MiB and the 320 MiB set aside for what the allocator keeps of
   what pgdt frees (below), is predicted to stay unspent**, because what kills
   a container is one run's peak. That 320 MiB also comes off what one reader
-  may hold of a long line.
+  may hold of a long line. Any pass holds a row longer than a read chunk
+  while it reads it, so under an allowance short of the 384 MiB, the 320 MiB
+  and one reader's worth together, a dump holding such a row is refused there
+  rather than read slowly.
 - **pgdt takes inside that what the *file* asks for**, not the whole of it —
   one reader's worth for each worker it would run.
 - **The statistics a cache already holds are counted before the workers**: a
@@ -939,7 +942,8 @@ force, so raising the number raises both.
 Two things follow, and both are deliberate. **A very small allowance gets a
 very small budget rather than a floor**: at 384 MiB or less there is nothing
 left after the reserve, and pgdt reads compressed input through the streaming decoder and
-plain input a chunk at a time, which is correct and slower. `query` says so on
+plain input a chunk at a time, which is correct and slower, short of a row
+longer than a read chunk (above). `query` says so on
 stderr when it happens, naming the budget in force beside what one reader of
 that file holds and what would lift it, so a slow run inside a tight container is never silent about
 why it is slow. And **where no limit is set at all**, pgdt does not size itself
