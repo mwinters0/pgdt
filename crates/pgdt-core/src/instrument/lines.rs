@@ -1,8 +1,7 @@
 //! The moments a held line's draw is first admitted and returned, told to an
 //! instrumented binary that asked to hear them: what the heap holds resident
 //! as the ledger lends a returned draw's bytes to the next line is read at
-//! those moments (`docs/design/roadmap-P33-line-bound.md`, "What a held line
-//! costs").
+//! those moments (`docs/design/decisions.md`, "D165").
 //!
 //! **Only with the instrument**: a shipped build neither computes an event nor
 //! keeps an observer, the ledger's calls being behind the same feature. The

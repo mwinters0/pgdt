@@ -113,6 +113,11 @@ impl CarriedLine {
 /// keep it across a move (RT30). A mapping it cannot make or grow is an
 /// allocation failure, aborting as a `Vec`'s does.
 ///
+/// **A move reserves the new length and a step beside the old mapping**,
+/// inaccessible and uncommitted, so only an address-space limit
+/// (`RLIMIT_AS`) sees it: an embedder under one meets about twice a long line,
+/// transiently.
+///
 /// Linux's; elsewhere it is a `Vec`, which P34 replaces.
 pub struct LineMapping {
     #[cfg(target_os = "linux")]

@@ -200,7 +200,9 @@ pub(in crate::stream) fn charged(factor: Option<Factor>, held: u64) -> u64 {
 /// rows, nor one whose batch, static filter and sorted stop read no field
 /// ([`PlannedBlock::reads_fields`]), whose long rows the replay streams
 /// whatever a dynamic filter later reads (`docs/design/decisions.md`,
-/// "D138").
+/// "D138"). The replay's `reads_no_field` states the same rule off what
+/// `activate` builds from the header, so a header resolving otherwise than
+/// its plan would split them; no test dump does.
 pub(in crate::stream) fn line_charge(
     blocks: &BTreeMap<u64, PlannedBlock>,
     matches: &[CopyBlock],

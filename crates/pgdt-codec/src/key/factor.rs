@@ -3,6 +3,10 @@
 //! and a multirange's member positions, each stated beside the key that
 //! holds them — known from a column's comparison before a row is read
 //! (`docs/design/decisions.md`, "D152").
+//!
+//! What it costs in time is unpriced: a `jsonb` term reads its field twice,
+//! a sort keys two pairs again per comparison and a multirange each member
+//! once per comparison, and no `--count-pair` row or figure reads such a term.
 
 use crate::compare::{CompareKind, NestedCompare};
 pub use crate::value::factor::KeyFactor;

@@ -21,6 +21,12 @@
 //! column's type bounds per row; a scalar's own text, which never grows long;
 //! and a buffer's slack and copy as a batch grows within its span, the
 //! span's (`decisions.md`, "D141").
+//!
+//! A parse is charged no factor, streaming its line and collecting only a
+//! keyed scalar's text, and each query its own: one factor for every pass
+//! charges a parse for a copy it never makes, and one for every query charges
+//! a query over text for `int8[]`'s. A builder made for the one value and
+//! copied in holds the value twice.
 
 use arrow::datatypes::DataType;
 

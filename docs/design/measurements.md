@@ -4504,8 +4504,8 @@ its line, 52.7 to 56.4 MiB from 32 MiB to the bound.
   of the line again over escaped text and half over bytea, the one decoded
   copy; four bytes a line byte over `int8[]`, an eight-byte value for two text
   bytes; eight over `text[]`, a sixteen-byte view for two — 9273.24 MiB at the
-  bound, the base and nine lines. 33.24's builders are reserved to the value
-  and never grow (D154).
+  bound, the base and nine lines. The builders are reserved to the value and
+  never grow (D154).
 - **So every planned factor is confirmed as a bound, none re-set**, `text[]`'s
   at the bound too. Each over-charges by exactly the terms its input writes
   nothing of: text's one, its value a view; bytea's other half, a hex value
@@ -4569,10 +4569,11 @@ and a strict one 6.88–7.21 s, against 11.03–11.64 s and 14.25–14.79 s at
 
 ## What mimalloc's purge delay costs, and what it leaves resident
 
-**The delay `pgdt` sets is priced on three readings** (`roadmap-P33-line-bound.md`,
-"What a held line costs"): the wall clock of the shapes below, what each delay
-leaves resident over `long-line-resident`'s legs, and 33.7's query run on the
-reference dump, which is taken by hand and never by `measure.py`
+**The delay `pgdt` sets is priced on three readings** (`decisions.md`,
+"D166"): the wall clock of the shapes below, what each delay leaves resident
+over `long-line-resident`'s legs, and the query run on the reference dump —
+`pgdt sql` over the block holding its longest line, carved to eight readers —
+which is taken by hand and never by `measure.py`
 (`runs/p33.32-query-delays-20261117-0959/`,
 `runs/p33.32-query-above-100-20261117-1334/` and
 `runs/p33.32.1-query-grid-20261118-0341/`, each with its `readings.txt`).
@@ -4684,6 +4685,14 @@ as the delay rises:
   four partitions 100 ms costs 2.1%, within the noise. Those two runs take
   0.85 s and 0.97 s, less than the shipped leg's 1000 ms delay, so on those
   rows each delay is priced against a leg whose delay outlasts its run.
+- **The grid stops at 100 ms**, and its four parallel rows stay, where a
+  positive delay's cost shows first. The hand-run query holds its allowance up
+  to between 100 and 125 ms, and by mimalloc's purge (an arena's expiry armed
+  at its first pending free and never extended) at most a quarter to a third
+  of a second: the free rate taken from what the shipped delay keeps over zero
+  puts the headroom's end at 230–370 ms, an upper bound. At 125 and 150 ms it
+  held on one rep of three, at 200 and 250 ms on none; 10 ms kept most of what
+  100 ms does over zero (the three `readings.txt` above).
 
 <!-- figure: purge-delay-resident — taken at `7860c5fb` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure purge-delay-resident` -->
 

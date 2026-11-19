@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate a pg_dump-shaped dump whose one table holds a cluster of long lines.
 
-Backs `docs/design/roadmap-P33-line-bound.md`, "How it is shown": the
+Backs the decode factors (`docs/design/decisions.md`, "D154"): the
 `long-line-resident` figure (`measure.py`) reads what a pass holds resident
 while it holds a line, by pass kind and line length, so its input is a block
 of ordinary short rows around a **cluster of consecutive rows each exactly

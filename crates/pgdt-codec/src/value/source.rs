@@ -4,6 +4,10 @@
 //! walk holds no copy of the text it reads, a range's two bounds aside, and
 //! carries across a run's end only a fixed state of its own
 //! (`docs/design/decisions.md`, "D143", "D144").
+//!
+//! It is fed, never pulling its source's next chunk itself: a codec walk
+//! driving `pgdt-dump`'s reader would sit on its tab split, CR hold and chunk
+//! retention (`docs/design/decisions.md`, "D74").
 
 /// **A literal one of these grammars refuses**, wherever in it the walk
 /// found that — or a part its caller read and refused.

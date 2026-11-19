@@ -101,25 +101,28 @@ figure was read. It is now charged to a ledger carved from the allowance
 re-setting it against the `reserve` figure (`KD34`) prices the reserve without
 the carried line.
 
-**Origin.** P33's grilling, 2026-10-31; contingent on P33 landing the ledger.
+**Origin.** The line ledger's grilling, 2026-10-31.
 
 ---
 
-## 33.7's query run holds past the predicted resident at every purge delay
+## The reference dump's query run holds past the predicted resident at every purge delay
 
 **Fact.** `margin_allowance` (`pgdt-io`'s `memory`) holds a run's predicted resident, its charge
 plus `MEMORY_UNPOOLED_BOUND`, to `100 − MEMORY_MARGIN_PERCENT` percent of the
-allowance. 33.7's query run on the reference dump — `pgdt sql` over the `.xz`
-block holding its longest line under `SET pgdump.memory`, eight readers
-carved — peaks past that share at every purge delay read, the zero delay
+allowance. The query run on the reference dump — `pgdt sql`'s `count(*)` and
+`sum(octet_length(msg))` over the `.xz` block holding its longest line under
+`SET pgdump.memory`, eight readers carved — peaks past that share at every
+purge delay read, the zero delay
 included, there by about a quarter of a gigabyte, and at 100 ms within a third
 of a percent of the allowance itself
 (`runs/p33.32-query-delays-20261117-0959/readings.txt`,
 `runs/p33.32-query-above-100-20261117-1334/readings.txt`). Its live Rust heap
 is under the allowance; the rest is the held line's mapping, liblzma's
 decoders and what mimalloc keeps unpurged
-([`roadmap-P33-line-bound-notes.md`](roadmap-P33-line-bound-notes.md),
-"The hand runs").
+(`runs/p33.7-query-hand-run-20261117-0320/`). At the zero delay about 555 MiB
+of its peak lies outside the `introspect` build's block tracker: the
+`introspect` report's `mallinfo_*` lines beside the mapping's size at the peak
+would attribute it.
 
 **Why P23 cares.** It is `KD34`'s class read on a real dump: what a compressed
 `query` holds past its charge, which `MEMORY_UNPOOLED_BOUND` is meant to
@@ -140,7 +143,7 @@ that term in it. Nor is a run's excess where its scan
 exposes fewer partitions than `target_partitions` the bound's to cover: that is
 the repartition's copies, `KD174`.
 
-**Origin.** 33.32's readings, reviewed with the maintainer, 2026-11-17; the
+**Origin.** The purge delay's readings, reviewed with the maintainer, 2026-11-17; the
 term netted out and `KD174` set apart reviewed with them, 2026-11-18.
 *Contingent on* mimalloc 3.3.2 and the ledger's line charge at the plan's
 factor ([`decisions.md`](decisions.md), "D160").
@@ -150,7 +153,7 @@ factor ([`decisions.md`](decisions.md), "D160").
 **Fact.** D165 bills `RETAINED_BOUND` at the floor in full, keeping it there for
 a parked floor, one whose readers parked down to one having freed what they
 held ([`decisions.md`](decisions.md), "D165"). The one floor run taken is
-carved, not parked: 33.7's strict `pgdt parse` of the reference dump at
+carved, not parked: a strict `pgdt parse` of the reference dump at
 813 MiB, one reader and no repartition, kept a few percent of the bound at
 the 100 ms delay over zero, one rep a leg
 (`runs/p33.7-strict-floor-20261119-0050/readings.txt`). The bound's own grid is
@@ -158,13 +161,21 @@ the 100 ms delay over zero, one rep a leg
 (`runs/p33.34-delay-readers-20261118/readings.txt`). Under mimalloc 3.3.2 a
 delayed purge is process-wide: whichever thread next frees or abandons a page
 purges the expired arena ranges (`arena.c`, `mi_arenas_try_purge`), so a
-parked reader's freed pages are not obviously kept by its parking. Nothing has
-read a parked floor.
+parked reader's freed pages are not obviously kept by its parking. An arena's
+purge expiry is armed at its first pending free and never extended
+(`mi_arena_schedule_purge`), and a zero delay purges inside the free, so a
+delay keeps at most the free rate times the delay. Nothing has read a parked
+floor.
 
 **Why P23 cares.** It re-fits `MEMORY_RESERVE` and `MEMORY_UNPOOLED_BOUND`
 net of this term, and the three are billed together on the floor: with the
 reserve they set the smallest `--memory` a strict parse of the reference dump
-passes under (`roadmap-P33-line-bound-notes.md`, "The hand runs"). So the
+passes under: above 640 MiB the floor is the allowance less `MEMORY_RESERVE`,
+`WorkerMemory::at(1)`, `RETAINED_BOUND` and the statistics held, `at(1)` on
+the `.xz` read off a refusal by resuming a copy of a refused cache lower
+(`runs/p33.7-strict-floor-20261119-0050/HANDOFF.md`), and 813 MiB is the
+smallest whole MiB whose floor holds two read chunks, the most a parse holds
+of any line (D138). Re-derive it when any of those terms moves. So the
 grid that re-fits them takes D165's floor runs too: carved and parked, at the
 shipped delay and zero, `parse` and `sql`, with `parse` parked from several
 readers so that a bound per command — `parse` holding no DataFusion plan and so
@@ -172,5 +183,52 @@ no repartition, and its caller already stating `ArrangementRequest::retained`
 — is read rather than assumed. A parked floor two steps under the bound over a
 zero delay is D165's `Reopens`.
 
-**Origin.** 33.7's strict floor run, reviewed with the maintainer, 2026-11-19.
+**Origin.** The strict floor run, reviewed with the maintainer, 2026-11-19.
 *Contingent on* mimalloc 3.3.2 and the 100 ms `PURGE_DELAY_MS`.
+
+---
+
+## What the bill leaves the floor, and what a replay holds undrawn
+
+**Fact.** Under `pgdt`'s bill the cap never binds on a run with an allowance,
+and statistics gather nothing at or below 720 MiB, `RETAINED_BOUND` exceeding
+`MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND`; `memory.rs`'s account of the bands is
+the library's and leaves the bill out. A parse's floor subtracts the statistics
+its cache handed it, so a back-fill growing the cache makes the next parse
+refuse more lines (D161). A replay holds a line's bytes with no draw in two
+places: a drawn row a filter drops keeps its bytes in the carry and the
+retained chunks until its chunk's events end, across a yield, at most one line
+per sub-stream; and a row cut before waits for its re-draw with the line in its
+carry, which it cannot give up (D159).
+
+**Why P23 cares.** It re-fits the reserve and the unpooled bound against what
+is resident: both bands move with that fit, and both undrawn holdings are
+resident no term bills. Statistics yielding to nothing at the floor is P26's to
+move, if it moves what statistics may hold.
+
+**Origin.** The line ledger's wrap, 2026-11-19, read off `arrangement.rs`,
+`memory.rs` and `stream/replay.rs` at `6f5f8228`.
+
+---
+
+## What `long-line-resident` leaves unattributed
+
+**Fact.** A four-worker long-line parse is slower than a one-worker one at
+every length and kind (`runs/long-line-resident-20261118-2206/log`'s wall
+clocks, which no figure publishes). A parse grows slowly with its line, which
+the figure states, unattributed. A four-partition query over escaped text or
+`bytea` holds less than four lines and four copies, increasingly with the line.
+Under the resident wrapper a query over escaped text is slower than at
+`93428ef7`, and a strict parse over `bytea` slower at `543e5877` than at
+`4cb97fd4`. What the 100 ms delay keeps over zero on the query run at one, two,
+six and seven readers is confounded by UF5's repartition, the two peaks falling
+at different moments (`runs/p33.34-delay-readers-20261118/`).
+
+**Why P23 cares.** Each is resident or time a re-fit reads beside its grid, and
+each names what would attribute it: a `--profile-recipe` profile of a
+four-worker parse over `long_text_512`; the `introspect` build's live peak at
+512 MiB and at the bound, for whether the growth is Rust's heap; the same for
+whether each partition's copy is live at the peak; a `--count-pair` over each
+slower pass; both delays with `target_partitions` at the carved count.
+
+**Origin.** The `long-line-resident` re-takes and the delay grid, 2026-11-18.

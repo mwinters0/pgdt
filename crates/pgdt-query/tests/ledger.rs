@@ -5,6 +5,16 @@
 //! parks the later sub-streams where it is alone past the room, and answers
 //! what a ledger without limit answers however its partitions are driven —
 //! its cold mapping pass's census drawing on its own.
+//!
+//! **These compare answers and count no wait or give-up**: at a four-byte
+//! chunk the `types` fixture both waits and gives up, at sixteen nothing gives
+//! up, so a changed chunk or fixture can stop exercising give-up unseen. A test
+//! wanting a ledger with no room states its floor (`pgdt_fixtures::floored`),
+//! never a small allowance, under which the floor is zero. Some test sources
+//! forward `hint_parallelism` and not `hint_parked` — pgdt-query's
+//! `map_file.rs`, `identity.rs`, `wait_policy.rs` and `partitioned_replay.rs`,
+//! pgdt's `determinism.rs`, pgdt-mapping's `backfill/tests.rs` — so a parking
+//! test through one gives nothing back.
 
 use std::future::Future;
 use std::path::Path;

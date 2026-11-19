@@ -45,7 +45,11 @@ impl ResolvedTerm {
     /// no copy of it made — where it orders a nested field, read as the
     /// output grammars' walk reads it, and where it orders or equates a
     /// `jsonb` field, by its pairs' positions; any other is unescaped first
-    /// (`docs/design/decisions.md`, "D150", "D151", "D152").
+    /// (`docs/design/decisions.md`, "D150", "D151", "D152"). No unescaped
+    /// value is shared with the batch, which would still copy for every row
+    /// the filter drops and tie the predicate to the batcher's buffers; and an
+    /// ordering term over a long `jsonb` or multirange is read, never refused,
+    /// its positions holding a fraction of it.
     pub(super) fn eval(
         &self,
         raw_row: RawRow<'_>,

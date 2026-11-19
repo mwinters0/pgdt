@@ -360,6 +360,15 @@ pub trait FieldCount: Send + Sync {
 }
 
 /// **What a count needs of one column's field** ([`FieldCount::keeps`]).
+///
+/// Per column, not per block: a block holding its lines wherever its counter
+/// tests a container would hold a long `text` line for a short
+/// `timestamptz[]` beside it. The shape census takes no head, which would move
+/// a `text` column's persisted census for no array's sake; and a counted
+/// container is held and tested by `decode_*`'s grammar, never the `*_in`
+/// walks a gathering parse streams, which read spellings `decode_*` refuses
+/// (`{ infinity }` in a `date[]`), so the census would count a field the query
+/// reading it refuses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kept {
     /// None of it: no field of the column is past a tier.

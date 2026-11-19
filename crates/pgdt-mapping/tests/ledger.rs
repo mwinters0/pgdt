@@ -3,7 +3,7 @@
 //! behind an earlier line, or is given up to one and read again, or is held
 //! alone past the room while later readers park, and a parse answers what it
 //! answers drawing on no ledger (`docs/design/decisions.md`, "D157",
-//! "D163").
+//! "D163"). What these cannot see is pgdt-query's `tests/ledger.rs`'s to say.
 
 use std::future::Future;
 use std::pin::Pin;

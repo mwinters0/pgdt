@@ -206,6 +206,8 @@ impl ScanBudget {
     /// `target_partitions` readers and the whole allowance and the second
     /// nothing — one reader where it states a cost per worker, its own count
     /// where it states none — the pools spending past the budget at their floor.
+    /// Its line floor is the allowance less every live scan's billed maps and
+    /// carved line, so the second can be refused a line it would read alone.
     /// **(c) unowned.** Closing it means a share fixed before either draws —
     /// the pgdump scans of a physical plan counted and the allowance split
     /// between them — which nothing has yet measured a reason to build.

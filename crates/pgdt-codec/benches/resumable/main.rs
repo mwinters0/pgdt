@@ -1,8 +1,6 @@
 //! **A resumable reader priced**: one reader written three ways and timed
 //! over the same literals, so the form the input walks resume in is chosen
-//! by its cost rather than argued
-//! (`docs/design/roadmap-P33-line-bound.md`, "A pass holds a line only where
-//! it decodes it").
+//! by its cost rather than argued (`docs/design/decisions.md`, "D144").
 //!
 //! - **`pull`** ([`pull`]) — the input walks' shape at `0fd33bd3`
 //!   (`value/source.rs`, `value/nested/input.rs` there), since written in the
@@ -33,7 +31,9 @@
 //! element, a nested plan two deep.
 //!
 //! What the figure reads, and the criterion it decides by, is
-//! `scripts/measure.py`'s `resumable-reader-micro`.
+//! `scripts/measure.py`'s `resumable-reader-micro`. **It times these copies,
+//! never the crate's walks**: the figure declares only `benches/resumable/`,
+//! so an edit to `value/source.rs` or `nested/input/` leaves it fresh.
 
 use std::hint::black_box;
 

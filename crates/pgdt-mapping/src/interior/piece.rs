@@ -41,6 +41,12 @@ pub(super) enum PieceEntry {
     RowStart,
     /// The piece begins at a cut that knows nothing about rows: its first row
     /// is the one starting just past the first LF at or after the cut.
+    ///
+    /// A piece inside a long line searches its own range for one, holding
+    /// nothing, in parallel at the device's rate, and so learns it is empty.
+    /// Handing that piece to the leader, or merging empty pieces into their
+    /// predecessor at the next cut, would save only pieces in later windows,
+    /// the leader dispatching a window's at once.
     Resync,
 }
 

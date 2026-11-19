@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P7, P9–P17, P19, P20, P25, P27–P31, P35, P36, P38 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P33 — every line PostgreSQL writes and reads | **Complete** | [spec](roadmap-P33-line-bound.md); [notes](roadmap-P33-line-bound-notes.md) |
+| P1–P7, P9–P17, P19, P20, P25, P27–P31, P33, P35, P36, P38 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P8 — `--inserts` and `--column-inserts` rows | Sketched; not grilled | this file, below; [inbox](roadmap-P8-inserts-inbox.md) |
 | P41 — archive formats: the shared model, and `--format=custom` | Sketched; not grilled | this file, below; [inbox](roadmap-P41-archive-formats-inbox.md) |
 | P42 — `--format=directory` and `--format=tar` | Sketched; not grilled | this file, below |
@@ -726,16 +725,6 @@ and "I/O, memory and parallelism").
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
 
-## P33 — Every line PostgreSQL writes and reads
-
-**Complete.** A `COPY` line is read up to the bound PostgreSQL holds it to,
-[`postgres-invariants.md`](postgres-invariants.md), "I71", whatever the chunk
-size, `--jobs`, the split or the resume point, and refused only past it; memory
-may slow a long line and never refuses one a single reader could hold. No
-setting governs it. The spec is
-[`roadmap-P33-line-bound.md`](roadmap-P33-line-bound.md), and what it leaves
-the next phase its [notes](roadmap-P33-line-bound-notes.md).
-
 ## P8 — `--inserts` and `--column-inserts` rows
 
 **Inbox:** [`roadmap-P8-inserts-inbox.md`](roadmap-P8-inserts-inbox.md) — facts earlier
@@ -1137,10 +1126,9 @@ PostgreSQL's `*_in` reads, so a parse runs under a `--memory` below a long
 line whose long field is a scalar an order key or a query's batch reads: a
 number, a datetime, an `interval`, a network address, or a container of one,
 and a cold query's census holds no counted container of a column it never
-reads. P33 streams only the types a dump's long fields hold and collects such a
-scalar's text, and such a container's field, whole, drawing it from the ledger
-([`roadmap-P33-line-bound.md`](roadmap-P33-line-bound.md), "A pass holds a line
-only where it decodes it"). It is wanted only when a dump needs it, and what
+reads. A parse streams only the types a dump's long fields hold and collects
+such a scalar's text, and such a container's field, whole, drawing it from the
+ledger ([`decisions.md`](decisions.md), "D138", "D144"). It is wanted only when a dump needs it, and what
 that dump is decides its scope. Its first question is the hot path's: a push
 machine in place of the slice reader `field_key` and the batch read with was
 measured to cost every short value. Sketched to corner-avoidance depth. The

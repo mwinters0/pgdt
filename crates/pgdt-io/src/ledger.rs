@@ -38,6 +38,15 @@
 //!
 //! **A ledger without limit** ([`Ledger::unlimited`]) meets every draw at once:
 //! an allowance nobody stated carves nothing to wait on, and refuses nothing.
+//!
+//! **One ledger lends to every reader at once.** One reader at a time
+//! holding more than its chunk is a ledger of one, wasting the concurrency
+//! of lines that cluster in a chunk; refusing a new long line admission while
+//! an earlier one waits still wedges on two lines that each began short and
+//! grew; and a ledger reserved for one line at the bound in every carve costs
+//! readers on every dump holding no long line, where a mapped read's longest
+//! line costs nothing. A pass is handed it with its arrangement, never in its
+//! options, which are reused across runs where a ledger is one run's state.
 
 use std::collections::BTreeMap;
 use std::future::poll_fn;

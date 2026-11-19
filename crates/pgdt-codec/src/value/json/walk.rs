@@ -15,7 +15,9 @@ use crate::value::source::{Refused, Walked};
 ///
 /// Iterative, over a stack of the containers open, a bit each, so no depth
 /// refuses: the server's recursion is bounded by its `max_stack_depth`, a
-/// setting of the server restoring the dump (I72).
+/// setting of the server restoring the dump (I72). The stack is the one
+/// state growing with a field, at most an eighth of it, and is not charged:
+/// the ledger back for a parse over no document a dump holds.
 #[derive(Debug, Clone)]
 pub(crate) struct JsonWalk {
     /// Whether `jsonb_in`'s refusals are read beside `json_in`'s grammar.

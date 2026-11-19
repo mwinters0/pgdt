@@ -219,7 +219,8 @@ than reading as a phase nobody has sliced.
 - **KD38** — a pgdump scan planned while others hold the session budget gets
   what they left, so a join's second-planned table can run on nothing while
   the first holds the whole allowance: planning order, which the user does not
-  choose, decides a scan's speed. **(c) unowned**; promoted by a measured join
+  choose, decides a scan's speed, and whether a long line it would read alone
+  is refused. **(c) unowned**; promoted by a measured join
   of two pgdump tables slowed by it. Detail: `crates/datafusion-pgdump/src/budget.rs`.
 
 - **KD40** — a `--create` or `pg_dumpall` dump states each database's

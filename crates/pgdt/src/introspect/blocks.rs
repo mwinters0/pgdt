@@ -7,7 +7,7 @@
 //! lends a returned draw's bytes to the next line: a block the program freed
 //! is mimalloc's until a purge releases its pages, so a freed block's
 //! resident pages are retention, and the stack names whose copy it was
-//! (`docs/design/roadmap-P33-line-bound.md`, "What a held line costs").
+//! (`docs/design/decisions.md`, "D165").
 //!
 //! **Armed only where [`FROM_VAR`] states a size**, in bytes: unset, the
 //! counting allocator tracks nothing, the report carries no `blocks_*` line,
@@ -34,6 +34,13 @@
 //!   own mapping (`docs/design/decisions.md`, "D139"), and a `realloc` that
 //!   fails, or shrinks a block in place under the size, whose block it counts
 //!   as freed.
+//!
+//! **A reading** builds with line tables (`release.py build --features
+//! introspect --profile profiling`), arms it, and takes each leg at the
+//! shipped delay and at `MIMALLOC_PURGE_DELAY=0`: a site's share of what the
+//! delay keeps is its shipped sum less its zero one.
+//! `runs/p33.31-blocks-20261117/` (`run.sh`, `table.py`, `summarize.py`) is the
+//! pattern.
 
 use std::backtrace::Backtrace;
 use std::cell::Cell;

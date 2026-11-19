@@ -4715,8 +4715,7 @@ the line's. `COPY_FILE` on Windows writes `\r\n`; `pg_dump` never uses it.
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6, master
 of 2026-08-21 (source).
 
-**Relied on by:** [`roadmap.md`](roadmap.md), "P33 — Every line PostgreSQL
-writes and reads", and [`decisions.md`](decisions.md), "D164": `LINE_BOUND`,
+**Relied on by:** [`decisions.md`](decisions.md), "D164": `LINE_BOUND`,
 in `pgdt-core`'s `copy.rs`, is this bound, every line held to it.
 
 **Re-verify.**

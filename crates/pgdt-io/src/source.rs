@@ -254,7 +254,9 @@ pub trait ByteRangeSource: Send + Sync {
     /// a reader's chunk being the read it dropped. A compressed source gives
     /// back the parked reader's share of its retained blocks at once, and
     /// moves nothing else: the budget announced, and with it which arm a read
-    /// takes, stand (`docs/design/decisions.md`, "D162").
+    /// takes, stand (`docs/design/decisions.md`, "D162"). **A source stating a
+    /// `WorkerMemory` implements it**, or a park's `Terms` credit bytes its
+    /// pools never free.
     fn hint_parked(&self, _parked: bool) {}
     /// The caller's ask that reading stop, announced beside the other hints
     /// for a source whose own wait needs it.

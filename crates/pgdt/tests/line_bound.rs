@@ -7,7 +7,12 @@
 //! (`pgdt_dump::ReadOptions::line_bound`, a field only `test-support`
 //! builds have); what only a run at the real one shows is the wiring, which
 //! a small bound stands in for. Each dump is a gibibyte, so this binary runs
-//! alone in its nextest group of one thread (`.config/nextest.toml`).
+//! alone in its nextest group of one thread (`.config/nextest.toml`): one
+//! such test, never real-bound tests throughout, and never the small bound
+//! with the constant asserted alone, which proves nothing of the wiring.
+//! It never reaches the provider or the back-fill; and live scans' line
+//! charges are one unit test (`two_live_scans_ledgers_lend_no_byte_twice`),
+//! no join over two dumps.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

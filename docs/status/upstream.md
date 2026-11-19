@@ -169,8 +169,10 @@ back. **`UF1`–`UF6` are allocated, and none is reused.**
   drawn line, its batch cut at the line and its draw returned at the yield
   (`../design/decisions.md`, "D159"), keeps its decoded copy resident past the
   ledger, up to one per output partition: a plan whose scan exposes fewer
-  partitions than `target_partitions` meets it, as `pgdt sql` over one block
-  did (`../design/roadmap-P33-line-bound-notes.md`, "The block tracker's readings"): `KD174`.
+  partitions than `target_partitions` meets it, as `pgdt sql` over the block
+  holding the reference dump's longest line did, two decoded copies of its
+  longest lines live at the peak while the ledger held almost nothing (the
+  `introspect` build's block tracker, `runs/p33.31-blocks-20261117/`): `KD174`.
 - **Upstream.** Issue
   [apache/datafusion#25904](https://github.com/apache/datafusion/issues/25904),
   "make `SharedCoalescer` do memory accounting for buffered batches", open,
@@ -185,11 +187,11 @@ back. **`UF1`–`UF6` are allocated, and none is reused.**
   buffers included, before it emits.
 - **Workaround.** None: the replay returns a draw at the yield, and what a plan
   holds past it is past the ledger, which the margin carved above it absorbs
-  on some cuts and not others: 33.7's query run at a zero purge delay holds its
+  on some cuts and not others: that query at a zero purge delay holds its
   `--memory` at eight readers, passes it at one, two, six and seven, by most
-  at one, and holds at each with no repartition above the scan
-  ([`../design/roadmap-P33-line-bound-notes.md`](../design/roadmap-P33-line-bound-notes.md),
-  "The zero delay where the repartition holds copies"). The
+  at one, and holds at each with `target_partitions` at the carved count,
+  which leaves no repartition above the scan
+  (`runs/p33.34-delay-readers-20261118/`, `readings.txt` and `probe.sh`). The
   manual tells a user so, and that a `target_partitions` at the carved
   count leaves no repartition (`../manual/pgdt-sql.md`, "Memory"). Rejected:
   returning a draw as its copy's last reference drops, which deadlocks a
@@ -201,13 +203,10 @@ back. **`UF1`–`UF6` are allocated, and none is reused.**
   DataFusion bump.
 - **When it lands.** Strike the marker at `replay`
   (`crates/pgdt-query/src/stream/replay.rs`) with `KD174` and the manual's
-  account of it (`../manual/pgdt-sql.md`, "Memory"), D159's `UF5`, and the account in
-  [`../design/roadmap-P33-line-bound-notes.md`](../design/roadmap-P33-line-bound-notes.md),
-  "The hand runs", of the margin absorbing the copy, and re-read
-  [`../design/roadmap-P33-line-bound-notes.md`](../design/roadmap-P33-line-bound-notes.md),
-  "The zero delay where the repartition holds copies"; a stated pool
-  (`--memory-limit`) is then what bounds it, carved off the scans' allowance
-  (`datafusion-pgdump`'s `pool_limit`).
+  account of it (`../manual/pgdt-sql.md`, "Memory") and D159's `UF5`, and
+  re-take that grid's zero-delay legs; a stated pool (`--memory-limit`) is
+  then what bounds it, carved off the scans' allowance (`datafusion-pgdump`'s
+  `pool_limit`).
 
 ## UF6 — `libmimalloc-sys` declares no constant for mimalloc v3's purge delay
 
@@ -242,5 +241,4 @@ back. **`UF1`–`UF6` are allocated, and none is reused.**
   `alloc.rs`'s `purge` and in the block tracker's test
   (`crates/pgdt/src/introspect/blocks.rs`), dropping the hand count or
   `M284`'s shim, whichever is there, and `tests/allocator.rs`'s account of
-  guarding the index; 33.33's notes' "The option's index is counted by hand"
-  is history by then.
+  guarding the index.

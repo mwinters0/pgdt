@@ -411,7 +411,9 @@ impl BlockCache {
     ///
     /// What a reader still views stays alive until its view drops, as with
     /// any eviction; what is left is `slots − 1` retained blocks beside the
-    /// one each reader still reading holds.
+    /// one each reader still reading holds. A decode in flight lands after
+    /// it, so the retained blocks can briefly stand past the drain, until the
+    /// next decode drains them.
     pub(super) fn give_back(&self) {
         let keep = self.pool.slots().saturating_sub(1);
         let evicted = {

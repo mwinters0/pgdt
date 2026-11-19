@@ -79,7 +79,7 @@ it or the physical count lifts (`decisions.md`, "D2").
 
 **Fact.** A `COPY` line that outgrows its chunk grows in an anonymous mapping of
 its own, by `mremap` in huge-page steps, its start kept aligned to one
-(`roadmap-P33-line-bound.md`, "What a held line costs"). macOS has no
+(`decisions.md`, "D139"). macOS has no
 `mremap`. The rejected alternative there, a reservation of I71's bound of
 address space per held line made writable as it grows, never moves the line
 and needs no remap, at the cost of counting the whole bound against an
@@ -88,8 +88,8 @@ address-space limit. Off Linux, `LineMapping`
 build compiles and holds the line through the allocator.
 
 **Why P34 cares.** A macOS build needs a shape for the held line that keeps
-P33's charge in bytes held — a reservation, a copy-on-growth with its peak
+the ledger's charge in bytes held — a reservation, a copy-on-growth with its peak
 charged, or another — and the decision is P34's.
 
-**Origin.** P33's `/dwal` over 33.8, 2026-11-01, and 33.10, which landed the
-`mremap` shape. *Contingent on* D139 standing.
+**Origin.** The held line's review, 2026-11-01, and the `mremap` shape it
+landed. *Contingent on* D139 standing.

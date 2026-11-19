@@ -85,6 +85,12 @@ use crate::summary::partition_orders;
 /// "D159"); what it holds there — the read it yielded inside, and its share
 /// of the source's pools — stays beside a line admitted past the room
 /// without its park.
+///
+/// The contract is the caller's polling, not a ledger reaching past it:
+/// owning each held buffer to drop it under a suspended holder frees memory
+/// the stream is mid-way through using, and driving the sub-streams in tasks
+/// of the replay's own is threads by surprise (`docs/design/decisions.md`,
+/// "D1").
 pub struct TablePartitions {
     source: Arc<dyn ByteRangeSource>,
     watch: Arc<SourceWatch>,

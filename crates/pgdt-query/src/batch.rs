@@ -44,6 +44,11 @@ use crate::options::QueryOptions;
 /// carries an `i32` offset past `i32::MAX` — a decoded value, an element
 /// count or a child's bytes being no more than the text it is read from
 /// (`docs/design/decisions.md`, "D164").
+///
+/// The cut holds whatever `QueryOptions` say, since `max_source_span` and
+/// `max_bytes` are a caller's to lift: making the span cap mandatory under a
+/// ceiling would have a knob that bounds pinning bound correctness too, and
+/// leaving Arrow's panic to whoever lifts the cap is no refusal at all.
 pub(crate) const OFFSET_CUT_BYTES: usize = i32::MAX as usize + 1 - LINE_BOUND;
 
 /// Whether an Arrow type holds `i32` offsets into a buffer a batch grows
@@ -247,7 +252,9 @@ impl RowBatcher {
 
     /// Whether column `col`'s value is walked into its builders
     /// ([`append_walked`]): a nested column, which its tier test, where it
-    /// has one, walks first.
+    /// has one, walks first. Read off the builder's variant: reading the
+    /// column's plan off `plans` on every field raised every query row of
+    /// `--count-pair` (`runs/count-pair-33.24-20261111/`).
     fn walks_column(&self, col: usize) -> bool {
         is_walked(&self.columns[col])
     }

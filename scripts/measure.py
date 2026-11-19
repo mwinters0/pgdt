@@ -1788,7 +1788,7 @@ LONG_LINE_BOUND = 0x3FFF_FFFE
 #:   follows the growth rather than the line;
 #: - **the bound itself**, read at one worker alone (`LONG_LINE_SERIAL_ONLY`):
 #:   what one reader holds at the bound is the floor's question
-#:   (`roadmap-P33-line-bound.md`, "The floor is one reader"), the one cell the
+#:   (`docs/design/decisions.md`, "D161"), the one cell the
 #:   ladder's secant would otherwise extrapolate to.
 LONG_LINE_LENGTHS: tuple[tuple[str, int], ...] = (
     ("32", 32 * MIB),
@@ -1811,7 +1811,7 @@ LONG_LINE_SERIAL_ONLY: tuple[str, ...] = ("bound",)
 #: so two inputs of a kind differ in their lines' length alone.
 LONG_LINE_CLUSTER = 4
 #: The kinds read for **a term of a query's factor no count of Arrow's buffers
-#: sees** (`roadmap-P33-line-bound.md`, "How it is shown"): a fixed-width
+#: sees** (`docs/design/decisions.md`, "D154"): a fixed-width
 #: array's form, where a builder's growth shows; the stage a `text[]` part's
 #: token and unquoted copy hold; and a `jsonb` ordering key. Each is read by
 #: the one pass holding that term (`long_line_passes`), at one partition alone
@@ -2739,8 +2739,8 @@ LONG_LINE_JOBS: tuple[int, ...] = (1, 4)
 #: The figure's container. **Headroom, not a contract**: no held line is
 #: charged on today's code, so nothing here is held to the allowance it states;
 #: what will be is a held line's draw on the ledger
-#: (`roadmap-P33-line-bound.md`, "A held line is charged, and admitted in file
-#: order"), and a re-take under it is where a gate twin belongs. **Held under
+#: (`docs/design/decisions.md`, "D157"), and a re-take under it is where a
+#: gate twin belongs. **Held under
 #: `contained.MAX_FRACTION` of the machine** (`memory_preflight`), the one
 #: ceiling every leg's resident set must fit.
 LONG_LINE_MEMORY = "15g"
@@ -2800,8 +2800,8 @@ def long_line_allowance(factors: Mapping[str, Fraction]) -> int:
     once at its charge — a line a worker, at every length and count the figure
     reads its kind at.
 
-    **A charge is the spec's** (`roadmap-P33-line-bound.md`, "What a held line
-    costs"): a query's or a filter's its line once plus its kind's factor,
+    **A charge is the ledger's** (`docs/design/decisions.md`, "D154",
+    "D158"): a query's or a filter's its line once plus its kind's factor,
     `factors` holding each planned kind's as its instrument leg read it
     (`LONG_FACTOR_FAMILY`); a parse's, which streams its line and draws only
     for the scalar text it collects, at most its line. So **it is sized from
@@ -3850,7 +3850,8 @@ def discovered_budget(limit: int) -> int:
     resolved *count* also answers to `MEMORY_MARGIN_PERCENT` — its predicted
     resident, `charge + MEMORY_UNPOOLED_BOUND`, must leave a fifth of the
     limit — so what a run reports is at most this and
-    often less. That makes this an upper bound on the
+    often less. Nor does it, or `afforded_readers`, subtract `pgdt`'s
+    `RETAINED_BOUND` (D165), which loosens both further. That makes this an upper bound on the
     budget rather than a prediction of it, which is what the use below wants:
     a count comparison that stays an upper bound.
 
@@ -8824,10 +8825,9 @@ class ResumableRow:
         """**What the `async` walk is read against today's pull by**: the
         larger of the sitting's drift and the two medians' 95% intervals'
         half-widths summed, the wider of the pull's two, widened by the layout
-        term. The first two were stated before any reading was taken
-        (`docs/design/roadmap-P33-line-bound.md`, "A pass holds a line only
-        where it decodes it"), the layout term with the maintainer before any
-        either (`docs/status/history/2026-11-03.md`)."""
+        term. The first two were stated before any reading was taken, the
+        layout term with the maintainer before any either
+        (`docs/status/history/2026-11-03.md`)."""
         f = self.shipped
         pull_half = max(f.pull.half_width, f.pull_again.half_width)
         return max(self.drift_ns, pull_half + f.async_.half_width) + self.layout_async_ns
@@ -9413,8 +9413,8 @@ def _per_rep_counts(
 #: The variable mimalloc reads its purge delay from, in milliseconds: how long
 #: a page it holds of freed blocks stays committed, and resident, before it is
 #: decommitted. What the shipped binary keeps past a zero delay is retention of
-#: every buffer a scan frees at its rate (`roadmap-P33-line-bound.md`, "What a
-#: held line costs"), which `docs/design/decisions.md`, "D166" bounds by this
+#: every buffer a scan frees at its rate (`docs/design/decisions.md`, "D165"),
+#: which `docs/design/decisions.md`, "D166" bounds by this
 #: delay, `pgdt` setting a default the variable overrides
 #: (`crates/pgdt/src/alloc.rs`, `PURGE_DELAY_MS`).
 PURGE_DELAY_VAR = "MIMALLOC_PURGE_DELAY"
@@ -9423,10 +9423,11 @@ PURGE_DELAY_VAR = "MIMALLOC_PURGE_DELAY"
 #: milliseconds, beside the shipped leg stating none (`purge_delay_legs`):
 #: zero, purging as a page empties, and two between it and mimalloc v3's
 #: default of 1000, a decade apart. **The value `pgdt` sets is one of these**
-#: (the spec's "What a held line costs": chosen on throughput, what it keeps
-#: billed), so this tuple is the choice's resolution, and the shipped leg now
-#: runs at its last. A value the choice moves to is added here first, so
-#: every table names it.
+#: (D166: chosen on throughput, what it keeps billed), so this tuple is the
+#: choice's resolution, and the shipped leg now runs at its last, so a re-take
+#: reads it twice. A value the choice moves to is added here first, so every
+#: table names it; pricing mimalloc's default (D166's `Reopens`) adds 1000 as
+#: a stating leg.
 PURGE_DELAY_LEGS: tuple[int, ...] = (0, 10, 100)
 
 #: Where `pgdt --version` names the purge delay mimalloc runs under once
@@ -9576,11 +9577,11 @@ def run_purge_delay(session: Session) -> str:
     """What each purge delay costs in wall clock: one row per shape, one
     column per leg, each against the shipped leg stating none.
 
-    **The figure's question is the spec's** (`roadmap-P33-line-bound.md`,
-    "What a held line costs"): which delays cost nothing the throughput
-    figures resolve. Its verdict lines say, per leg and row, whether the
-    gap is resolved, which the choice reads; `purge-delay-resident` and
-    33.7's query run say what each delay keeps resident.
+    **The figure's question is D166's** (`docs/design/decisions.md`):
+    which delays cost nothing the throughput figures resolve. Its verdict
+    lines say, per leg and row, whether the gap is resolved, which the choice
+    reads; `purge-delay-resident` and the reference dump's hand-run query say
+    what each delay keeps resident.
 
     **What would falsify "a lower delay is free"**, written before any
     reading: a leg's readings lying wholly above the shipped leg's on any
@@ -13526,7 +13527,9 @@ def long_line_leg_problems(session: Session, figure: str, specs: Sequence[RunSpe
     """Why `figure`'s timed long-line legs (`LONG_RSS_FAMILY`) did not read
     the arrangement their rows name, one line each: a query or filter that
     did not answer its input's rows (`long_line_answer`), or a parse that
-    resolved another worker count than its row states."""
+    resolved another worker count than its row states. A query leg's
+    partition count is checked by nothing: the first `scan started` in its
+    log is the untimed builder's."""
     problems = []
     for spec in specs:
         name, _, jobs = spec.command.removeprefix(LONG_RSS_FAMILY).rpartition("-")
@@ -13578,8 +13581,8 @@ def run_long_line_resident(session: Session) -> str:
       — an instrument not seeing the line, before it is a finding;
     - a one-partition query or filter whose secant is past one plus twice its
       planned factor: it then holds a term the factor misses beyond its
-      builders' doubling, which the factor leaves uncharged (D141) and 33.24
-      removes past a chunk term; between one plus the factor and that, the
+      builders' doubling, which the factor leaves uncharged (D141) and a
+      reserved builder removes past a chunk term (D154); between one plus the factor and that, the
       doubling is the candidate, to be named rather than assumed;
     - a one-worker or one-partition cell whose residual at 32 MiB is larger
       than that line: resident is then not a factor times the line, and no
@@ -13781,8 +13784,7 @@ def _purge_delay_resident_specs(allowance: int) -> list[RunSpec]:
 def purge_delay_allowance_line(delay: int | None, kib: Sequence[float], allowance: int) -> str:
     """Whether every rep of one leg held its peak within the `allowance`
     every leg states, `kib` its every cell's readings: the resident half of
-    the purge delay's criterion (`roadmap-P33-line-bound.md`, "What a held
-    line costs")."""
+    the purge delay's criterion (`docs/design/decisions.md`, "D166")."""
     caption = purge_delay_caption(delay)
     if not kib:
         return f"- `{caption}`: no rep was read"
@@ -13800,16 +13802,17 @@ def run_purge_delay_resident(session: Session) -> str:
     **What it reads is the allocator's retention over a held line's
     passes**: a delay below the shipped one decommits a freed page sooner,
     so the resident it leaves should only fall, and the fall is what the
-    shipped delay keeps of what a pass frees (`roadmap-P33-line-bound-notes.md`,
-    "The block tracker's readings"). Every leg states `long-line-resident`'s allowance, sized
+    shipped delay keeps of what a pass frees (`docs/design/decisions.md`,
+    "D165"). Every leg states `long-line-resident`'s allowance, sized
     from the factors its instrument legs read in this sitting
     (`long_line_allowance`), and whether each delay holds every rep within it
-    is the resident half of the spec's criterion; 33.7's query run is the
-    other reading it names, taken by hand on the reference dump. **That half
-    cannot tell the legs apart**: the allowance is the widest leg's, which
-    the shipped delay already holds on every leg, so the choice turns on the
-    query run and `purge-delay` (`roadmap-P33-line-bound-notes.md`, "The purge
-    delay's leg grid"), and this figure reads what each delay leaves resident.
+    is the resident half of D166's criterion; the reference dump's hand-run
+    query is the other reading it names. **That half cannot tell the legs
+    apart**: the allowance is the widest leg's, which the shipped delay
+    already holds on every leg, so the choice turns on the query run and
+    `purge-delay` (`measurements.md`, "What mimalloc's purge delay costs, and
+    what it leaves resident"), and this figure reads what each delay leaves
+    resident.
 
     **What would falsify the account**, written before any reading: a
     stating leg whose readings lie wholly above the shipped one's on any
@@ -18459,8 +18462,11 @@ COUNT_PAIR_LONG_INPUTS: tuple[str, ...] = tuple(
 #: the data-level parse and the strict one (`STRICT_PARSE`) over a cluster of
 #: escaped text and of `bytea` lines, each a `long-line-resident` input. Only
 #: a field past its chunk reaches the path a parse reads a long field on
-#: (`roadmap-P33-line-bound.md`, "How it is shown"), and the control holds
-#: none; each runs under the data level's limit, for the same reason.
+#: (`docs/design/decisions.md`, "D138"), and the control holds none; each runs
+#: under the data level's limit, for the same reason. **The ledger, parking,
+#: the floor and the bound have no row**: each adds work per chunk or per
+#: plan, and D108's trigger is per row or byte; a per-row change is priced on
+#: the control rows, the four long rows holding too few rows to resolve one.
 COUNT_PAIR_SHAPES: tuple[tuple[str, str, str | None, str], ...] = (
     ("parse", "`pgdt parse` at the metadata level", None, COUNT_PAIR_INPUT),
     (f"{STATISTICS_FAMILY}data", "`pgdt parse` at the data level", STATISTICS_MEMORY, COUNT_PAIR_INPUT),
@@ -19005,7 +19011,22 @@ def callgrind_recipe(cfg: Config) -> str:
       pair orders its reps, and the placement read on each rep pair.
 
     The reading is D108's: the totals first, and only where they reproduce
-    the pair's median change are the functions read as its place."""
+    the pair's median change are the functions read as its place.
+
+    What the recipe leaves to whoever runs it:
+
+    * **a commit other than the tree** is priced by `--count-pair
+      <parent>..<change>`, never a pair from a second checkout, Cargo taking
+      the shared `count-pair-tree` build as current by mtime;
+    * **a span's residual** is placed on the gap between each pair of
+      adjacent legs, each gap's candidates its own commits
+      (`runs/count-pair-33.26-20261112/callgrind/{gen,analyze}.py` the
+      pattern), and a job of several pairs keeps each step's legs, which the
+      next pair overwrites (`runs/count-pair-33.26-20261112/run.sh`);
+    * **placements run four or five at once**, an `Ir` count not moving with
+      the machine's load; on `query --schema-mode typed` the gate can miss on
+      one rep pair, mimalloc's paths moving, and the strings query's functions
+      place the rise."""
     c = callgrind_prefix(cfg)
     work = cfg.out_dir / "callgrind-count-pair"
     legs = {leg: count_pair_leg_binary(cfg, leg) for leg in COUNT_PAIR_LEGS}

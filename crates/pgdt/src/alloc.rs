@@ -110,6 +110,16 @@ mod purge {
     /// reader counts; a run keeping more over a zero delay than this moves it.
     /// It bounds this delay alone: a delay the environment states is billed
     /// this all the same.
+    ///
+    /// Bounded here rather than per buffer: a held line's freed copy is a
+    /// small part of what the delay keeps at the peak, beside the view
+    /// builder's blocks, the decoded-block buffers and DataFusion's own. So
+    /// giving a draw's buffers back outside the allocator, or every buffer a
+    /// scan frees, reaches little and never DataFusion's; charging it as a
+    /// line's factor bills one allocator's habit to every line; and no library
+    /// change suiting both allocators reaches it, the view builder's blocks
+    /// leaving with their batch and a pooled buffer kept longer holding the
+    /// same pages live.
     pub const RETAINED_BOUND: u64 = 320 << 20;
 
     /// `mi_option_purge_delay`'s place in `mimalloc.h`'s `mi_option_e`, which

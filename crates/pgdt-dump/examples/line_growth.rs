@@ -17,6 +17,12 @@
 //! how much of the process's anonymous memory transparent huge pages back
 //! before the drop (`/proc/self/smaps_rollup`'s `AnonHugePages`); the chunk is
 //! `pgdt_io`'s default read unless stated.
+//!
+//! `runs/p33.12-line-steps/probe.sh` runs it; `runs/p33.10-line-mapping/growth-thp.out`
+//! is the reading of exact growth that D139's step answers. **Compact memory before a leg**
+//! (`vm.compact_memory`) and record `/proc/buddyinfo` beside it: uncompacted,
+//! the host's free 2 MiB blocks decide both legs' backing, so the reading
+//! prices the host (`growth.out` against `growth-compacted.out` there).
 
 use std::time::Instant;
 
