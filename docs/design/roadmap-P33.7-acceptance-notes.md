@@ -66,6 +66,32 @@ production code.
   off the floor (D165), and at 432 MiB the larger of the cap and the margin's
   ceiling is under it, so the floor is zero, as the handoff predicted before
   the run; it turns positive only above at least 750 MiB.
+- **So the strict run is read at 813 MiB**, the smallest whole MiB whose
+  floor holds two read chunks, as the spec's "How it is shown" now states.
+  Above 640 MiB the cap passes the margin's ceiling, so the floor is the
+  allowance less `MEMORY_RESERVE`, one reader's budget, `RETAINED_BOUND` and
+  the statistics held. One reader's budget on this `.xz` is read off a
+  refusal rather than derived: a copy of the refused run's cache, holding
+  96 bytes of statistics, resumed at 811 MiB refused the same line's draw with
+  997,504 bytes left, which puts `WorkerMemory::at(1)` at 111,200,032 bytes.
+  On a fresh cache that leaves 2,046,176 bytes at 812 MiB and 3,094,752 at
+  813 MiB.
+- **At 813 MiB the strict parse held no line, at either delay.** Taken from
+  `543e5877`, the 100 ms delay and zero at once, each into its own cache
+  (`runs/p33.7-strict-floor-20261119-0050/`, `run.sh`, `HANDOFF.md`, each
+  leg's `.log`, `readings.txt`): one reader, lowered from the source's 24, a
+  statistics allowance of zero, so 760 of 761 blocks declined statistics;
+  exit 0, no refusal, the 761 blocks and 1,025,133,886 rows, each table's
+  count the 2026-11-16 strict run's. Peaks 173,472 KiB at 100 ms and
+  163,716 KiB at zero, under the 832,512 KiB stated and under half the
+  longest line, so no line was resident whole. The legs shared the machine,
+  which a peak resident does not see; their wall clock is no figure.
+- **The peaks differ by 9,756 KiB, so D165's `Reopens` fired**: under the
+  196,608 KiB two 64 MiB steps under `RETAINED_BOUND` leave. One rep a leg,
+  a trigger's reading, not a fit; and a floor carved to one reader, not
+  parked, so it does not read what a parked floor keeps of what its readers
+  freed (D165's `Rejected`). Filed for the maintainer (STATUS's "Decisions
+  worth another look"), not acted on in 33.7.
 - **The query run read its rows and passed its `--memory`.** Taken at
   `4cb97fd4` (`runs/p33.7-query-hand-run-20261117-0320/`, `run.sh`, each
   run's `.csv` and `.err`): `pgdt sql`'s `SELECT count(*) AS n,
