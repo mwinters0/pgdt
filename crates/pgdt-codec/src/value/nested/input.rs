@@ -37,6 +37,7 @@ mod range;
 mod record;
 
 pub(crate) use array::ArrayWalk;
+pub(super) use array::MAXDIM;
 pub(crate) use int2vector::Int2VectorWalk;
 pub(crate) use range::{MultirangeMark, MultirangeWalk, RangeMark, RangeWalk};
 pub(crate) use record::RecordWalk;

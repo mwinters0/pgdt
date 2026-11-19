@@ -14,7 +14,7 @@ use std::borrow::Cow;
 
 use pgdt_core::internal::{Unescaped, unescaped};
 
-use super::{ARRAY, RANGE_BOUND, RECORD, Syntax, canonical_int2, scan_token};
+use super::{ARRAY, MAXDIM, RANGE_BOUND, RECORD, Syntax, canonical_int2, scan_token};
 
 /// **A nested field's text as the walk reads it**: a byte at a time with
 /// one looked ahead, over a text in place, or over a field as `COPY` wrote
@@ -220,19 +220,15 @@ impl ArrayWalk {
         }
     }
 
-    // deficiency: KD175 — this recursion, and `ArrayScan::braces`'s beside
-    // `decode_array`, descend once per `{` with no `MAXDIM` bound, where the
-    // input walk refuses past it (I25), so a brace run longer than the stack
-    // holds frames aborts the process instead of answering `None`. Only a
-    // file no `pg_dump` wrote holds one. Bounding the depth at `MAXDIM`, as
-    // the input side does, closes it.
+    /// The list opening here, `depth` levels down; `None` past `MAXDIM`
+    /// levels, as `ArrayScan::braces` refuses them.
     fn braces(
         &mut self,
         text: &mut FieldText<'_>,
         depth: usize,
         element: &mut impl FnMut(Option<&str>) -> Option<()>,
     ) -> Option<()> {
-        if !text.eat(b'{') {
+        if depth >= MAXDIM || !text.eat(b'{') {
             return None;
         }
         if text.eat(b'}') {

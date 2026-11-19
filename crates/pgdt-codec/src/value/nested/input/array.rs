@@ -3,11 +3,12 @@
 use crate::value::nested::is_space;
 use crate::value::source::{Parts, Refused, Walked, Word};
 
-/// PostgreSQL's `MAXDIM`: the most dimensions an array value may have.
+/// PostgreSQL's `MAXDIM`: the most dimensions an array value may have, which
+/// the output walks bound their brace depth by too.
 /// `pgdt_model::PG_ARRAY_MAX_DIMS` is the same number for the shape census;
 /// it is a `u8` there and this is an index bound, and neither module is worth
 /// a dependency edge on the other for one constant.
-pub(super) const MAXDIM: usize = 6;
+pub(in crate::value::nested) const MAXDIM: usize = 6;
 
 /// An `array_in` literal's shape: one entry per dimension in each, both
 /// empty for the zero-dimensional empty array.

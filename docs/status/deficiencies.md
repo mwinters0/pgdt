@@ -611,11 +611,6 @@ than reading as a phase nobody has sliced.
   landing or a phase taking up `pgdt sql`'s resident. Detail:
   `crates/pgdt-query/src/stream/replay.rs`.
 
-- **KD175** — a typed read of an array field recurses once per opening brace,
-  bounded by no `MAXDIM`, so a brace run thousands long — which no `pg_dump`
-  writes — overflows the stack rather than failing the field. **(b) owned by
-  `M288`**. Detail: `crates/pgdt-codec/src/value/nested/output/walk.rs`.
-
 - **KD176** — a query's factor leaves out three keys a term builds whole: a
   membership's lookup over a `jsonb`, multirange or nested column, a range's
   bound over `jsonb` or an array, and a nested term's escaped text leaf, so a

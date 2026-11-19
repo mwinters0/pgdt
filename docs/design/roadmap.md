@@ -1394,8 +1394,9 @@ which is what makes the difference worth minding at the moment one is found.
   output — hand-edited, concatenated, or damaged. The census records it and
   resolution deliberately declines to treat it as evidence, so the column keeps
   its optimistic type and the row surfaces when something reads it, as an
-  ordinary `Error::FieldDecode` short of the stack's depth (`KD175`). Nothing reports it at *scan* time, so a file nobody
-  queries that column of stays silently damaged. The file-level `Diagnostic`
+  ordinary `Error::FieldDecode`, the decoder reading no deeper than `MAXDIM`.
+  Nothing reports it at *scan* time, so a file nobody queries that column of
+  stays silently damaged. The file-level `Diagnostic`
   channel is where this belongs; it is unscheduled because no fixture produces
   the shape.
 

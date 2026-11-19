@@ -152,6 +152,24 @@ fn ragged_and_mixed_depth_arrays_are_rejected_rather_than_guessed_at() {
 }
 
 #[test]
+fn a_brace_run_past_maxdim_is_refused_by_decode_and_walk_alike() {
+    let nested = |levels: usize| format!("{}1{}", "{".repeat(levels), "}".repeat(levels));
+    let walked = |text: &str| walk::walk_array(&mut walk::FieldText::plain(text), |_| Some(()));
+
+    // A run no stack holds a frame a brace for fails the field, not the process.
+    let run = "{".repeat(100_000);
+    assert!(decode_array(&run).is_none());
+    assert!(walked(&run).is_none());
+
+    let six = nested(MAXDIM);
+    assert_eq!(decode_array(&six).unwrap().dims, vec![1; MAXDIM]);
+    assert_eq!(walked(&six).unwrap().dims, vec![1; MAXDIM]);
+    let seven = nested(MAXDIM + 1);
+    assert!(decode_array(&seven).is_none());
+    assert!(walked(&seven).is_none());
+}
+
+#[test]
 fn records_double_their_quotes_and_spell_null_as_nothing() {
     for (literal, fields) in [
         (r#"(1,"a,b""c")"#, vec![some("1"), some(r#"a,b"c"#)]),

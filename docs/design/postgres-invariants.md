@@ -1432,7 +1432,8 @@ PostgreSQL 16 instance.
 **Relied on by:** `decisions.md`, "D35" — it is why
 `pgdt_model`'s `ArrayShape::observe` can read a value's dimensionality off the
 raw, still-COPY-escaped field with no array parser at all, and why `{}`
-constrains neither bound.
+constrains neither bound. The fourth is why `decode_array` and `walk_array`
+refuse a brace run past `MAXDIM` rather than read it.
 
 **Re-verify:**
 

@@ -55,6 +55,7 @@
 
 use std::borrow::Cow;
 
+use super::input::MAXDIM;
 use super::{ArrayLiteral, Elements, RangeLiteral, RecordLiteral, is_space};
 
 /// How a quoted token escapes an embedded `"`. Both conventions escape an
@@ -328,8 +329,10 @@ impl<'a> ArrayScan<'a> {
         }
     }
 
+    /// The list opening at `i`, `depth` levels down, and the index past it;
+    /// `None` past `MAXDIM` levels, which `array_out` never writes (I25).
     fn braces(&mut self, mut i: usize, depth: usize) -> Option<usize> {
-        if self.s.get(i) != Some(&b'{') {
+        if depth >= MAXDIM || self.s.get(i) != Some(&b'{') {
             return None;
         }
         i += 1;
