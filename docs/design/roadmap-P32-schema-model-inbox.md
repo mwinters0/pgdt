@@ -120,3 +120,28 @@ asserted against them without a new schema.
 
 **Origin.** The register's gate, 2026-10-02. *Contingent on* the `emitters` schema keeping
 those objects.
+
+---
+
+## The fold encodes "state when the data loads" by a guard on each arm
+
+**Fact.** Every arm of `dump_metadata_from_spans` carries
+`if !current.preamble_complete` (`crates/pgdt-dump/src/ddl/metadata.rs`), so
+a post-data `ADD CONSTRAINT … CHECK` is parsed into a span and then dropped.
+That is right today, since `TableDef::checks` is documented as "before its
+data". `SpanBody` is also three things in one persisted enum: tiling kinds,
+structure markers (`Connect`, `VersionHeader`) and a statement IR. Within the
+IR, `AlterTableReference { table, reference }` scales: a new form is a
+`TableReference` variant and a handful of sites. The three top-level
+`ALTER TYPE` variants (`AlterTypeAddValue`, `AlterTypeDropAttribute`,
+`EnumLabelsUnread`) do not. A new form there is more sites, plus a `classify`
+arm that must sit before a catch-all.
+
+**Why P32 cares.** The model at the end of the file needs the cut-off to be a
+parameter of the fold, not a guard repeated on each arm. Folding the
+`ALTER TYPE` variants into one `AlterType { type_name, change }`, shaped as
+`AlterTableReference` is, gives this phase one pattern for every `ALTER` form
+it adds. That is a cache-format change.
+
+**Origin.** An architecture review at `ec20c8fd`, 2026-11-20. *Contingent on*
+`crates/pgdt-dump/src/ddl/metadata.rs` and `crates/pgdt-model/src/span.rs`.

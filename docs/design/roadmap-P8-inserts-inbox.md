@@ -145,3 +145,27 @@ no `on_copy_end`, and what it names the statement by — `FieldRefused`'s
 statements has no counterpart of — is this phase's to decide.
 
 **Origin.** The field refusal's landing, 2026-10-03. Contingent on the raise staying at the block's close.
+
+---
+
+## The row contracts are over `COPY`-escaped bytes, and a line is a row
+
+**Fact.** `BlockObserver::fold` takes a field "still escaped, a delimiter never
+among them" (`pgdt-model/src/statistics.rs`), and so does `FieldCount::tier`
+(`block.rs`). The unescape happens at the leaves, in at least five places:
+`ColumnGatherer::observe`, `FieldCheck::refused`, `Counter::tier`,
+`RecordedRows`, and the batcher through `RawRow`/`RowSplit`. In the codec,
+`FieldWalk` owns a `pgdt_core::Unescape` (`grammar/walk.rs`). `LongestLine`,
+`FieldRefusal::line` and the row groups' byte offsets all assume `line == row`.
+Both `nested_key` and `checked_key` take their input as `COPY` text.
+
+**Why P8 cares.** "A second row-source implementation feeding the same batch
+layer" forks. One branch transcodes each `INSERT` tuple to `COPY` text, which
+reuses everything downstream unchanged at the cost of a copy per row. The other
+gives the fold and `RawRow` an escape dialect, which needs no copy but teaches
+each leaf and each tab-splitting site a second dialect. D28 bears on the
+second branch: a second `push_field` site was refused because it defeats
+inlining. The grilling settles the fork, and `line == row` with it.
+
+**Origin.** An architecture review at `ec20c8fd`, 2026-11-20. *Contingent on*
+the leaves still unescaping.

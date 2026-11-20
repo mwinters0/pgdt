@@ -16,10 +16,11 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P17, P19, P20, P25, P27–P31, P33, P35, P36, P38 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
+| P43 — the block model: identity, address and record | Sketched; not grilled | this file, below — ahead of P8 and the archive phases, which each need a part of it |
 | P8 — `--inserts` and `--column-inserts` rows | Sketched; not grilled | this file, below; [inbox](roadmap-P8-inserts-inbox.md) |
 | P18 — zstd and lz4 input | Sketched; not grilled | this file, below; [inbox](roadmap-P18-zstd-inbox.md) — carved out of the gzip work |
 | P41 — archive formats: the shared model, and `--format=custom` | Sketched; not grilled | this file, below; [inbox](roadmap-P41-archive-formats-inbox.md) |
-| P42 — `--format=directory` and `--format=tar` | Sketched; not grilled | this file, below |
+| P42 — `--format=directory` and `--format=tar` | Sketched; not grilled | this file, below; [inbox](roadmap-P42-directory-tar-inbox.md) |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
 | P34 — macOS | Sketched; not grilled | this file, below; [inbox](roadmap-P34-macos-inbox.md) — the maintainer sets its order |
 | P37 — Parquet export as a Parquet-native writer leaves it | Sketched; not grilled | this file, below; [inbox](roadmap-P37-parquet-export-inbox.md) — the maintainer sets its order |
@@ -27,7 +28,9 @@ reused, including a struck phase's.
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below; [inbox](roadmap-P23-resident-reserve-inbox.md) |
 | P26 — statistics refused on their cost, reconsidered | Sketched; not grilled | this file, below |
+| P44 — one embedder protocol, in the library | Sketched; not grilled | this file, below — before P24, whose grilling settles the surface it moves |
 | P24 — Python bindings | Sketched; not grilled | this file, below; [inbox](roadmap-P24-python-inbox.md) |
+| P45 — one resolved PostgreSQL type | Sketched; not grilled | this file, below — before P39, which reads a type with no Arrow |
 | P39 — PostgreSQL as a front end | Sketched; not grilled | this file, below; [inbox](roadmap-P39-postgres-extension-inbox.md) |
 | P40 — every reader streams | Sketched; not grilled | this file, below; [inbox](roadmap-P40-every-reader-streams-inbox.md) — the maintainer sets its order |
 
@@ -49,7 +52,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P42`** — nothing at or below it
+centering"). **Phase numbering continues from `P45`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -725,6 +728,67 @@ and "I/O, memory and parallelism").
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
 
+## P43 — The block model: identity, address and record
+
+**A block of rows has an identity, an address and a record, and one struct is
+all three.** `CopyBlock` (`crates/pgdt-model/src/span.rs`) holds plain
+format's address — the header and four absolute offsets — beside what any
+block of rows has recorded of it: its row count, partition root, statistics and
+their decline, ignored refusals, `checked_in_full`, census, recorded rows and
+longest line. Its `header_offset` is the block's identity everywhere above the
+model: the replay plan's maps, `EarlyStop`, the back-fill's `loaded` set,
+`Error::CachedBlockChanged`. `InsertRun` beside it holds a table and a count,
+and none of the record. Sketched to corner-avoidance depth, and scheduled ahead
+of P8 and the archive phases because each needs one part separated from the
+others:
+
+- **P8** needs an `INSERT` run carrying a census, statistics and a longest
+  line, without which it cannot be typed, pruned or carved for.
+- **P41** needs an address that is not a file offset, since an archive entry's
+  `COPY` statement is a TOC field and has no header offset.
+- **P42** needs an address that names a file.
+- **P21** needs to write a record for a block it reads through the replay.
+
+The candidate shape has three parts. An opaque `BlockId`, ordered in dump order,
+keys every map above the model. A `BlockAddress` is today's header and
+offsets, later an enum with an entry arm. A `BlockRecord` is shared by `Arc`
+as statistics already are (D34) and held by an `INSERT` run too. The replay
+then takes an address and an id and clones no record. Today `Segment::new`,
+`TablePartitions::new` and `Table::read` under `Inheritance::Only` each clone a
+whole block and strip its statistics. Row groups and `FieldRefusal::offset` are
+block-relative, so they are entry-relative already.
+
+**Recording a block's rows is the second half.** Feeding a row to the census,
+then to the observer, and closing the block into its record is hosted three
+times: by `map::Builder`, by an interior piece and by the back-fill's re-read.
+The close is written in both `map.rs` and `backfill.rs`, and the mapping crate
+opens a block three ways (`forward.rs`, `whole_file.rs`'s eager pass, the
+back-fill). P8 adds a fourth host, and P41 has no line machine to host one. So
+the shape to grill is one recorder that owns the census, the observer and the
+streamed fold, is fed rows, and finishes into the record, which the builder
+takes at the block's end. `build_index` and `build_map` (`whole_file.rs`) are
+public, are called only by tests, and carry an open sequence of their own. They
+take the shared one or move behind the fixtures crate's `mapping` feature.
+
+What it inherits:
+
+- **The row path is the hot path, and its shape is priced.** A recorder is a
+  concrete type, fed the calls the hosts make today in the same order, and
+  priced by `--count-pair` (D108). If the pair resolves a rise that rework
+  cannot remove, the hosts stay, with that reason written beside them. The
+  evidence comes first. Whether a data-level parse splits a row twice, once in
+  `BlockCensus::observe_row` and again in the observer's default
+  `observe_row`, has not been read. D28's single split covers the query path
+  alone, and one profile of a data-level parse answers it.
+- **A cache-format bump**, one for the phase (`bump-cache-format`).
+- **Whether `pgdt-model` separates what it persists from what it derives**
+  (`diagnostic.rs` is never persisted, `timescaledb/recipe.rs` is logic), so
+  that a file's path answers whether an edit to it bumps the format.
+
+It is behaviour-preserving apart from the bump ("Refactor when the shape stops
+fitting"). It survives P8, P41, P42 and P21, and each starts from its part
+instead of carving it out.
+
 ## P8 — `--inserts` and `--column-inserts` rows
 
 **Inbox:** [`roadmap-P8-inserts-inbox.md`](roadmap-P8-inserts-inbox.md) — facts earlier
@@ -736,7 +800,8 @@ it fills in via the fixture tooling. A second row-source implementation feeding
 the same batch layer, and its target is **already located and attributed** —
 `InsertRun::table` and `row_count` come out of the map, so this phase adds
 parsing, not scanning. The scan it extends, `map::statement::StatementScan`,
-holds `KD9`'s three untaken cuts.
+holds `KD9`'s three untaken cuts. A run's record is P43's `BlockRecord`,
+which this phase fills rather than designs.
 
 **Not CSV-format `COPY` blocks** — see "Permanent non-goals" above. This phase
 is `--inserts`, and nothing else that once sat beside it.
@@ -822,7 +887,7 @@ P42 adapts directory and tar to it. The shared model is most of the cost:
   I2's partition-root marker read from the entry.
 - **Entry-relative addressing.** A raw file offset is not a resumable position
   inside a compressed stream, so `ResumeToken` stays opaque and the cache gains
-  an entry-relative addressing mode.
+  an entry-relative addressing mode: an entry arm of P43's `BlockAddress`.
 - **Parallelism by entry**, a compressed entry not being split across readers.
 - **Per-entry decompression.** An archive compresses internally, so the layer
   decompresses an entry rather than a file, and there is no whole-file byte
@@ -842,6 +907,8 @@ model against all three formats**, so that P42 inherits it rather than
 reopening it.
 
 ## P42 — `--format=directory` and `--format=tar`
+
+**Inbox:** [`roadmap-P42-directory-tar-inbox.md`](roadmap-P42-directory-tar-inbox.md) — facts earlier phases filed for this one. Drain it when grilling this phase.
 
 Adapters over P41's model; neither needs a new decoder. A directory entry,
 `<dumpId>.dat` with `.gz`, `.lz4` or `.zst` after it, is a standalone
@@ -1093,6 +1160,61 @@ corner-avoidance depth. What it starts from:
   clipped head in place of a key for a bytewise value is one — swept from
   `decisions.md` when this phase is grilled.
 
+## P44 — One embedder protocol, in the library
+
+**The library exposes the right facts, but each front end writes its own
+sequence for using them**, so P24 and P39 would make four copies. Sketched to
+corner-avoidance depth. It runs before P24, whose grilling settles the
+embedder surface both bindings stand on. It runs after the archive phases, so
+the open it moves covers their sources. What is written twice today:
+
+- **Planning is three calls that nothing ties together.** Each front end calls
+  `Table::line_charge(read, &options)`, resolves an `Arrangement` with the
+  answer, then calls `Table::plan(read, options, &arrangement)`
+  (`crates/pgdt/src/query.rs`, `crates/datafusion-pgdump/src/table.rs`).
+  Nothing binds the first call's options to the third's, and leaving out the
+  first still compiles. The sequence also repeats work. `line_charge` and
+  `plan` each run `plan_table` and `prune_blocks`, `held_line` prunes a third
+  time under an allowance, and `schema`, `summary` and `divergences` each plan
+  again. The candidate is a planned-query value that answers all of these from
+  one resolution and is finished into `TablePartitions` by an arrangement.
+  That makes D160's order a type rather than a convention.
+- **Opening a complete cache, or refusing.** `Dump::opened`'s `MapIncomplete`
+  drops the cache's path and whether the cache was missing or short. So
+  `PgDump::open` matches `Held` itself first to word its refusal
+  (`crates/datafusion-pgdump/src/dump.rs`), and then `Dump::opened` matches it
+  again. P39 reads a complete cache as the provider does (D90), so it would
+  copy this.
+- **The session budget.** `ScanBudget`'s hold, draw and account name only
+  `pgdt_io`; only `of`, `pool_limit` and `session_budget` read DataFusion
+  (`crates/datafusion-pgdump/src/budget.rs`). Any embedder that runs two
+  scans in one process needs the rest of it.
+- **A knob has a value type but no name.** Each mode enum owns `ALL`,
+  `Display` and `FromStr`. The knob's name is spelled by hand on each surface
+  (flag, struct field, `pgdump.` key, `--source` suffix, remedy text), and the
+  spellings have drifted. `:strings` is the only bare suffix. `use_statistics`
+  has no SQL setting. A zero chunk size is refused in two different wordings
+  and accepted by `ReadOptions::with_chunk_size`. A library-side name per knob
+  is narrower than the `Remedy` D107 rejects, and does not reopen it.
+- **The note channels' adapters.** There are six channels, deliberately
+  (D59). The provider adapts them to a `DiagnosticSink` through three wrappers
+  in `report.rs`, and `pgdt` uses five `announce_*` functions. These adapters
+  are what a third embedder would copy.
+
+What it must also decide:
+
+- **Who owns the runtime.** The opens, `Table::settle` and `map_file` are
+  `async`, and two signatures take a `tokio_util` `CancellationToken`. The
+  only synchronous offering, `BlockingTableIter`, builds a runtime per
+  iterator, covers the stream but not the open, and has one test as its only
+  user. A `pgrx` backend is one thread, and `pyo3` needs an answer too. P24's
+  inbox holds cancellation and lifetimes, but not this.
+- **What the embedder test pins.** It defines the 1.0 surface ("Pre-1.0: no
+  compatibility obligations"), yet it touches no `Table::settle`,
+  `TablePartitions::under`, note channel, `divergences` or non-default mode.
+  Setting a mode names `pgdt_codec` and `pgdt_model` types that `pgdt_query`
+  does not re-export, so an embedder doing so names six crates.
+
 ## P24 — Python bindings
 
 Python bindings over the library, likely through `pyo3`, as a new workspace
@@ -1100,6 +1222,48 @@ member, sketched to corner-avoidance depth: the surface the library presents
 an embedder, which `datafusion-pgdump` is the first to use, is what this phase
 presents, and what concerns Python alone is in [its
 inbox](roadmap-P24-python-inbox.md).
+
+## P45 — One resolved PostgreSQL type
+
+**A declared type is resolved into parallel projections, and each consumer
+dispatches on a different one.** Decode and render dispatch on
+`(NestedPlan, DataType)`, order keys on `CompareKind`, and the strict parse on
+`ComparisonPlan` or else a text grammar. The unrepresentable test dispatches
+on a private `Leaf` recovered from the Arrow type (`unrepresentable.rs`,
+`Leaf::of`), which falls to `Leaf::Held` for any type it does not list. Six
+walks re-read the declared string — `resolve_walk`, `comparison_walk`,
+`extension_for`, `text_grammar`, `unread`/`domains_beneath`,
+`domain_not_null`/`typdelim` — and comments keep them in step. Adding a scalar
+type touches a match arm in each consumer. Sketched to corner-avoidance depth.
+
+**Why it is a phase, and why it comes before P39.** The Future item
+"caller-supplied type mapping" breaks "the Arrow type implies the PostgreSQL
+type" at the batch builder and at `Leaf::of`. P39 wants a column's type and
+its comparison with no Arrow at all. Today the only place that joins column,
+DDL and comparison is `resolve_columns`, which always builds an Arrow schema.
+The candidate is one walk producing one resolved type, from which the Arrow
+type, the comparison plan, the literal form and the strict grammar are each
+read. `CompareKind` is most of that value already.
+
+What it inherits:
+
+- **D40 and D43 rule on the projections, not on a value both are read from.**
+  D40 fuses `builtin_scalar`'s two answers, and D43 refuses widening its tuple.
+  The grilling reads both before choosing a shape.
+- **The row path stays a closed-enum match**, with no dynamic dispatch added,
+  and `field_key`, the slice reader the batch and the order key read with
+  (P40), keeps a monomorphic entry. Scalar keying has six entry points for two
+  real parameters (`order_key`, `field_key`, `read_key`, `literal_key`,
+  `special_order_key`, `ValueKey`), and only `nested_key` takes a `Side`. They
+  are collapsed only as far as `--count-pair` allows (D108).
+- **Three codec duplications it removes.** `json` is identified by
+  `ComparisonDivergence::AsText` at six sites, so a second type given that
+  divergence would be strict-parsed as JSON. `nested_key`
+  (`value/nested/key.rs`) and `checked_key` (`grammar/walk.rs`) are one
+  recursion that differs only in error type and leaf call. And the names a
+  newcomer trips on: `ResolvedColumn::plan()` returns a `NestedPlan` with a
+  `Scalar` variant, three unrelated types are named `ArrayShape`, and
+  `ComparisonPlan::Nested(NestedCompare)` sits beside `NestedPlan`.
 
 ## P39 — PostgreSQL as a front end
 

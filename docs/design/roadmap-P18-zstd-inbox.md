@@ -199,3 +199,27 @@ arm exists at all.
 **Origin.** The remote-input work, 2026-09-20. *Contingent on* both `.xz`
 sources still sharing one budget value — see `crates/pgdt-io/src/source/compressed/blocks.rs` and
 ([`decisions.md`](decisions.md), "D15").
+
+---
+
+## The source over an open extent is gzip's alone, and sits outside `Codec`
+
+**Fact.** `Codec` (`source/compressed/codec.rs`) abstracts a complete, indexed
+file. The gzip first pass, `FirstPass` (`deflate/first_pass.rs`), is a third
+`ByteRangeSource` built directly on `pgdt_gzip_seek::Parallel`, and the openers
+match gzip by name. Its codec-neutral parts sit under `deflate/`: hint replay,
+the hand-over to the indexed source, the kept thread (D126) and the download.
+`FirstPass` forwards each trait method with an "if handed over, delegate" arm.
+An enum of the handed-over state and the running one, forwarded once, is the
+shell a second codec could share.
+
+**Why P18 cares.** The entry above says the shape to copy is "a codec
+implementing `Codec`". That holds for seekable zstd only. A streamed single
+frame, this phase's main case, is `Open` until a pass ends, and needs what
+`FirstPass` does. So the phase decides whether the codec-neutral shell is
+drawn out of `deflate/` or written a second time. Its serve loops do not merge:
+`run_pulled` and `run_fetched` are sync and async because the local pass keeps
+one blocking thread (D126) and the fetched arm is its own (D15).
+
+**Origin.** An architecture review at `ec20c8fd`, 2026-11-20. *Contingent on*
+`crates/pgdt-io/src/source/compressed/deflate/first_pass.rs`.

@@ -60,3 +60,45 @@ rather than rediscovering the trap.
 
 **Origin.** 2026-08-24. See I2 in
 [`postgres-invariants.md`](postgres-invariants.md).
+
+---
+
+## A custom-format entry is zlib-framed, not gzip
+
+**Fact.** The custom format writes an entry through `pg_dump`'s compressor API,
+`AllocateCompressor` (`pg_backup_custom.c`), whose gzip arm calls
+`deflateInit` (`compress_gzip.c:77`, 16.15). That is a zlib stream: a 2-byte
+header and an Adler-32 trailer. The directory format's file API calls `gzopen`
+and writes RFC 1952 members. `pgdt-gzip-seek` reads RFC 1952 members and
+checks CRC-32 throughout. An entry's data ends with its own `\.` line
+(`pg_dump.c`), so `CopyScanner` reads an entry's bytes unchanged.
+
+**Why P41 cares.** "Gzip's decoder exists" holds for the inflater, not for
+the framing or the checks, so the per-entry decompression this phase designs
+needs a zlib arm. P42's directory entries are gzip files.
+
+**Origin.** An architecture review at `ec20c8fd`, 2026-11-20, checked against
+`/mnt/wd12t/upstream/postgres` at `release-v16.15`.
+
+---
+
+## One linear plaintext address space per source, assumed past the cache
+
+**Fact.** `read_range(offset)`, a source's one `extent()`,
+`PartitionBoundaries::At(Vec<u64>)` and the ledger's ordering of lines by file
+position (`ledger.rs`) all assume each source has one linear plaintext address
+space. `dump_metadata_from_spans` learns a dump's database and versions only
+from `Connect` and `VersionHeader` spans, where an archive states both in its
+header. `ByteRangeSource` has many defaulted methods, and the two wrappers
+forward them by hand, so a forward that is forgotten compiles and takes the
+default. No forward is missing today.
+
+**Why P41 cares.** The sketch names entry-relative addressing for the cache
+and `ResumeToken`, but not partition advice or the ledger's file order. Both
+carry the same assumption. A TOC-built index either synthesizes the two span
+kinds or gives the metadata a second way in. The archive layer adds wrappers,
+for which a forwarding macro or a test enumerating the trait's methods is
+cheap insurance.
+
+**Origin.** An architecture review at `ec20c8fd`, 2026-11-20. *Contingent on*
+`crates/pgdt-io/src/source.rs` and `crates/pgdt-dump/src/ddl/metadata.rs`.

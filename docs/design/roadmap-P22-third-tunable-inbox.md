@@ -80,3 +80,20 @@ decision's cost rather than a follow-up to it.
 it raised under STATUS's "Decisions worth another look";
 [`../status/history/2026-09-19.md`](../status/history/2026-09-19.md).
 *Contingent on* `KD32` standing.
+
+---
+
+## The carve's cap and margin ceiling are each derived in several places
+
+**Fact.** The carve arithmetic is spread across `parallelism.rs`,
+`arrangement.rs` and `memory.rs` in `pgdt-io`, and the cap and the margin
+ceiling are each derived in two or three places (`parallelism.rs`, and twice
+in `arrangement.rs`). `Parallelism::within_shared` and `fit` have no caller
+outside `arrangement.rs`.
+
+**Why P22 cares.** This phase rewrites what that number fans out into. Each
+copy of a derivation is a site the change must find, so gathering them is
+part of the change.
+
+**Origin.** An architecture review at `ec20c8fd`, 2026-11-20. *Contingent on*
+`crates/pgdt-io/src/parallelism.rs` and `arrangement.rs`.
