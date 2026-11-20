@@ -7,8 +7,8 @@
 pub(crate) mod grammar;
 
 use self::grammar::{
-    DateTimeInput, INTERVAL_WORKBUF, MAXDATEFIELDS, datetime_reads, interval_reads,
-    parse_date_time_splits,
+    DateTimeInput, END_TIMESTAMP, INTERVAL_WORKBUF, MAXDATEFIELDS, MIN_TIMESTAMP, datetime_reads,
+    interval_reads, parse_date_time_splits,
 };
 use crate::declared::IntervalQualifier;
 use crate::decode::{Read, Unread};
@@ -438,14 +438,6 @@ pub(crate) fn timestamp_micros_wide(s: &str, with_tz: bool) -> Read<i128> {
     within_workbuf(s, input.workbuf())?;
     Ok(utc)
 }
-
-/// `MIN_TIMESTAMP`, `4714-11-24 00:00:00 BC`, the first instant a timestamp
-/// holds, in microseconds from PostgreSQL's epoch (I49).
-const MIN_TIMESTAMP: i64 = -211_813_488_000_000_000;
-
-/// `END_TIMESTAMP`, `294277-01-01 00:00:00`, the first instant past a
-/// timestamp's range, in microseconds from PostgreSQL's epoch (I49).
-const END_TIMESTAMP: i64 = 9_223_371_331_200_000_000;
 
 /// Whether `unix_micros` from the 1970 UTC epoch is an instant a timestamp
 /// holds, `IS_VALID_TIMESTAMP`'s range: what [`timestamp_micros_wide`] reads

@@ -163,12 +163,15 @@ impl Pass {
         }
         let index = self.index();
         let checkpoints = index.checkpoints();
-        let at = checkpoints.partition_point(|c| c.plaintext <= offset).saturating_sub(1);
+        // Behind the frontier, an offset no closed unit holds is in the open
+        // one, which the last checkpoint begins.
+        let unit = index.unit_at(offset);
+        let closed = unit.is_some();
+        let at = unit.unwrap_or(checkpoints.len() - 1);
         let begins = checkpoints[at].plaintext;
         // Continuing is never dearer than restarting where the kept decode
         // stands between the checkpoint and the offset, and is the same check
         // where the unit it stands in is what it was begun as.
-        let closed = index.unit(at).is_some();
         if self.behind.as_ref().is_some_and(|decode| {
             let position = decode.decode.position();
             position <= offset && position >= begins && decode.decode.serves_in(closed)

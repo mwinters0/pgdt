@@ -179,8 +179,13 @@ const USECS_PER_HOUR: i64 = 60 * USECS_PER_MINUTE;
 const USECS_PER_DAY: i64 = 24 * USECS_PER_HOUR;
 const POSTGRES_EPOCH_JDATE: i32 = 2_451_545;
 const DATE_END_JULIAN: i32 = 2_147_483_494;
-const MIN_TIMESTAMP: i64 = -211_813_488_000_000_000;
-const END_TIMESTAMP: i64 = 9_223_371_331_200_000_000;
+/// `MIN_TIMESTAMP`, `4714-11-24 00:00:00 BC`, the first instant a timestamp
+/// holds, in microseconds from PostgreSQL's epoch (I49).
+pub(super) const MIN_TIMESTAMP: i64 = -211_813_488_000_000_000;
+
+/// `END_TIMESTAMP`, `294277-01-01 00:00:00`, the first instant past a
+/// timestamp's range, in microseconds from PostgreSQL's epoch (I49).
+pub(super) const END_TIMESTAMP: i64 = 9_223_371_331_200_000_000;
 
 /// How far a zone the text does not fix may move a timestamp: a POSIX zone
 /// spec reads an offset of up to 167 hours (`tzparse`'s `getsecs`).
