@@ -329,6 +329,92 @@ async fn a_kept_forward_decode_is_left_once_its_unit_closes() {
     }
 }
 
+/// `path` read through a transport that, once told to, never answers its
+/// next fetch, saying when that fetch has been asked for.
+struct Stalling {
+    inner: LocalFileSource,
+    stall: Mutex<bool>,
+    stalled: tokio::sync::Notify,
+}
+
+impl Stalling {
+    fn over(path: &std::path::Path) -> Arc<Stalling> {
+        let inner = LocalFileSource::open(path).unwrap();
+        Arc::new(Stalling { inner, stall: Mutex::new(false), stalled: tokio::sync::Notify::new() })
+    }
+
+    /// Drop `run` once it has asked for a fetch, which never answers.
+    async fn drop_mid_fetch<T>(&self, run: impl Future<Output = T>) {
+        *self.stall.lock().unwrap() = true;
+        tokio::select! {
+            _ = run => panic!("the run finished without fetching"),
+            () = self.stalled.notified() => {}
+        }
+    }
+}
+
+impl ByteRangeSource for Stalling {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
+        if std::mem::take(&mut *self.stall.lock().unwrap()) {
+            self.stalled.notify_one();
+            return Box::pin(std::future::pending());
+        }
+        self.inner.read_range(offset, len)
+    }
+
+    fn extent(&self) -> Pin<Box<dyn Future<Output = Result<Extent>> + Send + '_>> {
+        self.inner.extent()
+    }
+
+    fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
+        self.inner.modified()
+    }
+}
+
+/// **A read the kept decode continues is served from it, whatever was left
+/// marked by a run dropped while it fetched**: on the fetched feed, a read
+/// behind the frontier dropped at its first fetch keeps a closed unit's
+/// decode with nothing fed it; a read in the open unit, or the reads
+/// completing, dropped while that decode fetched to be drained, leaves it
+/// marked to be left; and a read the kept decode continues to answers the
+/// payload's bytes there, its unit's check passing as the reads complete.
+#[tokio::test]
+async fn a_read_continuing_the_kept_decode_ignores_a_dropped_runs_leaving() {
+    let payload = gzip_test_payload();
+    let (compressed, _) = gzip_indexed(&payload, SPACING.get());
+    let stored = std::fs::metadata(compressed.path()).unwrap().len();
+    for dropped in ["a read elsewhere", "the reads completing"] {
+        let raw = Stalling::over(compressed.path());
+        let pass = FirstPass::spaced(
+            named(compressed.path()),
+            Feed::Fetched(Arc::clone(&raw) as Arc<dyn ByteRangeSource>),
+            stored,
+            SPACING,
+            &std::env::temp_dir(),
+        )
+        .unwrap();
+        pass.read_range(0, payload.len() * 2 / 3).await.unwrap();
+        let units: Vec<_> = gzip_index_of(&pass).unit_ranges().collect();
+        assert!(units.len() >= 2, "{units:?}");
+        let (kept, open) = (units[1].clone(), units.last().unwrap().end);
+
+        raw.drop_mid_fetch(pass.read_range(kept.start + 5, 10)).await;
+        match dropped {
+            "a read elsewhere" => raw.drop_mid_fetch(pass.read_range(open + 5, 10)).await,
+            _ => raw.drop_mid_fetch(pass.complete_reads()).await,
+        }
+
+        let from = kept.start as usize + 5;
+        let read = pass.read_range(from as u64, 100).await.unwrap();
+        assert_eq!(&read[..], &payload[from..from + 100], "after {dropped}");
+        pass.complete_reads().await.unwrap();
+    }
+}
+
 /// A unit decode's refusal of a unit whose plaintext does not match the
 /// CRC-32 its index recorded.
 fn is_unit_check(error: &Error) -> bool {

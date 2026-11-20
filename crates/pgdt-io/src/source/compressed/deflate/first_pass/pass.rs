@@ -151,17 +151,12 @@ impl Pass {
     /// byte a closed unit hands out is compared against the CRC-32 it
     /// recorded.
     ///
-    /// deficiency: KD179 — the continuing arm leaves `leaving` as it found
-    /// it, and `leaving` is cleared only once [`Self::serve_behind`] has
-    /// drained the kept decode. A fetched read handed `Served::Needs` mid-drain
-    /// awaits `raw.read_range` (`FirstPass`'s fetched arm) with the mark still
-    /// set; dropped there, or failing there, it leaves `Leaving::For(at)`
-    /// behind. The next read the kept decode can continue drains it past its
-    /// own offset, begins the decode at `at`'s checkpoint, and is filled from
-    /// that unit, `Inflating::fill`
-    /// skipping only forward — bytes that pass the unit's CRC-32. A stale
-    /// `Leaving::Done` likewise answers the next read `Served::Full` with
-    /// nothing filled. The fix is the continuing arm clearing the mark.
+    /// A read continuing the kept decode clears any mark to leave it: one
+    /// left by a read, or by the run's reads completing, that was dropped or
+    /// failed while it fetched for the drain is owed nothing now, and acting
+    /// on it would hand this read a later unit's bytes, or none. The kept
+    /// decode's check is still compared when it is next left or reaches its
+    /// unit's end.
     pub(super) fn route(&mut self, offset: u64) -> Result<Route> {
         if offset >= self.frontier_position()? {
             return Ok(Route::Frontier);
@@ -178,6 +173,7 @@ impl Pass {
             let position = decode.decode.position();
             position <= offset && position >= begins && decode.decode.serves_in(closed)
         }) {
+            self.leaving = None;
             return Ok(Route::Behind);
         }
         self.leaving = Some(Leaving::For(at));

@@ -576,13 +576,6 @@ than reading as a phase nobody has sliced.
   and no later run attaches the text. **(c) unowned**; promoted by such a map
   reaching a user. Detail: `crates/pgdt-mapping/src/forward.rs`.
 
-- **KD179** — a fetched gzip first pass whose read behind the frontier is
-  dropped or fails while it fetches keeps the decode it was leaving marked to
-  be left, and a later read continuing the kept decode then decodes past its
-  offset and is handed a later unit's bytes, which pass that unit's check.
-  **(b) owned by `M298`**. Detail:
-  `crates/pgdt-io/src/source/compressed/deflate/first_pass/pass.rs`.
-
 - **KD180** — under `standard_conforming_strings = off` an enum label holding
   a backslash is read with the backslash `pg_dump` doubled, the enum still
   exact, so a field holding the label is refused as undeclared. **(c)
