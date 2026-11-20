@@ -294,9 +294,8 @@ fn scan_token<'a>(
         return Some((None, i));
     }
     // An unquoted token that *would* have been quoted is not something the
-    // matching `*_out` function wrote, so accepting it would break the
-    // property this module promises: that render inverts decode on whatever
-    // `*_out` writes.
+    // matching `*_out` function wrote, so it is rejected rather than guessed
+    // at, as the module doc's other `*_in`-only spellings are.
     if needs_quote(text, syntax) {
         return None;
     }

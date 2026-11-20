@@ -621,7 +621,7 @@ through a real `COPY` block. `pg_dump` writes the completed `mybase` body's
 parameters in its own order — `INTERNALLENGTH` first, then
 `INPUT`/`OUTPUT`/`ALIGNMENT`/`STORAGE`.
 
-**Consequence for `crate::ddl` / `crate::pgtype`.** One name is declared
+**Consequence for `pgdt_dump::ddl` / `pgdt_codec::pgtype`.** One name is declared
 twice, so `record_type` keeps one `TypeDef` per name: a definition replaces the
 entry in place and a `Shell` never replaces one, and `resolve_user_type` finds
 the completed base type rather than its shell.
@@ -671,9 +671,10 @@ BLOBS data item for the group, too") large objects are split into groups, each
 group with its own `BLOBS` entry — a fixture with two large objects exercises
 only one group, so this evidence does not pin down the grouping threshold,
 only that v17+ is not always exactly one.
-`StartRestoreLOs()`/`EndRestoreLOs()` (`pg_backup_archiver.c`) emit the
-`BEGIN;`/`COMMIT;` wrapper (one per data entry, whatever it covers) when not
-restoring to a live connection; `_StartLO()` emits the `lo_open(...)` line,
+`_StartLOs()`/`_EndLOs()` (`pg_backup_null.c`, the plain format's archiver;
+`_StartBlobs()`/`_EndBlobs()` before v16) emit the `BEGIN;`/`COMMIT;` wrapper
+(one per data entry, whatever it covers) — `pg_backup_archiver.c`'s
+`StartRestoreLOs()` writes its own only for `pg_restore`; `_StartLO()` emits the `lo_open(...)` line,
 and `dump_lo_buf()`'s no-connection branch emits each chunk through
 `appendByteaLiteralAHX()` as `SELECT pg_catalog.lowrite(0, %s);`.
 
@@ -682,7 +683,7 @@ roughly doubles the on-disk size of the objects, so a dump of a
 large-object-heavy database can carry hundreds of gigabytes here. This is the
 one inter-`COPY` gap not bounded by schema size.
 
-**Consequence.** `StartRestoreLOs()`/`EndRestoreLOs()` are the *only* emitter
+**Consequence.** `_StartLOs()`/`_EndLOs()` are the *only* emitter
 of a bare `BEGIN;`/`COMMIT;` pair anywhere in plain `pg_dump` output
 (confirmed across the fixture set used to verify this entry), so
 `crate::scan::CopyScanner` recognizes `BEGIN;` as a large-object region opener
@@ -704,8 +705,8 @@ is recoverable from the TOC header alone on v17+
 entry; per-object spans are not built either way.
 
 **Verified against:** v13.23 through v18.6 source (`pg_dump_sort.c`
-priorities; `dumpLOs`/`BLOBS`/`BLOB METADATA` entries; `StartRestoreLOs`,
-`_StartLO`, `dump_lo_buf` in `pg_backup_archiver.c`) and
+priorities; `dumpLOs`/`BLOBS`/`BLOB METADATA` entries; `_StartLOs`, `_StartLO`
+in `pg_backup_null.c`; `dump_lo_buf` in `pg_backup_archiver.c`) and
 real fixture output on all 6 routine versions
 (`fixtures/<version>/objects/default.sql`) — koji has no large objects, so
 this is fixture-only.
@@ -1003,7 +1004,7 @@ I31 does not take the entry.
 `Schema:`/`Owner:` placeholder shapes and the `Tablespace:` suffix; v18.6
 fixture for `TOC_PREFIX_STATS` (PG18+ only, per `--statistics`'s own
 availability).
-**Relied on by:** `decisions.md` ("D31") — `map::toc::parse_toc_header_line` splits the
+**Relied on by:** `pgdt_dump`'s `map::toc::parse_toc_header_line`, which splits the
 line on these exact literal separators in this exact order.
 **Re-verify:**
 

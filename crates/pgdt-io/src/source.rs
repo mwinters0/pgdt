@@ -190,8 +190,9 @@ pub trait ByteRangeSource: Send + Sync {
     ///
     /// **It is a raw count, not a budgeted one**: what the byte budget affords
     /// is `worker_count`'s question, asked of every count
-    /// alike. [`LocalFileSource`](crate::LocalFileSource) inherits the default;
-    /// [`CompressedFileSource`](crate::CompressedFileSource) overrides it. See `docs/design/decisions.md`, "D1" and "D2".
+    /// alike. [`LocalFileSource`](crate::LocalFileSource) and the remote
+    /// source inherit the default; the compressed sources and a gzip first
+    /// pass override it. See `docs/design/decisions.md`, "D1" and "D2".
     fn default_workers(&self) -> usize {
         1
     }

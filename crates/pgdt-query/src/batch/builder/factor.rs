@@ -10,7 +10,8 @@
 //!   (`reserved_column_builder`): each repeated part's entry, at every depth,
 //!   over the fewest bytes the part is written in, its delimiter included,
 //!   and a text's or a `bytea`'s own bytes one for one — every buffer at its
-//!   own density, since each is reserved so, and so never grown by doubling;
+//!   own density, since each is reserved so, and so never grown by doubling
+//!   (a text's view blocks aside, `KD182`);
 //! - **what a part's append holds besides**, one part at a time: an escaped
 //!   field's token and its unquoted copy, and a `bytea` part's decoded bytes —
 //!   the most a tier test's walk holds too, reading the same parts before the
@@ -153,6 +154,14 @@ fn reserved(builder: &ColumnBuilder) -> Factor {
     match builder {
         // A text's bytes past its view are blocks of their own, never grown
         // by doubling; a `bytea`'s are reserved to its text's length.
+        //
+        // deficiency: KD182 — the blocks are Arrow's `StringViewBuilder`'s,
+        // built `with_capacity` and so on its own block schedule: each new
+        // block is the next of 16 KiB doubling to 2 MiB, or a value's length
+        // past that, and keeps whatever tail its values leave unfilled. Text
+        // elements just over 1 MiB each take a 2 MiB block, about twice their
+        // bytes, where this counts one. **(c) unowned**; promoted by a reading
+        // of such a column's decode.
         ColumnBuilder::Utf8View(..) | ColumnBuilder::Binary(_) => Factor::ONE,
         ColumnBuilder::Array(parts)
         | ColumnBuilder::Multirange(parts)

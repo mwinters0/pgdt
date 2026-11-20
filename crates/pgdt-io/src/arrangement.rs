@@ -249,10 +249,11 @@ impl Arrangement {
     ///
     /// **Its [`Floor`] is what the allowance leaves one reader**, at any
     /// count: the cap, or the margin's ceiling where that is higher, less
-    /// what others drew and one reader's budget — never less than the room —
-    /// and less what stays beside the line as the run is carved, the
-    /// statistics, other scans' line charges and what the allocator retains,
-    /// an uncarved estimate's included, never the grant. So no line the
+    /// what others drew, one reader's budget and what the allocator retains —
+    /// never less than the room, which is short of that last already — and
+    /// less what else stays beside the line as the run is carved, the
+    /// statistics and other scans' line charges, an uncarved estimate's
+    /// included, never the grant. So no line the
     /// ledger lends room for as it opens is refused, its statistics' draw
     /// opening at all three holdings and what the allocator retains coming off
     /// its room; a back-fill shrinking the statistics later lends room the

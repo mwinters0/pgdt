@@ -468,8 +468,8 @@ pub(crate) struct DecodeBudget {
     /// announcements.
     budget: AtomicUsize,
     /// The worker ceiling the caller stated — 1 until one is announced. Less
-    /// the readers parked, it is the **block** pool's depth: one retained
-    /// block per concurrent reader,
+    /// the readers parked, it is the **block** pool's depth past
+    /// [`POOL_DEPTH`]: one retained block per concurrent reader,
     /// where a chunk buffer is taken by one read and returned when its bytes
     /// are dropped, and wants the replay path's depth instead
     /// (`LocalFileSource::hint_parallelism`).
@@ -651,8 +651,8 @@ impl DecodeBudget {
     /// **One stated budget, divided between two read units.** The chunk pool
     /// takes its own ceiling and the block pool takes the rest, so the number
     /// a caller states bounds the source rather than each of its pools; the
-    /// worker count less those parked is the block pool's depth, one
-    /// retained block per concurrent reader.
+    /// worker count less those parked is the block pool's depth past
+    /// [`POOL_DEPTH`], one retained block per concurrent reader.
     ///
     /// A budget too small for a whole block sends every read through the
     /// piecewise arm ([`BlockCache::affordable`]) — the budget is honoured

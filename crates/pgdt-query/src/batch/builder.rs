@@ -98,8 +98,9 @@ pub(crate) enum ColumnBuilder {
 }
 
 /// A list column under construction. `offsets` starts at `[0]` and gains one
-/// entry per appended row (including a null one, which contributes an empty
-/// range); `validity` is parallel to those rows.
+/// entry per appended row at the outermost level (including a null one,
+/// which contributes an empty range), and one per sub-list at an inner one;
+/// `validity` holds one flag per list either level appends.
 pub(crate) struct ListParts {
     /// The child `Field` the `DataType::List` names — reused verbatim when
     /// finishing, so the built array's type matches the schema exactly.

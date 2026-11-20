@@ -24,7 +24,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD178 -->
+rather than being deleted. <!-- deficiency-watermark: KD182 -->
 **Every number up to that watermark is allocated, and none is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -568,8 +568,35 @@ than reading as a phase nobody has sliced.
   **(c) unowned**; promoted by a dump ending so at `--jobs` above one.
   Detail: `crates/pgdt-mapping/src/interior.rs`.
 
-- **KD178** — a map a `COPY` block ending at the file's end completes is
-  saved at that block's close by a settled query or an interrupt, before the
-  text of its spans past the preamble is attached and the watch finished, and
-  no later run completes either. **(c) unowned**; promoted by a dump ending
-  on `\.` reaching a user. Detail: `crates/pgdt-mapping/src/forward.rs`.
+- **KD178** — a complete map is saved before its watch is finished: at the
+  close of a `COPY` block ending the file, by a settled query or an interrupt,
+  before the text of its spans past the preamble is attached, or by an
+  interrupt landing in the end-of-file finish's fetch on a fetched gzip first
+  pass; its last unit is compared only when a later parse finishes the watch,
+  and no later run attaches the text. **(c) unowned**; promoted by such a map
+  reaching a user. Detail: `crates/pgdt-mapping/src/forward.rs`.
+
+- **KD179** — a fetched gzip first pass whose read behind the frontier is
+  dropped or fails while it fetches keeps the decode it was leaving marked to
+  be left, and a later read continuing the kept decode then decodes past its
+  offset and is handed a later unit's bytes, which pass that unit's check.
+  **(c) unowned**; promoted now, being wrong data with no error. Detail:
+  `crates/pgdt-io/src/source/compressed/deflate/first_pass/pass.rs`.
+
+- **KD180** — under `standard_conforming_strings = off` an enum label holding
+  a backslash is read with the backslash `pg_dump` doubled, the enum still
+  exact, so a field holding the label is refused as undeclared. **(c)
+  unowned**; promoted by such a dump. Detail: `crates/pgdt-dump/src/ddl/types.rs`.
+
+- **KD181** — `render_field` over an array a caller assembled panics on a
+  ragged multi-dimensional `List` or a NULL multirange member, and renders a
+  NULL sub-list as an empty one, where a value with no text form is meant to
+  fail as `FieldRender`. **(c) unowned**; promoted by an embedder rendering
+  arrays it built. Detail: `crates/pgdt-query/src/render.rs`.
+
+- **KD182** — a nested value's text elements go into Arrow's view blocks,
+  allocated on its doubling schedule up to 2 MiB with each block's unfilled
+  tail kept, where the decode factor counts a text's bytes one for one: a
+  `text[]` of elements just over 1 MiB holds about twice its text. **(c)
+  unowned**; promoted by a reading of such a column's decode. Detail:
+  `crates/pgdt-query/src/batch/builder/factor.rs`.

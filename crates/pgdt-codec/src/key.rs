@@ -48,8 +48,9 @@ use crate::value::nested::key::{NestedKey, nested_key};
 
 /// A value's place in its column's order, its representation hidden: the key
 /// a filter orders a row by, for an embedder ordering values of a column as
-/// a filter of a semantics would — a nested one's included. Nothing in this
-/// workspace holds one: the filter, the statistics gatherer and the summary
+/// a filter of a semantics would — a nested one's included. No library code
+/// in this workspace holds one, `datafusion-pgdump` only re-exporting its
+/// order: the filter, the statistics gatherer and the summary
 /// key through `internal` by the kind or tree they already hold, and a
 /// stored bound is ordered as gathering kept it, which is `internal`'s
 /// alone (`docs/design/decisions.md`, "D79", "D106").

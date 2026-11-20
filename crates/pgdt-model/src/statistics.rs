@@ -468,8 +468,9 @@ pub struct RowGroup {
 /// **What a [`StatisticsView`] gives its meaning is read only through it**:
 /// the NULL counts, the bounds, the row order and the unrepresentable counts
 /// are private, and [`Self::null_count`], [`Self::group_bounds`] and
-/// [`Self::sortedness`] read them under a view, a raw read having silently
-/// picked one. A gatherer builds one, and a test takes one apart, through
+/// [`Self::sortedness`] read them under a view, and
+/// [`Self::holds_unrepresentable`] by the tier a view names, a raw read
+/// having silently picked one. A gatherer builds one, and a test takes one apart, through
 /// `internal`'s [`ColumnStatisticsParts`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ColumnStatistics {

@@ -400,9 +400,8 @@ pub(crate) fn extract_offset(s: &str) -> Read<(&str, i64)> {
 
 /// Microseconds since the 1970-01-01 UTC epoch. `with_tz` selects
 /// `timestamp with time zone` parsing (an offset is expected and subtracted
-/// out — I4: the offset is always explicit in the data, and this build
-/// normalizes to UTC same as `pg_dump`'s own `extra_float_digits`-independent
-/// convention) versus `timestamp without time zone` (a bare wall-clock
+/// out — I4: the offset is always explicit in the data, whatever the
+/// session's `TimeZone`, and this build normalizes to UTC) versus `timestamp without time zone` (a bare wall-clock
 /// reading, stored as-is). `None` for `infinity`/`-infinity` — real
 /// PostgreSQL values, but `Timestamp` has no sentinel for them, same
 /// reasoning as [`decode_date32`].

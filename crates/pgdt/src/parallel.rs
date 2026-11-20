@@ -237,7 +237,7 @@ impl Discovered<'_> {
     /// reports available is not, and holds nothing off
     /// (`pgdt_io::ArrangementRequest::statistics`; `docs/design/decisions.md`,
     /// "D85"); under either it comes off what one reader may hold of a line
-    /// ("D161"). A pass holding none passes `0` ([`Discovered::resolve_pass`]).
+    /// ("D161"). A caller holding none passes `0`.
     /// What the allocator retains is held beside it on every pass
     /// ([`ParallelArgs::discover`]).
     pub(crate) fn resolve(&self, source: &dyn ByteRangeSource, held: u64) -> Resolved {

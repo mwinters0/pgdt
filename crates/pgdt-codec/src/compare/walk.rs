@@ -301,8 +301,10 @@ fn comparison_user_type(
         };
     };
     match &def.kind {
-        // An enum with no labels resolves to no Arrow type at all, so no
-        // column of it is ever asked how it compares.
+        // An enum with no labels holds no value to order: a column of it is
+        // refused before it is asked (`TypeOutcome::EmptyEnum`), and one
+        // reached as a container's element or a composite's field is
+        // refused here.
         TypeKind::Enum { labels, .. } if labels.is_empty() => ComparisonPlan::Refused,
         // PostgreSQL orders an enum by `pg_enum.enumsortorder`, assigned from
         // *declaration* order (I33) — so a label's position in this list is

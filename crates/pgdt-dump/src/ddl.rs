@@ -25,8 +25,9 @@
 //! [`extract_statement_cross_refs`] is a second, independent kind
 //! of statement scan this module owns: unlike [`classify`], it
 //! doesn't try to fully parse a statement into a `SpanBody` — it just pulls
-//! out whatever role/tablespace references `crate::map::Builder::push_statement_span`
-//! feeds it, from statement shapes [`classify`] does not recognize
+//! out whatever role/tablespace references the statements
+//! `crate::map::Builder::push_statement_span` feeds it hold — every one,
+//! before [`classify`] reads it — by markers [`classify`] does not keep
 //! (`OWNER TO`, `GRANT`/`REVOKE`/`ALTER DEFAULT PRIVILEGES FOR ROLE`, `SET
 //! default_tablespace`).
 

@@ -37,6 +37,14 @@ use crate::batch::{append_typed, finish_column, new_column_builder};
 /// crate builds can reach it, so it is a statement about arrays a caller
 /// assembled itself.
 ///
+/// deficiency: KD181 — not every such array reaches it: a `List<List<…>>`
+/// whose sub-lists differ in length at one depth fails `render_list_level`'s
+/// assertion, a NULL multirange member `render_plan_into`'s `expect`, and a
+/// NULL sub-list below the top is read as its empty slice, rendering `{}`
+/// for it or collapsing the value to `{}` where nothing else at that depth
+/// holds an element. **(c) unowned**; promoted by an embedder rendering
+/// arrays it built.
+///
 /// `column` is needed for the same reason
 /// [`ColumnBuilder`](crate::batch::ColumnBuilder) needs it: the Arrow type
 /// does not say which literal form a nested value is written in, and

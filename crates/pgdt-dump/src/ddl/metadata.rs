@@ -163,8 +163,8 @@ fn record_type(types: &mut Vec<TypeDef>, name: &str, kind: &TypeKind) {
 
 /// Fold an already-parsed `ALTER TYPE <type_name> ADD VALUE '<label>'` (see
 /// [`parse_alter_type_add_value_body`](crate::ddl::parse_alter_type_add_value_body))
-/// into the matching `TypeDef` in `types`, if any — a no-op if the type it
-/// names isn't an `Enum`. Used by [`dump_metadata_from_spans`], which
+/// into the matching `TypeDef` in `types` — a no-op where the type it names
+/// is defined and no `Enum`. Used by [`dump_metadata_from_spans`], which
 /// encounters the label as its own [`pgdt_model::SpanBody::AlterTypeAddValue`]
 /// span, separate from the [`pgdt_model::SpanBody::TypeDef`] span it targets.
 ///

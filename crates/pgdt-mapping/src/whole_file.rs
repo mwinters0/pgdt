@@ -145,7 +145,8 @@ pub struct MapRun {
     /// The frontier this run started from.
     pub resumed_from: u64,
     /// Whether the run's cancellation stopped it short of EOF, or short
-    /// of re-reading every block that lacked the requested statistics. The
+    /// of re-reading every block that lacked the requested statistics or, in
+    /// a strict run, that no strict parse checked. The
     /// index and the cache agree either way, but after an interrupt inside the
     /// preamble prepass, which writes nothing; what differs is whether the
     /// index describes the whole file, which [`DumpIndex::is_complete`] tells
@@ -498,7 +499,8 @@ async fn map_file_watched(
         // enabled save makes the same one before it writes, and a disabled
         // cache makes none at all, so leaving it to the save is how a
         // `--cache none` run reached the interrupt below unverified. Only a
-        // read the leader dispatched unwinds this far; every other one the
+        // read the leader dispatched unwinds this far, and the end-of-file
+        // finish's on a fetched gzip first pass (`KD178`); every other one the
         // pass makes is caught at a check point of its own.
         Err(e) if cancelled_read(&e, cancel) => {
             watch.check(source).await?;
@@ -546,7 +548,8 @@ async fn map_file_watched(
         // Before the save, so this save of a complete map is never written
         // from bytes that fail their own check ([`SourceWatch::finish`]): the
         // forward pass's end-of-file save finishes it too, and the back-fill
-        // re-reads only units a forward pass checked. An interrupted run
+        // re-reads only units a forward pass checked, but a map `KD178`
+        // saved. An interrupted run
         // leaves the block it stopped inside for the resume to re-read.
         watch.finish(source).await?;
         cache.save(watch, source, &index).await?;

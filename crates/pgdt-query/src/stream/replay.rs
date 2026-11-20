@@ -272,8 +272,9 @@ pub(super) fn replay<'a>(
                         Skip::Rest => break,
                     }
                 }
-                // A reader asked to park parks holding no read
-                // (`docs/design/decisions.md`, "D162"), and with its batch:
+                // A reader asked to park parks holding no read but the one
+                // before it (`KD172`; `docs/design/decisions.md`, "D162"), and
+                // with its batch:
                 // the read chunks its views point into are given up first.
                 let parks = match active.as_mut() {
                     Some((_, _, batcher, _, _)) if !batcher.is_empty() => {
@@ -763,8 +764,8 @@ fn snapshot(
 
 /// Where `row` sits inside `prefix`, the UTF-8-validated leading part of the
 /// span it was scanned out of — `None` when the row runs past it, which is
-/// every row of a span whose validation failed and none of one whose
-/// validation held. `str::get` rather than an index, so a mis-derived offset
+/// every row of a span whose validation failed, an empty one at its start
+/// aside, and none of one whose validation held. `str::get` rather than an index, so a mis-derived offset
 /// costs the row its fast path instead of panicking.
 fn row_text<'a>(prefix: &'a str, span_base: u64, row: &Row<'_>) -> Option<&'a str> {
     let start = usize::try_from(row.offset.checked_sub(span_base)?).ok()?;

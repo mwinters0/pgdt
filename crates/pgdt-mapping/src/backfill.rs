@@ -140,7 +140,8 @@ pub(crate) async fn backfill_statistics(
     // **This pass's saves check the watch and do not finish it**, though a
     // map at EOF is complete: every unit it re-reads was compared against its
     // own check by the forward pass that completed the map, under the
-    // identity the watch still holds ([`SourceWatch::finish`]), and finishing
+    // identity the watch still holds ([`SourceWatch::finish`]) — but a map
+    // `KD178` saves, whose last unit nothing compared — and finishing
     // before each save would decode a unit again per save and slow an
     // interrupt. `map_file`'s last save finishes it.
     let mut throttle = SaveThrottle::new();

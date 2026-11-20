@@ -665,10 +665,17 @@ async fn close_copy_block(
     // interrupt's save writes it before `map_forward`'s end-of-file path
     // attaches the text of the spans past the preamble and finishes the watch:
     // the cache holds a complete map those spans carry no text in, and whose
-    // last unit was never compared against its own check, and no later run
-    // extends it to do either. **(c) unowned**; promoted by a dump ending on a
-    // `COPY` block's `\.`, which `pg_dump`'s trailer never does, reaching a
-    // user. The fix is that close leaving the save to the end-of-file path.
+    // last unit was never compared against its own check. A later query's
+    // `map_forward` stops at once over it; a later parse's back-fill may
+    // re-read that unit before its `map_file` finishes the watch, and no run
+    // attaches the text. The end-of-file path reaches the same state where
+    // its own `watch.finish` fetches on a fetched gzip first pass
+    // (`complete_reads`) and an interrupt lands there: `scanned_through` is
+    // set, and `map_file`'s unwinding arm saves it. **(c) unowned**; promoted
+    // by such a map reaching a user — a dump ending on a `COPY` block's `\.`,
+    // which `pg_dump`'s trailer never does, or that interrupt. The fix is that
+    // close leaving the save to the end-of-file path, and that path finishing
+    // before it marks the map complete.
     if settled || cancelled || due {
         throttle.save(cache, watch, source, index).await?;
     }

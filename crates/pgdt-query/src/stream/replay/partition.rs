@@ -156,8 +156,9 @@ pub(super) fn plan_partitions(
     // re-announces the same values, idempotently.
     source.hint_read_size(chunk_size);
     source.hint_parallelism(parallelism);
-    // A block's own advice, and its footprint, are read once per block; the
-    // footprint that decides the sub-stream count is the largest of them.
+    // A block's own advice is read once per block: the largest per-worker
+    // charge among them decides the sub-stream count (`charge` below), the
+    // widest footprint what the notes say.
     let advice: Vec<Partitioning> =
         matches.iter().map(|b| source.partitions(b.data_offset..b.end_offset)).collect();
     let widest = advice.iter().max_by_key(|advice| advice.partition_bytes());

@@ -97,8 +97,10 @@
 //! included — or, where the source's end is not known yet, to its watermark
 //! (`docs/design/decisions.md`, "D6").
 //! `every_fixture_tiles_exactly` (`pgdt-mapping`'s `tests/map.rs`) checks a
-//! whole parse's over the fixtures; nothing checks a partial or a query's
-//! but the `TilingBroken` it would carry.
+//! whole parse's over the fixtures, and
+//! `snapshot_tiles_the_prefix_seen_so_far_at_every_copy_end` a builder's
+//! prefix at each block's end; nothing checks a partial index with its
+//! `Unscanned` tail or a query's but the `TilingBroken` it would carry.
 //! `DumpMetadata` is [`crate::ddl::dump_metadata_from_spans`], a derived
 //! view over `spans` — which is what [`SpanBody::Connect`],
 //! [`SpanBody::VersionHeader`], [`SpanBody::AlterTypeAddValue`],
@@ -563,16 +565,19 @@ impl Builder {
     /// be most of an `INSERT` scan's cost (`docs/design/decisions.md`, "D33");
     /// what remains is `KD9`'s.
     ///
-    /// Anything the ordinary path might classify differently is handed back:
+    /// What the ordinary path might classify differently is handed back:
     /// a line whose first non-ASCII-whitespace byte is not ASCII (`feed_line`'s
     /// Unicode-trimmed prologue may still have something to say about it), a
     /// line starting `-` (every boundary signal begins `--`), a blank line,
     /// and, at a statement boundary, any line that does not restate this run's
-    /// own `INSERT INTO <table>` prefix byte for byte.
+    /// own `INSERT INTO <table>` prefix byte for byte. Rust's ASCII whitespace
+    /// leaves out a vertical tab, which `step`'s `str::trim` strips, so a
+    /// VT-led `--` line outside a quote is fed here where `step` would close
+    /// the run.
     ///
-    /// Raw bytes where `step` would feed a lossy conversion is no difference:
-    /// [`StatementScan`] tells a non-ASCII byte from an ASCII one and no
-    /// further.
+    /// Raw bytes where `step` would feed a lossy conversion differ only in a
+    /// dollar-quote tag: [`StatementScan`] matches a closing tag byte for
+    /// byte, where two tags of invalid UTF-8 a lossy conversion merges.
     fn insert_run_line(&mut self, raw: &[u8]) -> bool {
         let Mode::InsertRun { scan, prefix, row_count, .. } = &mut self.mode else {
             return false;

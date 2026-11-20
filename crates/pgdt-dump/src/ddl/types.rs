@@ -29,8 +29,18 @@ pub(super) fn parse_create_type(rest: &str) -> Option<TypeDef> {
     if let Some(body) = strip_kw(after, "AS ENUM") {
         let open = body.find('(')?;
         let close = matching_paren(body.as_bytes(), open)?;
-        // A fragment that is no plain string literal — an `E''` one, say — is
-        // a label this build cannot read, so the set it leaves is short.
+        // A fragment that does not open with a plain string literal — an
+        // `E''` one, say — is a label this build cannot read, so the set it
+        // leaves is short; one that does is read as that literal, whatever
+        // follows it.
+        //
+        // deficiency: KD180 — the literal is read as `string_literal_prefix`
+        // reads it, `''` undoubled and nothing else, where a dump under
+        // `standard_conforming_strings = off` doubles each backslash too
+        // (I50): a label `a\b` is kept as `a\\b`, the enum still exact, so a
+        // field `a\b` is refused as undeclared and a filter naming it misses.
+        // **(c) unowned**; promoted by such a dump. The fix is the preamble's
+        // setting reaching this grammar, as it reaches the lexer.
         let fragments = split_top_level_commas(&body[open + 1..close]);
         let labels: Vec<String> =
             fragments.iter().copied().filter_map(parse_string_literal).collect();

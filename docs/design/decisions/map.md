@@ -60,19 +60,19 @@ Unrecognized lines are ignored, so `--binary-upgrade` noise is free (I5, I6). `r
 composite's field list is all-or-nothing, `record_out` being positional (I23); a `--create` dump's pre-`\connect`
 segment is not a database (I9). The model keeps the dump's text (D74): a declared type as its words; a collation clause
 verbatim, `None` meaning no clause (I37); a name in one spelling, both sides of a lookup compared in it (I29);
-`INHERITS` parents, `OF` type and a partition's bound as text (I86). Of what the DDL implies it keeps only a column's
-`NOT NULL`, an enum's label completeness, a collation's `deterministic` (I42) and a base type's `typdelim`, `,` unstated
-(I22). Rejected: a name's parts dequoted (`"a.b".c` is `a."b.c"`); references flattened in at the fold, which a later
-`ADD COLUMN` misses.
+`INHERITS` parents, `OF` type and a partition's bound as text (I86). Of what the DDL implies it keeps only `NOT NULL` (a
+column's, whether inherited, and a domain's), which `CHECK`s a table or domain declares, an enum's label completeness, a
+collation's `deterministic` (I42) and a base type's `typdelim`, `,` unstated (I22). Rejected: a name's parts dequoted
+(`"a.b".c` is `a."b.c"`); references flattened in at the fold, which a later `ADD COLUMN` misses.
 
 ### D133 TimescaleDB's catalog rows are recorded as text on their own blocks, on the leader's loop, at every level
-A `_timescaledb_catalog` block a conclusion reads keeps its rows as unescaped text on its `CopyBlock`, recorded by every
-mapping pass at every statistics level, never by an interior worker; what they conclude is derived per database on
-read (`TimescaleDb::of`), never persisted. Detection is correctness, not presentation, so no level skips it; one owner
-per fact (D34) puts the rows on the block whose span carries the database; a recipe change then moves no cache byte.
-Rejected: a field on `DatabaseMetadata`, which is stated at a database's first block, before its catalog's blocks;
-persisted conclusions, a second copy a recipe fix would strand; re-reading the blocks at need, a second read of a
-source that may be fetched. Reopens: a catalog too large to hold resident. Evidence: `pgdt-mapping`'s
+A `_timescaledb_catalog` block a conclusion reads keeps its rows as unescaped text (a field not UTF-8 as escaped) on its
+`CopyBlock`, recorded by every mapping pass at every statistics level, never by an interior worker; what they conclude
+is derived per database on read (`TimescaleDb::of`), never persisted. Detection is correctness, not presentation, so no
+level skips it; one owner per fact (D34) puts the rows on the block whose span carries the database; a recipe change
+then moves no cache byte. Rejected: a field on `DatabaseMetadata`, which is stated at a database's first block, before
+its catalog's blocks; persisted conclusions, a second copy a recipe fix would strand; re-reading the blocks at need, a
+second read of a source that may be fetched. Reopens: a catalog too large to hold resident. Evidence: `pgdt-mapping`'s
 `tests/timescaledb.rs`.
 
 ### D140 A block's longest line is recorded in the map, its start and length, by every pass mapping it

@@ -16,13 +16,13 @@ inside a string, identifier, comment or dollar-quoted body never structure (I1).
 too (a `$$` in a name or comment hid every block).
 
 ### D138 A row its reader holds no byte of is streamed once a whole chunk passes inside it
-A block whose rows nothing reads whole streams them: a row no chunk ends is handed out as a `StreamedLine`. A census and
-a block's observer fold each field's runs, a held row fed once (`observe_row`): the shape census exactly, a counted
-scalar from its head (`Kept::Head`), a held one's test bounded alike, a gathered or checked field past a head as it goes
-by (D142, D144); a field a sum, a count or a keyed scalar's check reads whole is held as a line. Rejected: a `Row` with
-an empty `raw`; streaming in the scanner; a streaming observer beside `observe_row`; a scalar's bound left to its reader
-(a count hanging on where a chunk ends if one outreads it); the bound kept per column (a walked leaf has none). Reopens:
-P40. Evidence: `streamed_line.rs`, `streamed_replay.rs`, `streamed_census.rs`.
+A block whose rows nothing reads whole streams them: a row a whole chunk passes inside is handed out as a `StreamedRow`.
+A census and a block's observer fold each field's runs, a held row fed once (`observe_row`): the shape census exactly, a
+counted scalar from its head (`Kept::Head`), a held one's test bounded alike, a gathered or checked field past a head as
+it goes by (D142, D144); a field a sum, a count or a keyed scalar's check reads whole is held as a line. Rejected: a
+`Row` with an empty `raw`; streaming in the scanner; a streaming observer beside `observe_row`; a scalar's bound left to
+its reader (a count hanging on where a chunk ends if one outreads it); the bound kept per column (a walked leaf has
+none). Reopens: P40. Evidence: `streamed_line.rs`, `streamed_replay.rs`, `streamed_census.rs`.
 
 ### D139 A line past its chunk grows in a mapping of its own, by `mremap`, in huge-page steps
 A carried line longer than its chunk leaves the carry's `Vec` for an anonymous mapping (`LineMapping`), grown by
@@ -37,12 +37,13 @@ its block's longest; I71's bound reserved per line, counted whole by an address-
 ### D158 A reader draws what its carry will hold before absorbing a chunk, holding no read while it waits
 A read loop handed its run's ledger draws on it (D157) what its carry would hold past its chunk once it absorbs the
 chunk in hand — a line completed or joined, or a held field grown to its next delimiter, nothing else of a row it starts
-streaming (D138) — keyed by where that starts (`draw_absorbing`). A waiting draw drops the chunk, read again once
-admitted; one told to give up drops what it holds and reads it again. Why: the charge is exact before the copy, and a
-waiter keeping a pooled read could starve the earliest line's (D5). Rejected: drawing before the read (every carried
-tail charged a chunk); after absorbing (a field ending in the chunk grows uncharged); charging a row starting to stream
-its line (refused under a floor below two chunks); keying a field by its row (a later field keeps the largest draw);
-holding the chunk while waiting. Code: `scan/chunked.rs`. Evidence: `chunked/tests.rs`, `tests/ledger.rs`.
+streaming (D138) but a line held past its chunk before its block streamed, charged joined whole — keyed by where that
+starts (`draw_absorbing`). A waiting draw drops the chunk, read again once admitted; one told to give up drops what it
+holds and reads it again. Why: the charge is exact before the copy, and a waiter keeping a pooled read could starve the
+earliest line's (D5). Rejected: drawing before the read (every carried tail charged a chunk); after absorbing (a field
+ending in the chunk grows uncharged); charging a row starting to stream its line (refused under a floor below two
+chunks); keying a field by its row (a later field keeps the largest draw); holding the chunk while waiting. Code:
+`scan/chunked.rs`. Evidence: `chunked/tests.rs`, `tests/ledger.rs`.
 
 ### D164 A line is held to I71's bound, a constant measured before each read is absorbed
 Every read loop holds a line, its terminator included, to `LINE_BOUND` (I71), measured before a read is drawn for or

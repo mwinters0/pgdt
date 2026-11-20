@@ -246,8 +246,9 @@ pub fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
 }
 
 /// A field's key as a query reads the field: [`order_key`]'s, but for a float
-/// its type's `*_in` refuses, keyed under [`PostgresInvalidValues::Ignore`] as
-/// the typed read emits it ([`float_field`](crate::value::float::float_field)), so a filter and the
+/// its type's `*_in` refuses, keyed under the query's `invalid` setting as
+/// the typed read emits it — a value only under
+/// [`PostgresInvalidValues::Ignore`] — ([`float_field`](crate::value::float::float_field)), so a filter and the
 /// batch agree on it.
 pub fn read_key(
     kind: &CompareKind,
@@ -456,7 +457,7 @@ pub fn literal_key(
 /// `partial_cmp` answers `None`. `real`/`double precision` are the only
 /// columns whose key is a float `NaN`: a `NaN` in a `numeric(p,s)` column is
 /// keyed as a special value ([`special_order_key`]) before any float is read,
-/// having no `Decimal128` representation (I4).
+/// having no `Decimal128` representation (I34).
 pub(crate) fn pg_float_cmp(a: f64, b: f64) -> Ordering {
     match (a.is_nan(), b.is_nan()) {
         (true, true) => Ordering::Equal,

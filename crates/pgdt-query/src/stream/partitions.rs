@@ -42,7 +42,8 @@ use crate::summary::partition_orders;
 ///
 /// The cut is made where the source said it was willing to be cut
 /// ([`ByteRangeSource::partitions`]) and no finer than the parallelism of
-/// the arrangement it was planned under allows; **what N sub-streams cost resident is N times one**,
+/// the arrangement it was planned under allows; **what N sub-streams cost
+/// resident is N times one, beside a pool term they share**,
 /// N solved against what the source charges concurrent readers
 /// (`Partitioning::worker_memory`, a shared pool term included) plus, on a
 /// source retaining by chunk alone, what a sub-stream's in-flight batch pins

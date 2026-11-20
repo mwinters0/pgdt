@@ -175,18 +175,20 @@ impl CompressedFileSource {
     /// bytes it already has and charges the lending footprint plus the window
     /// instead.
     ///
-    /// **Nothing bills the index.** It is unbilled on an ordering rather than
-    /// a size: the build that makes it runs inside
-    /// [`CompressedFileSource::open`], or before [`Self::with_index`] is
-    /// handed it, before any budget is announced
-    /// (`docs/design/decisions.md`, "D4").
+    /// **Nothing bills the index.** One built inside
+    /// [`CompressedFileSource::open`], or read from a cache before
+    /// [`Self::with_index`] is handed it, is resident before any budget is
+    /// announced; one a gzip first pass hands over grew during the run's own
+    /// reads, under the budget announced to the pass, its checkpoints billed by
+    /// none of the pass's terms.
     // Deficiency register: `deficiency: KD26` — this index is the only term in
     // the memory account that grows with the *file* rather than with the
     // worker count, and a source whose index is not small beside
     // [`MEMORY_UNPOOLED_BOUND`] therefore holds bytes no charge names.
     // **(c) unowned**; closing it means a per-source term, which
-    // [`WorkerMemory`] does not have. Billing it buys accuracy and no
-    // protection, the build having already happened.
+    // [`WorkerMemory`] does not have. Billing an index built before the run
+    // buys accuracy and no protection, the build having already happened; a
+    // first pass's grows while the run reads.
     fn over(file: Arc<DumpFile>, codec: Arc<dyn Codec>) -> Self {
         let budget = DecodeBudget::over(codec.largest_unit(), codec.pulling_footprint());
         Self { file, codec, live: Arc::new(Mutex::new(None)), budget }

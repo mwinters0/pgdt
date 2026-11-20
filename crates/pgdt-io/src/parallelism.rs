@@ -38,8 +38,8 @@ use crate::memory::{DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE, margin_allowance};
 /// decoded its successor's into a second slot, which a miss on a block in
 /// flight no longer does
 /// ([`BlockCache::claim`](crate::source::compressed::blocks::BlockCache::claim)). Being the program's, it is on every
-/// allocator, and so far
-/// [`MEMORY_UNPOOLED_BOUND`](crate::internal::MEMORY_UNPOOLED_BOUND) has absorbed it. **(b) owned by P23**: closing it
+/// allocator, and in that re-take
+/// [`MEMORY_UNPOOLED_BOUND`](crate::internal::MEMORY_UNPOOLED_BOUND) absorbed it. **(b) owned by P23**: closing it
 /// means a re-take, and billing the unit here if it stays.
 ///
 /// **A budget is solved against this, never divided by it**

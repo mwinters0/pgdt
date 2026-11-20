@@ -464,9 +464,13 @@ impl ChunkCarry {
     /// `next`'s first line-terminated prefix or joined by the whole of it, or
     /// the field of a streamed row its fold holds whole, grown to `next`'s
     /// first delimiter — nothing for a row `next` starts streaming but the
-    /// field `fold` holds whole across their boundary, and zero where that is
-    /// no longer than a chunk, which the reader's own term holds. So a row a
-    /// pass streams is never drawn for (`docs/design/decisions.md`, "D158").
+    /// field `fold` holds whole across their boundary, or, for a line held
+    /// past its chunk before its block streamed rows, the line and `next`
+    /// whole (`starting_field`) — and zero where that is no longer than a
+    /// chunk, which the reader's own term holds. So a row a pass streams is
+    /// otherwise never drawn for (`docs/design/decisions.md`, "D158"). A held
+    /// field still empty past a CR the fold held back is charged zero, though
+    /// `next` grows it to that CR and a chunk.
     pub fn charge_absorbing(&self, next: &[u8], eof: bool, fold: Option<&dyn FieldFold>) -> u64 {
         let (held, _) = self.holding(next, eof, fold);
         if held > self.line.outgrows() { held as u64 } else { 0 }

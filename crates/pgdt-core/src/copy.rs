@@ -36,7 +36,8 @@ const COPY_BLOCK_TERMINATOR: &[u8] = b"\\.";
 /// **The longest line PostgreSQL writes or reads in `COPY`'s text format**,
 /// its terminator included: `MaxAllocSize - 1`, the most a `StringInfo`
 /// holds (`docs/design/postgres-invariants.md`, "I71"). Every read loop
-/// measures a line against it exactly, a line no longer is refused only where
+/// measures a line against it exactly, in every build but a test's, which
+/// may lower it (`pgdt_dump`'s `with_line_bound`); a line no longer is refused only where
 /// one reader could not hold it ([`Error::LineOutgrowsMemory`]), and one
 /// longer is [`Error::LineTooLong`], never a setting.
 pub const LINE_BOUND: usize = 0x3FFF_FFFE;

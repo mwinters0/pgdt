@@ -17,7 +17,10 @@
 //!   terminator, so data can never be mistaken for structure. COPY TEXT
 //!   escapes a literal backslash as `\\`, so a line that *is* exactly `\.` is
 //!   unambiguously the terminator. Each row's line ending is held to its
-//!   block's first row's, as a restore holds it (I91).
+//!   block's first row's, as a restore holds it (I91), by the pass that
+//!   enters the block at its header, an interior piece recording its rows'
+//!   for the leader (`Endings`); a block whose first row ends in a bare CR
+//!   is not held (`KD101`).
 //! * psql meta-command lines (`\restrict`, `\unrestrict`, `\connect`, and any
 //!   other leading-backslash line) are ordinary [`Event::Line`]s: outside a
 //!   block only a line matching the full `COPY ... FROM stdin;` grammar, or a
@@ -119,9 +122,9 @@ pub struct Line<'a> {
 }
 
 /// The start of a large-object data region — a `BEGIN;` line outside any
-/// COPY block. `pg_backup_archiver.c`'s `StartRestoreLOs()`/`EndRestoreLOs()`
-/// are the only emitter of a bare `BEGIN;`/`COMMIT;` pair anywhere in plain
-/// `pg_dump` output (I12): a `plpgsql` `BEGIN`/`END` block never reaches this
+/// COPY block. `pg_backup_null.c`'s `_StartLOs()`/`_EndLOs()`
+/// (`_StartBlobs()`/`_EndBlobs()` before v16) are the only emitter of a bare
+/// `BEGIN;`/`COMMIT;` pair anywhere in plain `pg_dump` output (I12): a `plpgsql` `BEGIN`/`END` block never reaches this
 /// arm at all, since it always sits inside a dollar-quoted function body,
 /// which the scanner's dollar-quote tracking already filters out before this
 /// check ever runs. Line-anchored and exact, the same rigor

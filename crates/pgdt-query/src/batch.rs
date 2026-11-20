@@ -56,7 +56,9 @@ pub(crate) const OFFSET_CUT_BYTES: usize = i32::MAX as usize + 1 - LINE_BOUND;
 
 /// Whether an Arrow type holds `i32` offsets into a buffer a batch grows
 /// with its rows' values — `bytea`'s `Binary`, an array's `List`, an enum's
-/// dictionary — where Arrow's builders panic past them rather than refuse;
+/// dictionary — where an offset past `i32::MAX` panics rather than refuses,
+/// in Arrow's dictionary builder or, for the lists and `bytea` this crate
+/// builds, its `OffsetBuffer` as the column finishes;
 /// a `Utf8View`'s views are bounded per value and buffer alone.
 fn offset_bounded(data_type: &DataType) -> bool {
     match data_type {

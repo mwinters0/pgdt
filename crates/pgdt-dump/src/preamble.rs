@@ -60,10 +60,11 @@ pub async fn scan_preamble(
             spans.on_dollar_quote_end(end.offset);
             ControlFlow::Continue(())
         }
-        // I1/I12: the first `COPY` header this scan stops for cannot follow
-        // a large-object region, so this scan always breaks first in practice.
-        // Fed through anyway, so a file with large objects but no `COPY`
-        // blocks still maps that region as its own `Data` span.
+        // I1/I12: within one database the first `COPY` header this scan stops
+        // for cannot follow a large-object region; a `pg_dumpall` file's
+        // earlier database can hold one ahead of it. Fed through, so that
+        // region, and a file's with large objects but no `COPY` blocks, still
+        // maps as its own `Data` span.
         Event::LargeObjectStart(start) => {
             spans.on_large_object_start(start.start_offset);
             ControlFlow::Continue(())

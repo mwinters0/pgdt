@@ -74,7 +74,8 @@ impl SourceChunk {
 /// carve states, and DataFusion's pool, where an operator reserves for them,
 /// charges the whole buffers. Closing it means compacting a batch to its
 /// viewed bytes as it is emitted, which `docs/design/decisions.md`, "D46"
-/// refuses at every flush, or billing what a consumer holds. **(c)
+/// refuses even past a selectivity threshold, or billing what a consumer
+/// holds. **(c)
 /// unowned**; promoted by a phase taking up query-path memory.
 pub(crate) struct RetainedChunks {
     chunks: VecDeque<SourceChunk>,

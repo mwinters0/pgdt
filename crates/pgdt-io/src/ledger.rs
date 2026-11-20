@@ -151,7 +151,8 @@ struct Line {
     wants: Option<u64>,
     /// What wakes it, while it waits.
     waker: Option<Waker>,
-    /// Whether an earlier waiting line asked it to give its draw up.
+    /// Whether an earlier waiting line, or the statistics' draw, asked it to
+    /// give its draw up.
     give_up: bool,
 }
 
@@ -160,7 +161,8 @@ struct Line {
 pub enum Admission {
     /// The line holds the charge it drew.
     Held,
-    /// The line gave up what it held, an earlier one needing it: its reader
+    /// The line gave up what it held, an earlier one or the statistics
+    /// needing it ([`Ledger::draw_statistics`]): its reader
     /// drops the line and re-reads it from its start, drawing anew.
     GiveUp,
     /// The charge passes the ledger's [`Floor`], so no wait would admit it:
@@ -403,7 +405,8 @@ impl Holder {
     /// no read of `source` meanwhile: the park is announced to `source`
     /// ([`ParkedReader`]), so its pools give back the reader's share, and a
     /// line waiting on the park is woken. Returns at once where it is not
-    /// asked, the park announced and withdrawn; dropped, the reader resumes (`docs/design/decisions.md`,
+    /// asked — on a limited ledger the park announced and withdrawn, on an
+    /// unlimited one announcing nothing; dropped, the reader resumes (`docs/design/decisions.md`,
     /// "D163").
     pub async fn park(&mut self, source: &dyn ByteRangeSource) {
         let Some(shared) = self.ledger.shared.clone() else { return };

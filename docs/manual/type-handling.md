@@ -973,7 +973,7 @@ or in the wrong case — so **the refusal lists the labels back to you**, quoted
 the way you would write them:
 
 ```
-Error: filter value `furious` for `v_mood = ...` does not parse as the column's declared type `public.mood`, which is written as one of the type's declared labels: 'sad', 'ok', 'happy'
+Error: filter value `furious` for `v_mood = ...` does not parse as the column's declared type `public.mood`, which is written as one of the type's declared labels: 'sad', 'ok', 'happy', 'has space', 'has,comma', 'has''quote'
 ```
 
 A type declaring more than a dozen labels gets the first twelve and a count of

@@ -459,10 +459,12 @@ impl ComparisonDivergence {
             }
             // A label is unique, and a NULL equals a NULL on both sides.
             Self::LabelText | Self::NestedOrder => false,
-            // A literal matches only the emitted text: a spelling other than
-            // the server's own (`'12:00+00'`, an unpadded `character(n)`)
-            // misses a value PostgreSQL matches, and some members also write
-            // one stored value two ways (`1.5` and `1.50`).
+            // Under text, a literal matches only the emitted text: a spelling
+            // other than the server's own (`'12:00+00'`, an unpadded
+            // `character(n)`) misses a value PostgreSQL matches, and some
+            // members also write one stored value two ways (`1.5` and
+            // `1.50`). An interval compared field by field keeps `1 mon` and
+            // `30 days` apart, which the server equates.
             Self::ValueAsText | Self::IntervalFields | Self::PaddedText => true,
             Self::UnnormalizedZero => true,
         }

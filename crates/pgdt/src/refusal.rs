@@ -13,8 +13,10 @@ use pgdt_io::Origin;
 /// cache cannot be used — written for another file, or damaged or another
 /// build's, which is said with the same name — or a bound weak signal does not hold,
 /// and from the back-fill when a block no longer ends where the map says
-/// (`docs/design/decisions.md`, "D20", "D21"). None of those places has a name
-/// for what was being read, and the user typed one.
+/// (`docs/design/decisions.md`, "D20", "D21"). A fifth fires before a read,
+/// nothing being able to tell whether the source moves
+/// (`SourceUncheckable`). None of those places has a name for what was being
+/// read, and the user typed one.
 ///
 /// **A cache's own name is not the source's.** Three of the four name the
 /// cache, which settles nothing where that path was *derived*: a remote dump's
@@ -40,12 +42,13 @@ pub(crate) fn about_the_source(err: &pgdt_core::Error) -> bool {
         | Lib::CacheUnusable { .. }
         | Lib::StrictIdentityUnmet { .. }
         | Lib::CachedBlockChanged { .. } => true,
-        // A caller's map short of the file's end names neither. `pgdt` hands
-        // the library no map of its own, so it never meets this one.
+        // A caller's map short of the file's end names neither. The commands
+        // this serves hand the library no map of their own, so they never
+        // meet this one; `pgdt sql` does, and spells it itself.
         Lib::MapIncomplete { .. } => true,
-        // A caller's map holding the table at the metadata level: `pgdt`'s
-        // query maps for itself and reads such a table again, so it never
-        // meets this one either.
+        // A caller's map holding the table at the metadata level: `pgdt
+        // query` maps for itself and reads such a table again, so it never
+        // meets this one either; `pgdt sql` does, as above.
         Lib::TableAtMetadataLevel { .. } => true,
         // Named by the library itself: each of these carries the origin, the
         // URL or the file's path in its own sentence.

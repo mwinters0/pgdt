@@ -232,7 +232,7 @@ its unit. Run `parse` once and nothing after it pays the first pass again.
 ```
 $ pgdt parse --source mydump.sql.gz
 2026-10-29T15:00:33.206608217Z  INFO running inside a stated memory allocation limit_bytes=4294967296 limit_read_from=/sys/fs/cgroup/memory.max jobs_flag=(not stated) memory_flag=(not stated)
-2026-10-29T15:00:33.206677112Z  INFO resolved the arrangement jobs=12 (recommended by the source) memory_bytes=1369381944 (discovered: /sys/fs/cgroup/memory.max states a limit of 4294967296 byte(s)) statistics_bytes=1798156360 (discovered)
+2026-10-29T15:00:33.206677112Z  INFO resolved the arrangement jobs=12 (recommended by the source) memory_bytes=1369381944 (discovered: /sys/fs/cgroup/memory.max states a limit of 4294967296 byte(s)) statistics_bytes=1462612040 (discovered)
 2026-10-29T15:00:33.206746062Z  INFO preamble scan started bytes=at least 0 chunk_size=1048576 jobs=12 memory_bytes=1369381944
 2026-10-29T15:00:33.206777962Z  INFO first pass started, inflating in parallel while it builds the index, its scan one reader source=mydump.sql.gz codec=gzip workers=12
 2026-10-29T15:00:33.226405076Z  INFO preamble scan complete bytes=1048576 reached_eof=false
