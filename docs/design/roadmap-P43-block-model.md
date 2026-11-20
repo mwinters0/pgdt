@@ -114,10 +114,12 @@ charged on assignment rather than by a `charge_held()` after each; `absorb`
 recovers its piece's own type. Absorbed from `M303`, withdrawn unlanded, so the
 contract and its implementations are reshaped once.
 
-**The mapping pass takes one context.** The functions `pgdt-mapping` holds under
-`clippy::too_many_arguments` take one pass context — source, scan options, ledger,
-cancel, cache, watch, extent, statistics request, allowance, account — which the
-open takes too, and `forward.rs`'s cancel-save-return and `whole_file.rs`'s
+**The mapping pass takes one context.** Every function `pgdt-mapping` holds under
+`clippy::too_many_arguments` that takes a pass field takes one pass context —
+source, scan options, ledger, cancel, cache, watch, extent, statistics request,
+allowance, account — which the open takes too; one taking none keeps its
+parameters, and a later slice's reshape drops its allow only where it removes the
+need. And `forward.rs`'s cancel-save-return and `whole_file.rs`'s
 interrupted exit are each written once. Absorbed from `M302`, withdrawn unlanded,
 its `CopyStart` arm being the open. D126 and D15 keep `FirstPass`'s sync and async
 serve loops apart, and this phase does not reopen them.
@@ -126,7 +128,10 @@ serve loops apart, and this phase does not reopen them.
 
 **`build_index` and `build_map` move to `pgdt-fixtures`, behind `mapping`**: the
 eager, serial pass `map_file` is held to, called by tests alone, and no part of
-`pgdt-mapping`'s designed surface (D106). `eager_pass` opens each block through
+`pgdt-mapping`'s designed surface (D106). **`backfill_block` goes with them**, on
+the same test: one block re-read outside any pass, called by tests alone, and
+unable to persist what it reads, being handed no cache. A fixture, it reads under
+a `ReadContext` as the pass's readers do. `eager_pass` opens each block through
 the one open under the eager policy and reaches `attach_text` and
 `derived_diagnostics` through `pgdt_mapping::internal`. It stays an independent
 oracle — serial, whole-file, no interior, no resume, no saves — sharing with the
@@ -150,7 +155,7 @@ doc's claim that any edit in it asks the bump question becomes true of the tree.
 | `Recorder` | pgdt-model, derived side, `internal` | "What a pass records of a block's rows", beside `CensusFold` |
 | `FieldFold` for `Recorder` | pgdt-dump, where `RowFold` was | "The scanner": the carry's interface |
 | The open, its policies, the pass context | pgdt-mapping | "The mapping pass" |
-| `eager_pass`, `build_index`, `build_map` | pgdt-fixtures, behind `mapping` | "The fixture vocabulary" |
+| `eager_pass`, `build_index`, `build_map`, `backfill_block` | pgdt-fixtures, behind `mapping` | "The fixture vocabulary" |
 
 ## What the phase does not own
 
@@ -191,5 +196,5 @@ then the row path one mechanism at a time, each priced on its own.
 7. **43.7** The one open under per-pass policies, and the one close, the
    back-fill merging through `BlockRecord`; `map_forward`'s `CopyStart` arm
    becoming the open. `--count-pair` on a data-level parse.
-8. **43.8** `build_index` and `build_map` in `pgdt-fixtures`, the eager pass
-   opening through the open under its policy.
+8. **43.8** `build_index`, `build_map` and `backfill_block` in `pgdt-fixtures`,
+   the eager pass opening through the open under its policy.

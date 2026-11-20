@@ -96,7 +96,7 @@ Spec: [`../design/roadmap-P43-block-model.md`](../design/roadmap-P43-block-model
 - [ ] **43.5** `BlockObserver`'s one-call close; the `Gatherer` as a block's gatherer, a piece's and the strict checker; `--count-pair` on a data-level parse
 - [ ] **43.6** The `Recorder` in `pgdt-model`: a held row split once, `RowFold` replaced, the three hosts fed through it, `Builder` recording nothing and `on_copy_end` taking the record; `--count-pair` on a data-level parse
 - [ ] **43.7** One open under per-pass policies, `map_forward`'s `CopyStart` arm becoming it; one close, the back-fill merging through `BlockRecord`; `--count-pair` on a data-level parse
-- [ ] **43.8** `build_index` and `build_map` in `pgdt-fixtures` behind `mapping`, the eager pass opening through the open under its policy
+- [ ] **43.8** `build_index`, `build_map` and `backfill_block` in `pgdt-fixtures` behind `mapping`, the eager pass opening through the open under its policy
 
 ## Not started
 
@@ -127,15 +127,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`backfill_block` keeps its eight parameters** (`crates/pgdt-mapping/src/backfill.rs`).
-  43.2 read "every function under `too_many_arguments`" as every mapping-pass
-  function, and the spec's field list names exactly those. `backfill_block`
-  opens no pass and has no cache or watch, so it cannot take a `PassContext`.
-  Its parameters are what an embedder states, as `map_file`'s are. Changing
-  that would reshape a public entry point, which is P44's concern, the
-  embedder protocol. `scan_read` and `ColumnGatherer::new` keep the allow too,
-  and neither takes a pass field. Reconsidering means grouping the block's
-  location (`metadata`, `database`, `block`) or taking a public context, so
-  `backfill_block`'s signature changes for its callers
-  ([notes](../design/roadmap-P43.2-pass-context-notes.md), "Negative results").

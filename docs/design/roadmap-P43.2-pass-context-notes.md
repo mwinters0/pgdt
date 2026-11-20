@@ -37,14 +37,14 @@ the row path: no behaviour moved, so no `--count-pair`.
 
 - **Three functions keep `clippy::too_many_arguments`, and none takes a pass
   field the context would replace.**
-  - `backfill_block` is a public entry point. Its parameters are what an
-    embedder states, as `map_file`'s are, and it opens no pass.
+  - `backfill_block` opens no pass. It is called by tests alone, so it leaves
+    the API for `pgdt-fixtures` at 43.8, where it takes a `ReadContext`
+    (`roadmap-P43-block-model.md`, "The eager pass is the fixtures' oracle").
   - `interior/piece.rs`'s `scan_read` is one read's parse on the blocking
     pool, over the piece's carry, fold and observer.
   - `statistics/gather/column.rs`'s `ColumnGatherer::new` is a gatherer's
-    constructor, which 43.5 reshapes.
-
-  STATUS's "Decisions worth another look" puts the first to the maintainer.
+    constructor. 43.5 reshapes it, and drops the allow only if that reshape
+    removes the need.
 - **The exits that bank after an unwinding read now save, then check.** That
   is `map_file`'s `map_forward` error arm. It used to check, then save. An
   enabled save checks the watch before it writes (`CacheMode::save`), so the
