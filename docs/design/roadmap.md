@@ -17,6 +17,7 @@ reused, including a struck phase's.
 |---|---|---|
 | P1–P7, P9–P17, P19, P20, P25, P27–P31, P33, P35, P36, P38 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P8 — `--inserts` and `--column-inserts` rows | Sketched; not grilled | this file, below; [inbox](roadmap-P8-inserts-inbox.md) |
+| P18 — zstd and lz4 input | Sketched; not grilled | this file, below; [inbox](roadmap-P18-zstd-inbox.md) — carved out of the gzip work |
 | P41 — archive formats: the shared model, and `--format=custom` | Sketched; not grilled | this file, below; [inbox](roadmap-P41-archive-formats-inbox.md) |
 | P42 — `--format=directory` and `--format=tar` | Sketched; not grilled | this file, below |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
@@ -26,7 +27,6 @@ reused, including a struck phase's.
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below; [inbox](roadmap-P23-resident-reserve-inbox.md) |
 | P26 — statistics refused on their cost, reconsidered | Sketched; not grilled | this file, below |
-| P18 — zstd and lz4 input | Sketched; not grilled | this file, below; [inbox](roadmap-P18-zstd-inbox.md) — carved out of the gzip work |
 | P24 — Python bindings | Sketched; not grilled | this file, below; [inbox](roadmap-P24-python-inbox.md) |
 | P39 — PostgreSQL as a front end | Sketched; not grilled | this file, below; [inbox](roadmap-P39-postgres-extension-inbox.md) |
 | P40 — every reader streams | Sketched; not grilled | this file, below; [inbox](roadmap-P40-every-reader-streams-inbox.md) — the maintainer sets its order |
@@ -747,6 +747,43 @@ makes `dumpTableData_insert` the entry's dumper, which writes through the
 archive like any other (`pg_dump.c`). An archive reader of an `--inserts` dump
 needs this phase's row reader, or refuses those entries.
 
+## P18 — zstd and lz4 input
+
+**Inbox:** [`roadmap-P18-zstd-inbox.md`](roadmap-P18-zstd-inbox.md) — facts earlier phases filed for this one. Drain it when grilling this phase.
+
+The codecs `pg_dump` gained with PG 16, in the single-frame shape and in the
+seekable one (`t2sz`'s zstd seekable format, a skippable frame carrying the
+frame index). Same argument as gzip's — a `--compress=zstd` plain dump is
+ordinary `pg_dump` output this build cannot read — and the same length
+problem in its own form: zstd's frame content size is *optional* and a
+streaming writer omits it, so the number is unavailable for exactly the files
+this phase exists to read, whose extent is `Open` until a first pass ends
+([`decisions.md`](decisions.md), "D6").
+
+**Carved out of the gzip work rather than shipped with it**, because nothing
+the gzip work does is on this phase's critical path: a different decoder dependency, a
+different seekable container, a different index payload, and a codec that
+arrives with a PG version rather than predating everything. What the two share
+is the extent contract, settled once, by the gzip work (D6), rather than being a
+reason to run them together.
+
+**lz4 rides here**, for the reason it never belonged with gzip: it is the third
+arm of the same PG 16 method selector, with the same shape of problem and no
+gzip-specific anything. Whether it is worth reading at all is this phase's to
+decide, and the honest answer may be no — it earns its place from a real dump
+somebody has, not from the flag existing.
+
+**Scheduled before the archive phases, P41 and P42**, because an archive
+entry compressed with zstd or lz4 is read with the decoders this phase lands.
+Run first, it lets P41 design per-entry decompression against every codec
+`pg_dump` writes, as P41 settles its model against all three containers,
+rather than refuse such entries or take this phase's decoders in; and P42's
+`.zst` and `.lz4` directory entries, being whole files, read through them as
+they stand. So this phase's grilling settles its codecs knowing an archive
+entry will drive them as well as a file. Nothing orders it against P8, the two
+sharing no mechanism. After gzip for no reason beyond gzip being the older and
+more likely input.
+
 ## P41 — Archive formats: the shared model, and `--format=custom`
 
 **Inbox:** [`roadmap-P41-archive-formats-inbox.md`](roadmap-P41-archive-formats-inbox.md) — facts earlier
@@ -789,10 +826,10 @@ P42 adapts directory and tar to it. The shared model is most of the cost:
 - **Parallelism by entry**, a compressed entry not being split across readers.
 - **Per-entry decompression.** An archive compresses internally, so the layer
   decompresses an entry rather than a file, and there is no whole-file byte
-  stream for a source below it to present. gzip's decoder exists; an entry
-  compressed with zstd or lz4 (PG 16 on) is P18's, which runs after this phase,
-  so whether such an entry is refused here or its decoder taken in is this
-  phase's grilling to settle.
+  stream for a source below it to present. Every codec `pg_dump` writes has a
+  decoder by then — gzip's, and zstd's and lz4's from P18, which runs before
+  this phase — so the layer is designed against all three rather than gzip
+  alone, and an lz4 entry is refused only if P18 decided lz4 is not read.
 
 **Custom first** because it is the commonest non-plain format and exercises
 every hard part of the model, which is then not designed around the easy case.
@@ -1055,38 +1092,6 @@ corner-avoidance depth. What it starts from:
 - **Every other refusal the register grounds in gathering cost** — "D76"'s
   clipped head in place of a key for a bytewise value is one — swept from
   `decisions.md` when this phase is grilled.
-
-## P18 — zstd and lz4 input
-
-**Inbox:** [`roadmap-P18-zstd-inbox.md`](roadmap-P18-zstd-inbox.md) — facts earlier phases filed for this one. Drain it when grilling this phase.
-
-The codecs `pg_dump` gained with PG 16, in the single-frame shape and in the
-seekable one (`t2sz`'s zstd seekable format, a skippable frame carrying the
-frame index). Same argument as gzip's — a `--compress=zstd` plain dump is
-ordinary `pg_dump` output this build cannot read — and the same length
-problem in its own form: zstd's frame content size is *optional* and a
-streaming writer omits it, so the number is unavailable for exactly the files
-this phase exists to read, whose extent is `Open` until a first pass ends
-([`decisions.md`](decisions.md), "D6").
-
-**Carved out of the gzip work rather than shipped with it**, because nothing
-the gzip work does is on this phase's critical path: a different decoder dependency, a
-different seekable container, a different index payload, and a codec that
-arrives with a PG version rather than predating everything. What the two share
-is the extent contract, settled once, by the gzip work (D6), rather than being a
-reason to run them together.
-
-**lz4 rides here**, for the reason it never belonged with gzip: it is the third
-arm of the same PG 16 method selector, with the same shape of problem and no
-gzip-specific anything. Whether it is worth reading at all is this phase's to
-decide, and the honest answer may be no — it earns its place from a real dump
-somebody has, not from the flag existing.
-
-**Scheduled after the archive phases, P41 and P42**, by the maintainer's
-order, though an archive entry compressed with zstd or lz4 is read with the
-decoders this phase lands for whole-file input; P41's grilling settles what an
-archive does with such an entry before then. After gzip for no reason beyond
-gzip being the older and more likely input.
 
 ## P24 — Python bindings
 
