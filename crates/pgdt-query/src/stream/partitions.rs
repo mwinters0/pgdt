@@ -25,7 +25,7 @@ use super::replay::plan::{PlannedReplay, ReplayPlan, held_line, plan_replay};
 use super::replay::replay;
 use super::replay::segment::Segment;
 use super::resume::{ResumeToken, query_fingerprint};
-use super::table::{StreamShared, TableStream};
+use super::table::{Settled, StreamShared, TableStream};
 use crate::options::QueryOptions;
 use crate::summary::partition_orders;
 
@@ -296,10 +296,9 @@ impl TablePartitions {
     pub fn in_file_order(&self, max_rows: usize) -> TableStream<'static> {
         let streams = (0..self.len()).map(|partition| self.stream(partition, max_rows)).collect();
         let fingerprint = self.whole_fingerprint();
-        let shared = StreamShared::new(ResumeToken::start(fingerprint))
-            .with_plan_notes(self.plan_notes.clone());
-        self.publish_plan(&shared);
-        merge::in_file_order(streams, shared, fingerprint)
+        let shared = StreamShared::new(ResumeToken::start(fingerprint));
+        let settled = self.settled(self.plan_notes.clone());
+        merge::in_file_order(streams, shared, settled, fingerprint)
     }
 
     /// The table in file order from just past where `token`'s stream stopped,
@@ -330,7 +329,8 @@ impl TablePartitions {
             .filter_map(|segment| segment.resumed_at(token.offset))
             .collect();
         // The plan's own notes, not the cut's: one stream reads them.
-        let shared = StreamShared::new(token.clone()).with_plan_notes(plan.notes().collect());
+        let settled = self.settled(plan.notes().collect());
+        let shared = StreamShared::new(token.clone());
         let shared_for_stream = shared.clone();
         let (source, watch) = (Arc::clone(&self.source), Arc::clone(&self.watch));
         let ledger = self.ledger.clone();
@@ -352,7 +352,7 @@ impl TablePartitions {
             drop(rows);
             watch.finish(source.as_ref()).await?;
         };
-        Ok(shared.into_stream(Box::pin(inner)))
+        Ok(shared.into_stream(Box::pin(inner), settled))
     }
 
     /// The stamp of a stream over the whole table under this plan's query,
@@ -361,15 +361,17 @@ impl TablePartitions {
         query_fingerprint(&self.table, &self.plan.query_options, None)
     }
 
-    /// Publish the plan's schema and comparison notes to `shared` up front,
-    /// as a stream over the whole table holds them before its first poll,
-    /// where the plan reads a block — the notes the first block's, whichever
-    /// table's DDL resolved it ([`ReplayPlan::new`]).
-    fn publish_plan(&self, shared: &StreamShared) {
-        if let Some(planned) = self.plan.blocks.values().next() {
-            *shared.resolved_schema.lock().unwrap() = self.plan.schema.clone();
-            *shared.comparison_notes.lock().unwrap() = planned.notes.clone();
-        }
+    /// What every stream of this plan holds before its first poll: the
+    /// plan's schema and its first block's comparison notes, whichever
+    /// table's DDL resolved it ([`ReplayPlan::new`]), where the plan reads a
+    /// block, the empty schema and none where it reads none; and
+    /// `plan_notes`.
+    fn settled(&self, plan_notes: Vec<PlanNote>) -> Settled {
+        let (schema, comparison_notes) = match self.plan.blocks.values().next() {
+            Some(planned) => (self.plan.schema.clone(), planned.notes.clone()),
+            None => (ResolvedSchema::default(), Vec::new()),
+        };
+        Settled { schema, comparison_notes, plan_notes }
     }
 
     /// These partitions under `filter`, which each of their sub-streams reads
@@ -476,8 +478,8 @@ impl TablePartitions {
             &plan.query_options,
             Some((partition, self.groups.len())),
         );
-        let shared = StreamShared::new(ResumeToken::start(fingerprint))
-            .with_plan_notes(self.plan_notes.clone());
+        let shared = StreamShared::new(ResumeToken::start(fingerprint));
+        let settled = self.settled(self.plan_notes.clone());
         let planned = Arc::clone(&self.groups);
         let statistics = Arc::clone(&self.statistics);
         let shared_for_stream = shared.clone();
@@ -516,7 +518,7 @@ impl TablePartitions {
             drop(rows);
             watch.finish(source.as_ref()).await?;
         };
-        shared.into_stream(Box::pin(inner))
+        shared.into_stream(Box::pin(inner), settled)
     }
 }
 

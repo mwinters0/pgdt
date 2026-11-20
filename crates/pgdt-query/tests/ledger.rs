@@ -212,6 +212,32 @@ async fn a_held_line_draws_its_bytes_and_its_query_s_decode() {
     }
 }
 
+/// **A drawn row a long nested value cuts before ends its own batch,
+/// whatever its value reads as** (`docs/design/decisions.md`, "D154",
+/// "D159"): a `date[]` past its chunk holding `infinity`, which its tier
+/// test reads as NULL whole, after a short row. The batch before it is
+/// emitted and its line drawn for again, and it ends its batch as a drawn
+/// line's row does, so its draw is returned as that batch goes and the row
+/// after it starts the next.
+#[tokio::test]
+async fn a_drawn_row_cut_before_ends_its_batch() {
+    let dates = vec!["2024-01-01"; 2 << 10].join(",");
+    let long = format!("{{infinity,{dates}}}");
+    let (source, _) = long_row("date[]", "{2024-01-01}", &long);
+    let arrangement = lending(1, 1 << 24);
+    let ledger = arrangement.ledger();
+    let plan = plan(source, "public.t", CHUNK, &arrangement).await;
+    let mut stream = plan.stream(0, 8192);
+    let mut batches = Vec::new();
+    while let Some(batch) = stream.next().await {
+        batches.push(batch.unwrap());
+        assert_eq!(ledger.drawn(), 0, "a draw is returned as its batch is emitted");
+    }
+    let rows: Vec<_> = batches.iter().map(RecordBatch::num_rows).collect();
+    assert_eq!(rows, [1, 1, 1], "the long row is cut before and ends its batch");
+    assert!(batches[1].column(1).is_null(0), "its value reads as NULL");
+}
+
 /// `public.t`, an `integer` beside a `long` value of `declared`, between two
 /// rows holding `short`: a dump held in memory, and the long row's line.
 fn long_row(declared: &str, short: &str, long: &str) -> (Arc<dyn ByteRangeSource>, u64) {

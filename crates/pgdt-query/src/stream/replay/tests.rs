@@ -91,11 +91,10 @@ async fn the_filter_is_resolved_once_per_block_at_plan_time() {
     let open = |header: &CopyHeader, block: &CopyBlock| {
         activate(header.clone(), block.header_offset, database.clone(), &plan, 8192)
     };
-    let ((_, _, _, filter, _), resolved, notes) = open(&first.header, first).unwrap();
-    assert!(Arc::ptr_eq(&filter, &planned.filter));
-    assert_eq!((resolved, notes), (planned.resolved.clone(), planned.notes.clone()));
+    let active = open(&first.header, first).unwrap();
+    assert!(Arc::ptr_eq(&active.filter, &planned.filter));
 
     // An activation the entry does not describe resolves for itself.
-    let ((_, _, _, other, _), _, _) = open(&second.header, first).unwrap_or_else(|e| panic!("{e}"));
-    assert!(!Arc::ptr_eq(&other, &planned.filter));
+    let other = open(&second.header, first).unwrap_or_else(|e| panic!("{e}"));
+    assert!(!Arc::ptr_eq(&other.filter, &planned.filter));
 }

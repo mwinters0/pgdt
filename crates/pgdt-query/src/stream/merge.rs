@@ -12,10 +12,11 @@ use pgdt_core::Error;
 
 use super::note::EarlyStop;
 use super::resume::ResumeToken;
-use super::table::{StreamShared, TableStream};
+use super::table::{Settled, StreamShared, TableStream};
 
 /// `streams`, a plan's sub-streams in partition order, merged into one stream
-/// yielding their batches in file order, publishing to `shared`: each
+/// holding `settled` and yielding their batches in file order, publishing to
+/// `shared`: each
 /// batch's source offset, a token stamped `fingerprint` — the whole query's,
 /// which no sub-stream's is — resuming just past it, and the early stops and
 /// dynamic-filter counts of every sub-stream together.
@@ -51,6 +52,7 @@ use super::table::{StreamShared, TableStream};
 pub(super) fn in_file_order(
     mut streams: Vec<TableStream<'static>>,
     shared: StreamShared,
+    settled: Settled,
     fingerprint: u64,
 ) -> TableStream<'static> {
     let shared_for_stream = shared.clone();
@@ -131,7 +133,7 @@ pub(super) fn in_file_order(
             Err(err)?;
         }
     };
-    shared.into_stream(Box::pin(inner))
+    shared.into_stream(Box::pin(inner), settled)
 }
 
 /// One sub-stream's place in the merge: at most one batch, held with the

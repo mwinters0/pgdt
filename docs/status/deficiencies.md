@@ -540,12 +540,6 @@ than reading as a phase nobody has sliced.
   admitted short of what `Terms` credited. **(c) unowned**; promoted by the
   next slice touching the park. Detail: `crates/pgdt-dump/src/scan/chunked.rs`.
 
-- **KD173** — a drawn row cut before is drawn again but not marked drawn, so
-  where its only long value is read as NULL its batch does not end at it, and
-  its draw is returned at the next chunk while that batch still holds the
-  row. **(c) unowned**; promoted by the next slice touching the replay's
-  draw. Detail: `crates/pgdt-query/src/stream/replay.rs`.
-
 - **KD174** — a `pgdt sql` scan exposing fewer partitions than
   `target_partitions` passes its `--memory`: DataFusion's round-robin
   repartition holds a drawn line's decoded copy past the ledger for each output

@@ -25,10 +25,8 @@ use crate::predicate::ComparisonNote;
 pub struct TableStream<'a> {
     inner: Pin<Box<dyn Stream<Item = Result<RecordBatch>> + Send + 'a>>,
     position: Arc<Mutex<ResumeToken>>,
-    resolved_schema: Arc<Mutex<ResolvedSchema>>,
-    comparison_notes: Arc<Mutex<Vec<ComparisonNote>>>,
+    settled: Settled,
     batch_offset: Arc<Mutex<u64>>,
-    plan_notes: Arc<Mutex<Vec<PlanNote>>>,
     early_stops: Arc<Mutex<Vec<EarlyStop>>>,
     dynamic_pruned: Arc<AtomicU64>,
     dynamic_rows: Arc<AtomicU64>,
@@ -55,21 +53,20 @@ impl<'a> TableStream<'a> {
 
     /// This query's resolved schema and diagnostics — one schema per table,
     /// whichever of its blocks a batch came from
-    /// ([`TableColumns`](super::replay::plan::TableColumns)). The empty
-    /// schema (`ResolvedSchema::default`) until the query's matching `COPY`
-    /// block has been found, which for a table that never appears in the dump
-    /// is forever — but on a stream over a plan's whole table
-    /// ([`TablePartitions::in_file_order`](crate::stream::TablePartitions::in_file_order)),
-    /// which holds the plan's from the start where the plan reads a block.
+    /// ([`TableColumns`](super::replay::plan::TableColumns)) — held from
+    /// before the first poll: its plan's
+    /// ([`TablePartitions::resolved_schema`](crate::stream::TablePartitions::resolved_schema)),
+    /// where the plan reads a block, and the empty schema
+    /// (`ResolvedSchema::default`) where it reads none.
     pub fn resolved_schema(&self) -> ResolvedSchema {
-        self.resolved_schema.lock().unwrap().clone()
+        self.settled.schema.clone()
     }
 
     /// The terms of this query whose comparison does not answer what
     /// PostgreSQL's own operator for that column's type would — one
-    /// [`ComparisonNote`] per such term, in term order, empty until this
-    /// query's matching `COPY` block has resolved — but on a stream over a
-    /// plan's whole table, which holds the plan's from the start.
+    /// [`ComparisonNote`] per such term, in term order — held from before
+    /// the first poll, as [`Self::resolved_schema`] is: its plan's first
+    /// block's, and none where the plan reads no block.
     ///
     /// **Per term, because a divergence is operator-conditional**
     /// (`docs/design/decisions.md`, "D59"): most are divergences of *order*
@@ -77,11 +74,9 @@ impl<'a> TableStream<'a> {
     /// `text` column with no `COLLATE` clause earns a note under `<` and none
     /// under `=`. A third channel beside `DumpIndex.diagnostics` (the model)
     /// and `ResolvedSchema::notes` (the codec), each a [`pgdt_model::Finding`] a
-    /// caller drains into one sink with the others. It describes the **last**
-    /// block whose schema resolved, where [`Self::resolved_schema`] is the
-    /// table's.
+    /// caller drains into one sink with the others.
     pub fn comparison_notes(&self) -> Vec<ComparisonNote> {
-        self.comparison_notes.lock().unwrap().clone()
+        self.settled.comparison_notes.clone()
     }
 
     /// Facts about *this query's plan* rather than about a column or a
@@ -100,7 +95,7 @@ impl<'a> TableStream<'a> {
     /// and a resume's the table's TimescaleDB notes and the plan's pruning
     /// and read-as-NULL notes alone, a serial stream noting no budget.
     pub fn plan_notes(&self) -> Vec<PlanNote> {
-        self.plan_notes.lock().unwrap().clone()
+        self.settled.plan_notes.clone()
     }
 
     /// What the early stop did in each block this stream replays with one
@@ -158,53 +153,46 @@ impl<'a> TableStream<'a> {
     }
 }
 
-/// The values a [`TableStream`] publishes to its owner while it runs, plus
-/// `plan_notes` — settled once, with the plan and before any row, unlike the
-/// rest.
+/// The values a [`TableStream`] publishes to its owner while it runs.
 #[derive(Clone)]
 pub(super) struct StreamShared {
     pub(super) position: Arc<Mutex<ResumeToken>>,
-    pub(super) resolved_schema: Arc<Mutex<ResolvedSchema>>,
-    pub(super) comparison_notes: Arc<Mutex<Vec<ComparisonNote>>>,
     pub(super) batch_offset: Arc<Mutex<u64>>,
-    pub(super) plan_notes: Arc<Mutex<Vec<PlanNote>>>,
     pub(super) early_stops: Arc<Mutex<Vec<EarlyStop>>>,
     pub(super) dynamic_pruned: Arc<AtomicU64>,
     pub(super) dynamic_rows: Arc<AtomicU64>,
+}
+
+/// What a [`TableStream`] holds from before its first poll and never
+/// changes, settled with its plan: the schema and comparison notes its plan
+/// resolved ([`TableStream::resolved_schema`]), and the plan's notes.
+pub(super) struct Settled {
+    pub(super) schema: ResolvedSchema,
+    pub(super) comparison_notes: Vec<ComparisonNote>,
+    pub(super) plan_notes: Vec<PlanNote>,
 }
 
 impl StreamShared {
     pub(super) fn new(token: ResumeToken) -> Self {
         Self {
             position: Arc::new(Mutex::new(token)),
-            resolved_schema: Arc::new(Mutex::new(ResolvedSchema::default())),
-            comparison_notes: Arc::new(Mutex::new(Vec::new())),
             batch_offset: Arc::new(Mutex::new(0)),
-            plan_notes: Arc::new(Mutex::new(Vec::new())),
             early_stops: Arc::new(Mutex::new(Vec::new())),
             dynamic_pruned: Arc::new(AtomicU64::new(0)),
             dynamic_rows: Arc::new(AtomicU64::new(0)),
         }
     }
 
-    /// Attach the plan-level notes, known in full before any row is read and
-    /// never changed after.
-    pub(super) fn with_plan_notes(self, plan_notes: Vec<PlanNote>) -> Self {
-        *self.plan_notes.lock().unwrap() = plan_notes;
-        self
-    }
-
     pub(super) fn into_stream<'a>(
         self,
         inner: Pin<Box<dyn Stream<Item = Result<RecordBatch>> + Send + 'a>>,
+        settled: Settled,
     ) -> TableStream<'a> {
         TableStream {
             inner,
             position: self.position,
-            resolved_schema: self.resolved_schema,
-            comparison_notes: self.comparison_notes,
+            settled,
             batch_offset: self.batch_offset,
-            plan_notes: self.plan_notes,
             early_stops: self.early_stops,
             dynamic_pruned: self.dynamic_pruned,
             dynamic_rows: self.dynamic_rows,

@@ -9,19 +9,18 @@ pub(super) mod plan;
 pub(super) mod segment;
 
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use arrow::array::RecordBatch;
 use async_stream::try_stream;
 use futures::Stream;
 
-use pgdt_codec::ResolvedSchema;
 use pgdt_core::CopyHeader;
 use pgdt_core::Result;
 use pgdt_core::internal::{RawRow, RowSplit, validated_prefix};
 use pgdt_dump::internal::{Drawing, announce_read_loop};
 use pgdt_dump::{ChunkedScanner, CopyScanner, Event, Row};
-use pgdt_io::{Admission, ByteRangeSource, Ledger};
+use pgdt_io::{Admission, ByteRangeSource, Holder, Ledger};
 
 use self::dynamic::{DynamicRead, Skip};
 use self::plan::{ReplayPlan, charged, resolve_for_query};
@@ -30,7 +29,7 @@ use super::note::EarlyStop;
 use super::resume::{InCopyResume, ResumeToken};
 use super::table::StreamShared;
 use crate::batch::{RetainedChunks, RowBatcher};
-use crate::predicate::{ComparisonNote, ResolvedExpr};
+use crate::predicate::ResolvedExpr;
 use crate::prune::SortedStop;
 
 /// Pass 2, for one sub-stream: replay `segments` in file order, in batches of
@@ -115,7 +114,8 @@ pub(super) fn replay<'a>(
         // same source.
         announce_read_loop(source, read, plan.parallelism);
 
-        let mut rows_emitted = resume.as_ref().map_or(0, |t| t.rows_emitted);
+        let mut emits =
+            Emits::new(&shared, resume.as_ref().map_or(0, |t| t.rows_emitted), fingerprint);
         // Where a token paused inside a block, and which block: its scanner
         // resumes the first segment only where that segment holds the pause.
         let paused_in = resume
@@ -127,12 +127,7 @@ pub(super) fn replay<'a>(
         // are prebuilt here.
         let (mut active, mut first_scanner) = match &resume {
             Some(token) if token.in_copy.is_some() => {
-                let (scanner, opened) = resume_state(token, &plan, max_rows)?;
-                let active = opened.map(|(active, resolved, notes)| {
-                    *shared.resolved_schema.lock().unwrap() = resolved;
-                    *shared.comparison_notes.lock().unwrap() = notes;
-                    active
-                });
+                let (scanner, active) = resume_state(token, &plan, max_rows)?;
                 (active, Some(scanner))
             }
             _ => (None, None),
@@ -205,21 +200,6 @@ pub(super) fn replay<'a>(
                         )
                         .await?
                         .filter(|&start| start <= seg_limit && start < seg_end);
-                        // No header line is in range, so the schema comes off
-                        // the map's own copy of it.
-                        let (opened, resolved, notes) = activate(
-                            block.header.clone(),
-                            block.header_offset,
-                            block_database.clone(),
-                            &plan,
-                            max_rows,
-                        )?;
-                        // Published even for a piece holding no row, so a
-                        // sub-stream handed only such pieces — cuts inside
-                        // one row, or the runs pruning left — reports the
-                        // block's schema as one entered at its header does.
-                        *shared.comparison_notes.lock().unwrap() = notes;
-                        *shared.resolved_schema.lock().unwrap() = resolved;
                         let Some(row_start) = row_start else { continue };
                         let skip = dynamic.as_mut().map_or(Skip::Read, |dynamic| {
                             dynamic.at_row(row_start, seg_start, seg_limit, semantics)
@@ -232,7 +212,15 @@ pub(super) fn replay<'a>(
                             }
                             Skip::Rest => continue,
                         }
-                        active = Some(opened);
+                        // No header line is in range, so the block's state
+                        // comes off the map's own copy of it.
+                        active = Some(activate(
+                            block.header.clone(),
+                            block.header_offset,
+                            block_database.clone(),
+                            &plan,
+                            max_rows,
+                        )?);
                         CopyScanner::resume(row_start, Some((block.header_offset, 0)))
                     }
                 },
@@ -277,10 +265,10 @@ pub(super) fn replay<'a>(
                 // with its batch:
                 // the read chunks its views point into are given up first.
                 let parks = match active.as_mut() {
-                    Some((_, _, batcher, _, _)) if !batcher.is_empty() => {
+                    Some(open) if !open.batcher.is_empty() => {
                         let asked = holder.stand(chunked.read_pos());
                         if asked {
-                            batcher.own_views(&mut chunks);
+                            open.batcher.own_views(&mut chunks);
                         }
                         asked
                     }
@@ -300,17 +288,17 @@ pub(super) fn replay<'a>(
                     .map(|(start, _)| (start, holder.held()))
                     .filter(|&(_, charge)| charge > 0);
                 if drawn.is_some()
-                    && let Some((_, _, batcher, _, _)) = active.as_mut()
+                    && let Some(open) = active.as_mut()
                 {
-                    batcher.holds_drawn_line();
+                    open.batcher.holds_drawn_line();
                 }
                 // Whether the line this chunk leaves for the next may be
                 // streamed: said again each chunk, a block entered inside
                 // its data having no header to say it at.
-                if let Some(opened) = active.as_ref()
+                if let Some(open) = active.as_ref()
                     && chunk.scanner().in_copy_block()
                 {
-                    chunk.stream_rows(reads_no_field(opened, stop));
+                    chunk.stream_rows(reads_no_field(open, stop));
                 }
                 // The carried line first, being earlier in the file: a row of
                 // the carry pass lies whole in it and in no read chunk.
@@ -336,25 +324,21 @@ pub(super) fn replay<'a>(
                     let at_row = counted || matches!(event, Event::CopyStart(_));
                     match event {
                         Event::CopyStart(start) => {
-                            let (opened, resolved, notes) = activate(
+                            let opened = activate(
                                 start.header,
                                 start.header_offset,
                                 block_database.clone(),
                                 &plan,
                                 max_rows,
                             )?;
-                            *shared.comparison_notes.lock().unwrap() = notes;
-                            *shared.resolved_schema.lock().unwrap() = resolved;
                             chunk.stream_rows(reads_no_field(&opened, stop));
                             active = Some(opened);
                         }
                         Event::Row(row) => {
-                            if let Some((header_offset, header, batcher, filter, database)) =
-                                active.as_mut()
-                            {
+                            if let Some(open) = active.as_mut() {
                                 let unchecked = RawRow::unchecked(row.raw);
-                                let raw = if batcher.decodes_fields()
-                                    || filter.reads_fields()
+                                let raw = if open.batcher.decodes_fields()
+                                    || open.filter.reads_fields()
                                     || dynamic.as_ref().is_some_and(DynamicRead::reads_fields)
                                 {
                                     let (span_base, span) = chunk.span();
@@ -374,10 +358,10 @@ pub(super) fn replay<'a>(
                                 // One split per row, shared
                                 // (`docs/design/decisions.md`, "D28").
                                 split.restart();
-                                let keep = filter.matches(
+                                let keep = open.filter.matches(
                                     raw,
                                     &mut split,
-                                    batcher.table(),
+                                    open.batcher.table(),
                                     row.offset,
                                 )?;
                                 // A kept row a dynamic filter's state
@@ -388,7 +372,7 @@ pub(super) fn replay<'a>(
                                         dynamic.rejects(
                                             raw,
                                             &mut split,
-                                            batcher.table(),
+                                            open.batcher.table(),
                                             row.offset,
                                         )
                                     });
@@ -421,52 +405,26 @@ pub(super) fn replay<'a>(
                                     // A long nested value starts a batch of
                                     // its own (`RowBatcher::cuts_before`):
                                     // the rows before it are emitted, and a
-                                    // pause there resumes at its row.
-                                    if batcher.cuts_before(raw, &mut split) {
-                                        let begins_at = batcher.batch_start().unwrap_or(row.offset);
-                                        let batch = batcher.flush()?;
-                                        holder.release();
-                                        chunks.invalidate_block_cache();
-                                        rows_emitted += batch.num_rows() as u64;
-                                        *shared.batch_offset.lock().unwrap() = begins_at;
-                                        *shared.position.lock().unwrap() = ResumeToken {
-                                            offset: row.offset,
-                                            rows_emitted,
-                                            query_fingerprint: fingerprint,
-                                            generation: 0,
-                                            in_copy: Some(InCopyResume {
-                                                header: header.clone(),
-                                                header_offset: *header_offset,
-                                                // The row is counted as read;
-                                                // it is the next one.
-                                                rows_in_block: chunk
-                                                    .scanner()
-                                                    .in_copy_rows()
-                                                    .unwrap_or(1)
-                                                    - 1,
-                                                database: database.clone(),
-                                            }),
-                                        };
-                                        holder.stand_aside();
-                                        yield batch;
+                                    // pause there resumes at its row, which
+                                    // is counted as read and is the next.
+                                    if open.batcher.cuts_before(raw, &mut split) {
+                                        let read = chunk.scanner().in_copy_rows().unwrap_or(1);
+                                        let in_copy = open.in_copy(read - 1);
+                                        yield emits.emit(
+                                            &mut open.batcher,
+                                            &mut chunks,
+                                            &mut holder,
+                                            row.offset,
+                                            Some(in_copy),
+                                        )?;
                                         // The row's line, still held, is
-                                        // drawn for again; held once, it
-                                        // is under the floor.
-                                        //
-                                        // deficiency: KD173 — the flush
-                                        // above cleared the batcher's
-                                        // drawn-line mark and nothing sets
-                                        // it again: a long value pushed
-                                        // into the empty batch sets it, but
-                                        // one its tier test reads as NULL
-                                        // does not, so the batch runs past
-                                        // the row and the draw is returned
-                                        // at the next chunk while the batch
-                                        // still holds it, which
-                                        // `docs/design/decisions.md`, "D159"
-                                        // refuses. **(c) unowned**; promoted
-                                        // by the next slice touching the
-                                        // replay's draw.
+                                        // drawn for again, held once under
+                                        // the floor, and its row marked
+                                        // drawn again, the flush having
+                                        // cleared the mark: its row ends
+                                        // its batch whatever its value
+                                        // reads as (`docs/design/decisions.md`,
+                                        // "D159").
                                         if let Some((start, charge)) = drawn
                                             .filter(|&(start, _)| start == row.offset)
                                         {
@@ -479,10 +437,11 @@ pub(super) fn replay<'a>(
                                                     }
                                                 }
                                             }
+                                            open.batcher.holds_drawn_line();
                                         }
                                     }
-                                    batcher.push_row(
-                                        *header_offset,
+                                    open.batcher.push_row(
+                                        open.header_offset,
                                         row.offset,
                                         raw,
                                         &mut split,
@@ -496,34 +455,30 @@ pub(super) fn replay<'a>(
                         // is the tree's alone, and its fields are held to
                         // the block's width as a held row's are.
                         Event::StreamedRow(row) => {
-                            if let Some((header_offset, _, batcher, filter, _)) =
-                                active.as_mut()
-                                && filter.matches_unread(batcher.table(), row.offset)?
+                            if let Some(open) = active.as_mut()
+                                && open.filter.matches_unread(open.batcher.table(), row.offset)?
                             {
-                                batcher.push_counted_row(
-                                    *header_offset,
+                                open.batcher.push_counted_row(
+                                    open.header_offset,
                                     row.offset,
                                     row.fields,
                                     row.len,
                                 )?;
                             }
                         }
+                        // The block is over, so its batch resumes outside it.
                         Event::CopyEnd(_) => {
-                            if let Some((_, _, mut batcher, _, _)) = active.take()
-                                && !batcher.is_empty()
+                            if let Some(mut open) = active.take()
+                                && !open.batcher.is_empty()
                             {
-                                let begins_at = batcher
-                                    .batch_start()
-                                    .unwrap_or_else(|| chunk.scanner().position());
-                                let batch = batcher.flush()?;
-                                chunks.invalidate_block_cache();
-                                rows_emitted += batch.num_rows() as u64;
-                                *shared.batch_offset.lock().unwrap() = begins_at;
-                                *shared.position.lock().unwrap() =
-                                    snapshot(chunk.scanner(), &active, rows_emitted, fingerprint);
-                                holder.release();
-                                holder.stand_aside();
-                                yield batch;
+                                let at = chunk.scanner().position();
+                                yield emits.emit(
+                                    &mut open.batcher,
+                                    &mut chunks,
+                                    &mut holder,
+                                    at,
+                                    None,
+                                )?;
                             }
                         }
                         // A replay segment covers exactly one block, so
@@ -534,20 +489,19 @@ pub(super) fn replay<'a>(
                         Event::LargeObjectStart(_) | Event::LargeObjectEnd(_) => {}
                     }
                     if counted
-                        && let Some((_, _, batcher, _, _)) = active.as_mut()
-                        && batcher.should_flush()
+                        && let Some(open) = active.as_mut()
+                        && open.batcher.should_flush()
                     {
-                        let begins_at =
-                            batcher.batch_start().unwrap_or_else(|| chunk.scanner().position());
-                        let batch = batcher.flush()?;
-                        chunks.invalidate_block_cache();
-                        rows_emitted += batch.num_rows() as u64;
-                        *shared.batch_offset.lock().unwrap() = begins_at;
-                        *shared.position.lock().unwrap() =
-                            snapshot(chunk.scanner(), &active, rows_emitted, fingerprint);
-                        holder.release();
-                        holder.stand_aside();
-                        yield batch;
+                        let scanner = chunk.scanner();
+                        let in_copy = open.in_copy(scanner.in_copy_rows().unwrap_or(0));
+                        let at = scanner.position();
+                        yield emits.emit(
+                            &mut open.batcher,
+                            &mut chunks,
+                            &mut holder,
+                            at,
+                            Some(in_copy),
+                        )?;
                     }
                     // The line just consumed ended at or past this
                     // segment's limit, so it was its last. Checked after
@@ -610,19 +564,13 @@ pub(super) fn replay<'a>(
             // A segment that stopped at its limit rather than at the block's
             // `\.` has no `CopyEnd` to flush it, so it flushes here — and
             // clears the block state either way, the next segment possibly
-            // being a different block with a different schema.
-            if let Some((_, _, mut batcher, _, _)) = active.take()
-                && !batcher.is_empty()
+            // being a different block with a different schema. Its token
+            // resumes outside a block, as `CopyEnd`'s does.
+            if let Some(mut open) = active.take()
+                && !open.batcher.is_empty()
             {
-                let begins_at =
-                    batcher.batch_start().unwrap_or_else(|| chunked.scanner().position());
-                let batch = batcher.flush()?;
-                rows_emitted += batch.num_rows() as u64;
-                *shared.batch_offset.lock().unwrap() = begins_at;
-                *shared.position.lock().unwrap() =
-                    snapshot(chunked.scanner(), &active, rows_emitted, fingerprint);
-                holder.stand_aside();
-                yield batch;
+                let at = chunked.scanner().position();
+                yield emits.emit(&mut open.batcher, &mut chunks, &mut holder, at, None)?;
             }
         }
     }
@@ -637,8 +585,7 @@ pub(super) fn replay<'a>(
 /// its contract allows, a row it keeps never being wrong
 /// (`docs/design/decisions.md`, "D138").
 fn reads_no_field(active: &Active, stop: Option<&SortedStop>) -> bool {
-    let (_, _, batcher, filter, _) = active;
-    !batcher.decodes_fields() && !filter.reads_fields() && stop.is_none()
+    !active.batcher.decodes_fields() && !active.filter.reads_fields() && stop.is_none()
 }
 
 /// Add `unread` to the entry of `early_stops` for the block at
@@ -657,18 +604,35 @@ fn record_unread(early_stops: &mut Vec<EarlyStop>, header_offset: u64, unread: u
 }
 
 /// State for a `COPY` block whose table matches the query: the batcher
-/// accumulating its rows, `QueryOptions::filter` resolved against this block's
-/// own schema (a table's blocks can order its columns differently), and the database this block
-/// is attributed to. Each
-/// [`ResolvedExpr`] leaf carries the field index it reads — into the block's
-/// **unprojected** column list — plus the typed comparison it makes. Shared
-/// with the block's [`PlannedBlock`](self::plan::PlannedBlock), so every piece of a block evaluates one
-/// tree.
-type Active = (u64, CopyHeader, RowBatcher, Arc<ResolvedExpr>, Option<String>);
+/// accumulating its rows, `QueryOptions::filter` resolved against this
+/// block's own schema (a table's blocks can order its columns differently),
+/// and the database this block is attributed to.
+struct Active {
+    /// Where the block's `COPY` header starts.
+    header_offset: u64,
+    header: CopyHeader,
+    batcher: RowBatcher,
+    /// Each [`ResolvedExpr`] leaf carries the field index it reads — into
+    /// the block's **unprojected** column list — plus the typed comparison
+    /// it makes. Shared with the block's
+    /// [`PlannedBlock`](self::plan::PlannedBlock), so every piece of a block
+    /// evaluates one tree.
+    filter: Arc<ResolvedExpr>,
+    database: Option<String>,
+}
 
-/// What [`activate`] hands back: the block's state, and the schema and notes
-/// a stream publishes for it.
-type Opened = (Active, ResolvedSchema, Vec<ComparisonNote>);
+impl Active {
+    /// Where a token pausing inside this block stands, `rows_in_block` of
+    /// its rows read.
+    fn in_copy(&self, rows_in_block: u64) -> InCopyResume {
+        InCopyResume {
+            header: self.header.clone(),
+            header_offset: self.header_offset,
+            rows_in_block,
+            database: self.database.clone(),
+        }
+    }
+}
 
 /// Take one block's resolution from `plan` — resolving it here where the
 /// plan holds none (`plan_blocks`) — and build the [`RowBatcher`] that will
@@ -676,14 +640,16 @@ type Opened = (Active, ResolvedSchema, Vec<ComparisonNote>);
 ///
 /// The three places a block becomes active — a `COPY` header the scanner
 /// read, a partition that started inside a block, and a resumed token —
-/// differ only in where the header comes from.
+/// differ only in where the header comes from. None publishes a schema: a
+/// stream holds its plan's from before its first poll
+/// ([`TableStream::resolved_schema`](crate::stream::TableStream::resolved_schema)).
 fn activate(
     header: CopyHeader,
     header_offset: u64,
     database: Option<String>,
     plan: &ReplayPlan,
     max_rows: usize,
-) -> Result<Opened> {
+) -> Result<Active> {
     let resolved_here;
     let block = match plan
         .blocks
@@ -713,10 +679,7 @@ fn activate(
         block.field_targets.clone(),
         block.unrepresentable.clone(),
     );
-    // The table's schema, not the block's: a descendant's may declare a
-    // `NOT NULL` the table does not (`docs/design/decisions.md`, "D131").
-    let (resolved, notes) = (plan.schema.clone(), block.notes.clone());
-    Ok(((header_offset, header, batcher, Arc::clone(&block.filter), database), resolved, notes))
+    Ok(Active { header_offset, header, batcher, filter: Arc::clone(&block.filter), database })
 }
 
 /// Reconstruct the in-progress block state a [`ResumeToken`] captured, if any:
@@ -726,7 +689,7 @@ fn resume_state(
     token: &ResumeToken,
     plan: &ReplayPlan,
     max_rows: usize,
-) -> Result<(CopyScanner, Option<Opened>)> {
+) -> Result<(CopyScanner, Option<Active>)> {
     let scanner = CopyScanner::resume(
         token.offset,
         token.in_copy.as_ref().map(|ic| (ic.header_offset, ic.rows_in_block)),
@@ -741,24 +704,59 @@ fn resume_state(
     Ok((scanner, active))
 }
 
-fn snapshot(
-    scanner: &CopyScanner,
-    active: &Option<Active>,
+/// What a replay tells its owner as each batch goes: how many rows its
+/// stream has emitted, where the batch begins and the token resuming past
+/// it ([`TableStream::batch_source_offset`](crate::stream::TableStream::batch_source_offset),
+/// [`TableStream::resume_token`](crate::stream::TableStream::resume_token)).
+struct Emits {
+    batch_offset: Arc<Mutex<u64>>,
+    position: Arc<Mutex<ResumeToken>>,
     rows_emitted: u64,
-    query_fingerprint: u64,
-) -> ResumeToken {
-    let in_copy = active.as_ref().map(|(header_offset, header, _, _, database)| InCopyResume {
-        header: header.clone(),
-        header_offset: *header_offset,
-        rows_in_block: scanner.in_copy_rows().unwrap_or(0),
-        database: database.clone(),
-    });
-    ResumeToken {
-        offset: scanner.position(),
-        rows_emitted,
-        query_fingerprint,
-        generation: 0,
-        in_copy,
+    fingerprint: u64,
+}
+
+impl Emits {
+    fn new(shared: &StreamShared, rows_emitted: u64, fingerprint: u64) -> Self {
+        Self {
+            batch_offset: Arc::clone(&shared.batch_offset),
+            position: Arc::clone(&shared.position),
+            rows_emitted,
+            fingerprint,
+        }
+    }
+
+    /// **The one step every batch is emitted by**: `batcher`'s batch
+    /// flushed, the block indices `chunks` cached for its builders cleared,
+    /// the line `holder` drew returned and its reader stood aside, so a
+    /// caller holding the stream back at the yield stalls no line
+    /// (`docs/design/decisions.md`, "D159", "D163"); then published. The
+    /// sites differ only in `offset`, where the next row starts, and
+    /// `in_copy`, the block a token resumes inside, `None` where the batch
+    /// ends at its block's `\.` or at its segment's limit. A batch holding
+    /// no row — a `max_rows` or `max_bytes` of 0 — begins at `offset`.
+    fn emit(
+        &mut self,
+        batcher: &mut RowBatcher,
+        chunks: &mut RetainedChunks,
+        holder: &mut Holder,
+        offset: u64,
+        in_copy: Option<InCopyResume>,
+    ) -> Result<RecordBatch> {
+        let begins_at = batcher.batch_start().unwrap_or(offset);
+        let batch = batcher.flush()?;
+        chunks.invalidate_block_cache();
+        holder.release();
+        self.rows_emitted += batch.num_rows() as u64;
+        *self.batch_offset.lock().unwrap() = begins_at;
+        *self.position.lock().unwrap() = ResumeToken {
+            offset,
+            rows_emitted: self.rows_emitted,
+            query_fingerprint: self.fingerprint,
+            generation: 0,
+            in_copy,
+        };
+        holder.stand_aside();
+        Ok(batch)
     }
 }
 
