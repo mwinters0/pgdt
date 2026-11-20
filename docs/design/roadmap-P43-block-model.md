@@ -22,7 +22,7 @@ beside them (D108).
 persisted**: a private integer built only by `BlockAddress::id()` — plain format's
 header offset, an archive entry's arm its position in the TOC. Every identity site
 keys on it: the replay plan's maps, `EarlyStop`, `InCopyResume`, the back-fill's
-`loaded` set, `Error::CachedBlockChanged`, `summary.rs`'s edges and the `through`
+`loaded` set, `summary.rs`'s edges and the `through`
 sorts, each of which relies on dump order today. The replay recognises a block by
 the id of the `CopyStart` it scans, with no lookup. Display sites (errors, notes,
 `info`) print the address. Rejected: an ordinal, which needs an address-to-id map

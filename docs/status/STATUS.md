@@ -127,15 +127,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`Error::CachedBlockChanged` keeps its offset at 43.3, though the P43 spec
-  lists it among `BlockId`'s identity sites.** The call is that it is a
-  display site. The error is `pgdt-core`'s, which can name no model type
-  (D68), and nothing matches on its offset. `pgdt`'s `refusal.rs` and
-  `datafusion-cli-pgdump`'s `spelling.rs` read its path alone, and the
-  back-fill raises it by comparing extents, not ids. So it prints the address,
-  as the spec says a display site does, and 43.3's box is ticked with it.
-  Reconsidering means either amending the spec's list to drop it, or deciding
-  that an error naming a block should carry its identity. The second puts a
-  block type in `pgdt-core` or moves the error out of it
-  ([`../design/roadmap-P43.3-block-id-notes.md`](../design/roadmap-P43.3-block-id-notes.md)).
