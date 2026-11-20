@@ -3389,9 +3389,7 @@ probe below answers identically on `postgres:16.15-trixie` and
 `postgres:18.6-trixie`.
 
 **Scope limit.** Ranges and multiranges. Arrays and composites are I45. The
-*collation* a `text`-bounded range's comparison runs under is not covered here:
-a range type carries its own `collation` parameter, which this build does not
-read (`KD144`).
+*collation* a `text`-bounded range's comparison runs under is I95's.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
 observed in the committed oracle at all six, and the probe below run against
@@ -5993,3 +5991,56 @@ grep -n -A20 '^pg_encoding_mbcliplen' src/backend/utils/mb/mbutils.c
 The first shows the limit, the fast path, the clip and `...`; the second the
 field quoted through it; the third the clip ending before a character that
 would pass the limit.
+
+## I95 — A range type's `collation` parameter is written only where it differs from its subtype's, and its bounds compare under it
+
+**Claim.** A range type over a collatable subtype has a collation of its own,
+`pg_range.rngcollation`: the one its `CREATE TYPE … AS RANGE` stated, or its
+subtype's `typcollation` where it stated none. `pg_dump` writes
+`collation = <collation>` into the range's body exactly where the two differ,
+in `fmtQualifiedDumpable`'s form, as I37's `COLLATE` clause is
+(`pg_catalog."C"`). The server compares a range's bounds — and so its
+multirange companion's — under that collation, whatever a column of it states,
+a range type being no collatable type a column's `COLLATE` could reach.
+
+**Proof.** `dumpRangeType` (`src/bin/pg_dump/pg_dump.c`) selects `CASE WHEN
+rngcollation = st.typcollation THEN 0 ELSE rngcollation END AS collation`,
+`st` the subtype's `pg_type` row, and appends `",\n    collation = %s",
+fmtQualifiedDumpable(coll)` under `OidIsValid(collationOid)`. `DefineRange`
+(`src/backend/commands/typecmds.c`) sets `rangeCollation =
+get_typcollation(rangeSubtype)` where none was stated, and refuses one stated
+over a subtype that is not collatable. `load_rangetype_info`
+(`src/backend/utils/cache/typcache.c`) copies `rngcollation` into
+`rng_collation`, which `range_cmp_bounds` and `range_cmp_bound_values`
+(`rangetypes.c`) and the multirange comparisons (`multirangetypes.c`) pass to
+the subtype's comparison proc by `FunctionCall2Coll`.
+
+**Observed.** `fixtures/<13-18>/types/default.sql`'s `public.textrange`,
+declared over `text` with `collation = pg_catalog."C"`, is written back with
+that parameter at all six majors.
+
+**Scope limit.** The parameter's value names a collation; what that collation
+orders like is I42's and I43's. A domain subtype's own `COLLATE` is its
+`typcollation`, so a range over it states the parameter only to override it.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 and master
+(source); observed in the committed fixtures at all six.
+
+**Relied on by:** `pgdt-dump`'s `ddl/types.rs`, `parse_create_type`, and
+`TypeKind::Range::collation`; `pgdt-codec`'s `compare/walk.rs`,
+`range_comparison`, which asks a range's bound under it as a column's clause.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n -A1 'rngcollation = st.typcollation' src/bin/pg_dump/pg_dump.c
+grep -n -B2 -A3 'collation = %s' src/bin/pg_dump/pg_dump.c
+grep -n -B3 -A12 'Identify collation to use' src/backend/commands/typecmds.c
+grep -n 'rng_collation' src/backend/utils/cache/typcache.c src/backend/utils/adt/rangetypes.c
+grep -n -A4 'CREATE TYPE public.textrange' fixtures/*/types/default.sql
+```
+
+The first two show the parameter suppressed where it is the subtype's and
+written otherwise, the third the default taken from the subtype, the fourth
+the comparison run under it; the last is run from the repo.

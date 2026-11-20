@@ -70,29 +70,25 @@ fn array_comparison(
 }
 
 /// The comparison for a range or multirange column `declared`, from its
-/// bound type and whether the range type canonicalizes.
+/// bound type, the range type's own `collation` parameter and whether the
+/// range type canonicalizes.
 ///
-/// **The bound is asked with no `COLLATE` clause**: the preamble grammar keeps
-/// only `subtype`, `multirange_type_name` and `canonical` of a range's
-/// parameters (I10), so a `text`-bounded range reaches
-/// [`collated_text`](crate::compare::collated_text)'s no-clause arm.
-///
-/// deficiency: KD144 — a range type's own `collation` parameter, which
-/// `pg_dump` writes where it differs from the subtype's, is not read, and the
-/// subtype's comparison runs under it (I46). So a range stating `C` gets
-/// [`UnknownCollation`](crate::compare::ComparisonDivergence::UnknownCollation)
-/// where it agrees outright, and a range stating a collation the same dump
-/// declares `deterministic = false` (I42) gets the same, which does not reach
-/// `=`/`!=`, where the server's equality is not a byte comparison and the row
-/// set differs. Closing it means reading the parameter into
-/// `TypeKind::Range` and passing it here as the bound's clause.
+/// **The bound is asked under the range's `collation`**, passed as a
+/// column's `COLLATE` clause is, since the server compares the bounds under
+/// it and `pg_dump` writes it exactly where it differs from the subtype's
+/// own default (I95) — so its absence reaches a domain subtype's clause, or
+/// [`collated_text`](crate::compare::collated_text)'s no-clause arm, as a
+/// column's absence does. A range type is not collatable, so no column
+/// clause reaches here.
 ///
 /// A range whose DDL stated no subtype at all is [`ComparisonPlan::Refused`]
 /// outright rather than a tree with an unnameable position in it: there is no
 /// declared type to put in the refusal.
+#[allow(clippy::too_many_arguments)]
 fn range_comparison(
     declared: &str,
     subtype: Option<&str>,
+    collation: Option<&str>,
     discrete: Option<Discrete>,
     multi: bool,
     types: &[TypeDef],
@@ -100,7 +96,7 @@ fn range_comparison(
     visits: Visits,
 ) -> ComparisonPlan {
     let Some(subtype) = subtype else { return ComparisonPlan::Refused };
-    let bound = match nested_position(subtype, None, types, collations, visits) {
+    let bound = match nested_position(subtype, collation, types, collations, visits) {
         Ok(bound) => Box::new(bound),
         Err(reason) => return ComparisonPlan::Unanswerable(reason),
     };
@@ -249,6 +245,7 @@ fn comparison_walk(
         Some(range) => range_comparison(
             &base,
             Some(range.subtype),
+            None,
             range.discrete,
             range.multi,
             types,
@@ -284,20 +281,22 @@ fn comparison_user_type(
             // A multirange over a range that canonicalizes is unanswerable
             // for the same reason the range is, and names the *range* type:
             // the companion has no DDL of its own to name (I10).
-            Some(TypeDef { name: range, kind: TypeKind::Range { subtype, canonical, .. } }) => {
-                match canonical {
-                    Some(function) => unanswerable_range(range, function),
-                    None => range_comparison(
-                        name,
-                        subtype.as_deref(),
-                        None,
-                        true,
-                        types,
-                        collations,
-                        visits,
-                    ),
-                }
-            }
+            Some(TypeDef {
+                name: range,
+                kind: TypeKind::Range { subtype, canonical, collation: range_collation, .. },
+            }) => match canonical {
+                Some(function) => unanswerable_range(range, function),
+                None => range_comparison(
+                    name,
+                    subtype.as_deref(),
+                    range_collation.as_deref(),
+                    None,
+                    true,
+                    types,
+                    collations,
+                    visits,
+                ),
+            },
             _ => ComparisonPlan::Refused,
         };
     };
@@ -362,11 +361,12 @@ fn comparison_user_type(
         // declares one the column is unanswerable instead (I46);
         // `fixtures/*`'s `public.myrange` and `public.textrange` declare
         // none.
-        TypeKind::Range { subtype, canonical, .. } => match canonical {
+        TypeKind::Range { subtype, canonical, collation: range_collation, .. } => match canonical {
             Some(function) => unanswerable_range(&def.name, function),
             None => range_comparison(
                 &def.name,
                 subtype.as_deref(),
+                range_collation.as_deref(),
                 None,
                 false,
                 types,

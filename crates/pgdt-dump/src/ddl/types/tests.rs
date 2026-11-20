@@ -165,6 +165,7 @@ fn parses_a_range_type() {
             subtype: Some("int4".to_string()),
             multirange_type_name: None,
             canonical: None,
+            collation: None,
         }
     );
 }
@@ -187,6 +188,7 @@ fn parses_a_range_type_with_a_multirange_companion() {
             subtype: Some("double precision".to_string()),
             multirange_type_name: Some("public.myrange_multi".to_string()),
             canonical: None,
+            collation: None,
         }
     );
 }
@@ -197,8 +199,8 @@ fn parses_a_range_type_with_a_multirange_companion() {
 /// `subtype`, nothing reading it beyond its presence.
 ///
 /// The body here is every parameter `dumpRangeType` can append, in order,
-/// so the two the grammar keeps are found past the three it steps over —
-/// `collation` in particular, whose value carries a quoted identifier.
+/// so each the grammar keeps is found beside `subtype_diff`, which it steps
+/// over.
 #[test]
 fn parses_a_range_type_declaring_a_canonical_function() {
     let def = parse_type(&[
@@ -216,8 +218,40 @@ fn parses_a_range_type_declaring_a_canonical_function() {
             subtype: Some("integer".to_string()),
             multirange_type_name: Some("public.canonrange_multi".to_string()),
             canonical: Some("public.canonrange_canonical".to_string()),
+            collation: Some(r#"pg_catalog."C""#.to_string()),
         }
     );
+}
+
+/// `pg_dump` writes `collation = <collation>` where the range's collation
+/// differs from its subtype's (I95), in `fmtQualifiedDumpable`'s form, and
+/// the value is kept verbatim, as a column's `COLLATE` clause is (I37), the
+/// comparison register parsing both alike.
+#[test]
+fn parses_a_range_type_stating_a_collation() {
+    for (clause, collation) in [
+        (r#"    collation = pg_catalog."C""#, Some(r#"pg_catalog."C""#)),
+        ("    collation = public.nd_ci", Some("public.nd_ci")),
+        ("    subtype_diff = public.text_diff", None),
+    ] {
+        let def = parse_type(&[
+            "CREATE TYPE public.textrange AS RANGE (",
+            "    subtype = text,",
+            "    multirange_type_name = public.textmultirange,",
+            clause,
+            ");",
+        ]);
+        assert_eq!(
+            def.kind,
+            TypeKind::Range {
+                subtype: Some("text".to_string()),
+                multirange_type_name: Some("public.textmultirange".to_string()),
+                canonical: None,
+                collation: collation.map(str::to_string),
+            },
+            "{clause}"
+        );
+    }
 }
 
 #[test]

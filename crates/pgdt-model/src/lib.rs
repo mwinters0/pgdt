@@ -68,4 +68,4 @@ pub mod internal {
 /// `persisted_index_is_pinned_to_the_format_version` pins what every fixture
 /// persists beside this number, as `golden_order_is_pinned_to_the_format_version`
 /// pins the comparison order, and each fails until it is bumped.
-pub const CACHE_FORMAT_VERSION: u32 = 87;
+pub const CACHE_FORMAT_VERSION: u32 = 88;

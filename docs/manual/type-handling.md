@@ -317,6 +317,9 @@ its type's own default, so:
   `text`, `varchar` or `char` column with **no** clause, whose collation is the
   database's and is the one thing a plain dump never records.
 
+A range type over text states its collation the same way, as its `CREATE TYPE`'s
+`collation` parameter, and its bounds are judged by it.
+
 A `char(n)` column is read exactly like a `text` one, once its blank padding is
 out of the way — see below.
 

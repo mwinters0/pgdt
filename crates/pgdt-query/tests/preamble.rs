@@ -175,9 +175,9 @@ async fn default_dump_declares_every_mapped_column_type() {
         );
 
         // A user-defined range over a non-numeric subtype, carrying a
-        // `collation` parameter the range grammar must step over without
-        // mistaking it for the subtype. On PG14+ a `multirange_type_name`
-        // parameter sits between the two (I10).
+        // `collation` parameter the range grammar reads apart from the
+        // subtype, verbatim as a column's clause is (I95). On PG14+ a
+        // `multirange_type_name` parameter sits between the two (I10).
         assert_eq!(
             find_type(&db, "public.textrange").kind,
             TypeKind::Range {
@@ -188,6 +188,7 @@ async fn default_dump_declares_every_mapped_column_type() {
                 // cannot take, so it would need a C or internal-language
                 // function in the fixture schema (I46).
                 canonical: None,
+                collation: Some(r#"pg_catalog."C""#.to_string()),
             },
             "pg_dump {version}"
         );

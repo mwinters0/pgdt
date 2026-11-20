@@ -638,10 +638,15 @@ pub enum TypeKind {
     /// *presence* is the fact `pgdt_codec::pgtype` needs: a user's canonical
     /// function is arbitrary server-side code, so knowing it exists licenses
     /// declining the column rather than reproducing its rewriting.
+    ///
+    /// `collation` is the `collation = <collation>` parameter, verbatim, which
+    /// `pg_dump` writes only where the range's collation differs from its
+    /// subtype's, and which the server compares the bounds under (I95).
     Range {
         subtype: Option<String>,
         multirange_type_name: Option<String>,
         canonical: Option<String>,
+        collation: Option<String>,
     },
     /// A C-level base type (`CREATE TYPE x (INPUT = ..., OUTPUT = ...)`) —
     /// information-free but for `delimiter`; the dump says how the *server*

@@ -32,6 +32,7 @@ fn what_a_strict_parse_leaves_unchecked_is_named_where_it_lies() {
                 subtype: Some("integer".into()),
                 multirange_type_name: None,
                 canonical: Some("public.canon_fn".into()),
+                collation: None,
             },
         ),
         ty(
@@ -54,6 +55,7 @@ fn what_a_strict_parse_leaves_unchecked_is_named_where_it_lies() {
                 subtype: None,
                 multirange_type_name: Some("public.nosubmulti".into()),
                 canonical: None,
+                collation: None,
             },
         ),
         ty("public.ints", TypeKind::domain("integer[]")),
@@ -70,6 +72,7 @@ fn what_a_strict_parse_leaves_unchecked_is_named_where_it_lies() {
                 subtype: Some("public.pos".into()),
                 multirange_type_name: Some("public.posmulti".into()),
                 canonical: None,
+                collation: None,
             },
         ),
     ];
@@ -200,6 +203,7 @@ fn a_strict_check_finds_a_refusal_anywhere_in_a_field() {
                 subtype: Some("public.nn".into()),
                 multirange_type_name: None,
                 canonical: None,
+                collation: None,
             },
         },
     ];

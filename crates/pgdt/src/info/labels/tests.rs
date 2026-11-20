@@ -149,6 +149,7 @@ fn every_type_kind_renders_with_its_own_payload() {
             subtype: Some("double precision".to_string()),
             multirange_type_name: Some("public.myrange_multi".to_string()),
             canonical: None,
+            collation: None,
         }),
         "range over double precision"
     );
@@ -156,7 +157,8 @@ fn every_type_kind_renders_with_its_own_payload() {
         type_kind_summary(&TypeKind::Range {
             subtype: None,
             multirange_type_name: None,
-            canonical: None
+            canonical: None,
+            collation: None,
         }),
         "range (subtype not parsed)"
     );
@@ -167,6 +169,7 @@ fn every_type_kind_renders_with_its_own_payload() {
             subtype: Some("integer".to_string()),
             multirange_type_name: None,
             canonical: Some("public.canonrange_canonical".to_string()),
+            collation: None,
         }),
         "range over integer, canonical public.canonrange_canonical"
     );

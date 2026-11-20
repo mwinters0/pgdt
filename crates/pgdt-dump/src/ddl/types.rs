@@ -43,6 +43,7 @@ pub(super) fn parse_create_type(rest: &str) -> Option<TypeDef> {
         let mut subtype = None;
         let mut multirange_type_name = None;
         let mut canonical = None;
+        let mut collation = None;
         for kv in split_top_level_commas(&body[open + 1..close]) {
             let Some((k, v)) = kv.split_once('=') else { continue };
             let k = k.trim();
@@ -53,11 +54,13 @@ pub(super) fn parse_create_type(rest: &str) -> Option<TypeDef> {
                 multirange_type_name = Some(canonical_type_name(&v).unwrap_or(v));
             } else if k.eq_ignore_ascii_case("canonical") {
                 canonical = Some(v);
+            } else if k.eq_ignore_ascii_case("collation") {
+                collation = Some(v);
             }
         }
         return Some(TypeDef {
             name,
-            kind: TypeKind::Range { subtype, multirange_type_name, canonical },
+            kind: TypeKind::Range { subtype, multirange_type_name, canonical, collation },
         });
     }
     if let Some(body) = strip_kw(after, "AS") {

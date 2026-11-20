@@ -1073,7 +1073,15 @@ READS: tuple[Read | Clause, ...] = (
     *_clauses(_DDL, ("ALTER TYPE",), "BEFORE", "AFTER"),
     *_clauses(_DDL, ("CREATE EXTENSION",), "IF NOT EXISTS", "SCHEMA"),
     *_clauses(_DDL, ("CREATE COLLATION",), "deterministic", "false"),
-    *_clauses(_DDL, ("CREATE TYPE",), "subtype", "multirange_type_name", "canonical", "delimiter"),
+    *_clauses(
+        _DDL,
+        ("CREATE TYPE",),
+        "subtype",
+        "multirange_type_name",
+        "canonical",
+        "collation",
+        "delimiter",
+    ),
     *_clauses(_DDL, ("GRANT ",), " TO "),
     *_clauses(_DDL, ("REVOKE ",), " FROM "),
 )

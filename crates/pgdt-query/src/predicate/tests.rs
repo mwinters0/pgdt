@@ -1121,6 +1121,7 @@ fn a_range_declaring_a_canonical_function_refuses_every_operator() {
             subtype: Some("integer".into()),
             multirange_type_name: None,
             canonical: Some("public.canonrange_canonical".into()),
+            collation: None,
         },
     }];
     let schema = nested_column("public.canonrange", &types);

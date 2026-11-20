@@ -1,4 +1,4 @@
-use pgdt_model::{ColumnDef, TypeDef, TypeKind};
+use pgdt_model::{CollationDef, ColumnDef, TypeDef, TypeKind};
 
 use super::*;
 
@@ -590,6 +590,7 @@ fn every_container_kind_compares_structurally() {
                 subtype: Some("integer".to_string()),
                 multirange_type_name: Some("public.myrange_multi".to_string()),
                 canonical: None,
+                collation: None,
             },
         ),
         ty("public.gtype", TypeKind::base()),
@@ -702,7 +703,12 @@ fn every_container_kind_compares_structurally() {
     // refusal after, so the column is refused outright.
     let subtypeless = [ty(
         "public.opaquerange",
-        TypeKind::Range { subtype: None, multirange_type_name: None, canonical: None },
+        TypeKind::Range {
+            subtype: None,
+            multirange_type_name: None,
+            canonical: None,
+            collation: None,
+        },
     )];
     assert_eq!(
         comparison_for("public.opaquerange", None, &subtypeless, &[]),
@@ -736,6 +742,7 @@ fn a_range_declaring_a_canonical_function_answers_no_operator() {
                 subtype: Some("integer".to_string()),
                 multirange_type_name: Some("public.canonrange_multi".to_string()),
                 canonical: Some("public.canonrange_canonical".to_string()),
+                collation: None,
             },
         ),
         ty(
@@ -779,12 +786,94 @@ fn a_range_declaring_a_canonical_function_answers_no_operator() {
         unreachable!()
     };
     let plain = [
-        ty("public.canonrange", TypeKind::Range { subtype, multirange_type_name, canonical: None }),
+        ty(
+            "public.canonrange",
+            TypeKind::Range { subtype, multirange_type_name, canonical: None, collation: None },
+        ),
         types[1].clone(),
         types[2].clone(),
     ];
     assert!(comparison_for("public.canonrange", None, &plain, &[]).orders());
     assert!(comparison_for("public.holder[]", None, &plain, &[]).orders());
+}
+
+/// A range type's own `collation` parameter is the clause its bounds are
+/// compared under (I95), for the range and its multirange companion alike:
+/// `C` agrees outright, a collation the dump declares non-deterministic
+/// diverges as a column stating it does, and a range stating none is on its
+/// subtype's default — a domain subtype's clause, or the database's.
+#[test]
+fn a_range_compares_its_bounds_under_its_own_collation() {
+    let range = |collation: Option<&str>, subtype: &str| {
+        ty(
+            "public.textrange",
+            TypeKind::Range {
+                subtype: Some(subtype.to_string()),
+                multirange_type_name: Some("public.textmultirange".to_string()),
+                canonical: None,
+                collation: collation.map(str::to_string),
+            },
+        )
+    };
+    let declared = [CollationDef { name: "public.nd_ci".to_string(), deterministic: false }];
+    // The bound is named for its subtype, a domain's where it is one.
+    let leaf = |declared: &str, divergence| NestedCompare::Leaf {
+        declared: declared.to_string(),
+        kind: CompareKind::Text { length: None, varying: false },
+        divergence,
+    };
+    let c_domain = ty(
+        "public.text_c",
+        TypeKind::Domain {
+            base_type: "text".to_string(),
+            collation: Some(r#"pg_catalog."C""#.to_string()),
+            not_null: false,
+            check: false,
+        },
+    );
+    for (types, divergence) in [
+        (vec![range(Some(r#"pg_catalog."C""#), "text")], None),
+        (
+            vec![range(Some("public.nd_ci"), "text")],
+            Some(ComparisonDivergence::NonDeterministicCollation),
+        ),
+        (vec![range(None, "text")], Some(ComparisonDivergence::UnknownCollation)),
+        (
+            vec![range(Some(r#"pg_catalog."en_US.utf8""#), "text")],
+            Some(ComparisonDivergence::NonBytewiseCollation),
+        ),
+        // `pg_dump` writes no parameter where the range's collation is its
+        // domain subtype's, so the domain's clause is the bounds'.
+        (vec![range(None, "public.text_c"), c_domain.clone()], None),
+        // And one it does write overrides it, as a column's clause does.
+        (
+            vec![range(Some("public.nd_ci"), "public.text_c"), c_domain.clone()],
+            Some(ComparisonDivergence::NonDeterministicCollation),
+        ),
+    ] {
+        let bound = |subtype: &str| Box::new(leaf(subtype, divergence));
+        let TypeKind::Range { subtype: Some(subtype), .. } = &types[0].kind else { unreachable!() };
+        assert_eq!(
+            comparison_for("public.textrange", None, &types, &declared),
+            ComparisonPlan::Nested(NestedCompare::Range {
+                declared: "public.textrange".to_string(),
+                bound: bound(subtype),
+                discrete: None,
+            }),
+            "{:?}",
+            types[0].kind
+        );
+        assert_eq!(
+            comparison_for("public.textmultirange", None, &types, &declared),
+            ComparisonPlan::Nested(NestedCompare::Multirange {
+                declared: "public.textmultirange".to_string(),
+                bound: bound(subtype),
+                discrete: None,
+            }),
+            "{:?}",
+            types[0].kind
+        );
+    }
 }
 
 /// Comparability is inherited: a position whose declared type has no

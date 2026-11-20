@@ -96,6 +96,7 @@ fn float_range(name: &str) -> TypeDef {
             subtype: Some("double precision".to_string()),
             multirange_type_name: Some(format!("public.{name}_multirange")),
             canonical: None,
+            collation: None,
         },
     }
 }

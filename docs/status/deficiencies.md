@@ -453,12 +453,6 @@ than reading as a phase nobody has sliced.
   **(a) deliberate tradeoff** — the second decode is D117's, the engine's
   plaintext alone handed out. Detail: `crates/pgdt-gzip-seek/src/speculate.rs`.
 
-- **KD144** — a range type's own `collation` parameter is not read, so a
-  `text`-bounded range is compared as though it stated none: a spurious note
-  where it states `C`, and a byte equality where it states a non-deterministic
-  collation (I42) and the server's is not. **(b) owned by `M295`**. Detail:
-  `crates/pgdt-codec/src/compare/walk.rs`.
-
 - **KD146** — a sorted column holding a NULL is declared in no order, even
   where every NULL leads or trails its values, so it orders no scan and a
   Parquet export cannot record its order. **(b) owned by P37**. Detail:

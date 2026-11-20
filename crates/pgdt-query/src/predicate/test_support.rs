@@ -76,7 +76,12 @@ pub(super) fn test_types() -> Vec<TypeDef> {
         // being no bound type to name the refusal after.
         TypeDef {
             name: "public.opaquerange".into(),
-            kind: TypeKind::Range { subtype: None, multirange_type_name: None, canonical: None },
+            kind: TypeKind::Range {
+                subtype: None,
+                multirange_type_name: None,
+                canonical: None,
+                collation: None,
+            },
         },
     ]
 }

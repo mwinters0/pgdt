@@ -653,11 +653,17 @@ fn a_user_range_maps_through_its_declared_subtype() {
                 subtype: Some("double precision".to_string()),
                 multirange_type_name: None,
                 canonical: None,
+                collation: None,
             },
         ),
         ty(
             "public.bare",
-            TypeKind::Range { subtype: None, multirange_type_name: None, canonical: None },
+            TypeKind::Range {
+                subtype: None,
+                multirange_type_name: None,
+                canonical: None,
+                collation: None,
+            },
         ),
     ];
     assert_eq!(
@@ -689,6 +695,7 @@ fn a_ranges_multirange_companion_resolves_even_with_no_type_def_of_its_own() {
             subtype: Some("double precision".to_string()),
             multirange_type_name: Some("public.myrange_multi".to_string()),
             canonical: None,
+            collation: None,
         },
     )];
     assert_eq!(
@@ -939,6 +946,7 @@ fn a_quoted_type_name_resolves_as_an_ordinary_one() {
             subtype: Some("integer".into()),
             multirange_type_name: Some(r#"s."R_multi""#.into()),
             canonical: None,
+            collation: None,
         },
     )];
     assert!(matches!(
@@ -979,6 +987,7 @@ fn a_not_null_domain_beneath_a_container_marks_its_position() {
                 subtype: Some("public.nn".into()),
                 multirange_type_name: None,
                 canonical: None,
+                collation: None,
             },
         ),
     ];
