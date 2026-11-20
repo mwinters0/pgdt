@@ -103,36 +103,50 @@ pub enum ChunkPass {
 /// read loop is handed one, before each chunk is absorbed ([`draw_absorbing`]), and dropped and read again
 /// where an earlier line needs the room ([`give_up`](Self::give_up))
 /// (`docs/design/decisions.md`, "D157", "D158").
+///
+/// **What it carries between two chunks is one [`Leftover`]**, matched whole
+/// both by what it says it will hold once it absorbs the next
+/// ([`charge_absorbing`](Self::charge_absorbing)) and by the absorb itself
+/// ([`absorb`](Self::absorb)), so a draw cannot price one case while the
+/// absorb takes another (`docs/design/decisions.md`, "D158").
 #[derive(Debug)]
 pub struct ChunkCarry {
+    /// What the last chunk's passes left for the next, and where it lies.
+    left: Leftover,
     /// The line being carried, extended by [`absorb`](Self::absorb) with the
     /// chunk bytes that complete it, and grown chunk by chunk while no chunk
-    /// does. Never written while the chunk is scanned.
+    /// does ([`Leftover::Waiting`]). Never written while the chunk is scanned.
     line: CarriedLine,
     /// The current chunk's carry pass: `line` frozen once a chunk completes
     /// it or the file ends, empty while it waits.
     held: Bytes,
-    /// How much of `held` the carry pass consumed.
-    line_used: usize,
-    /// What the in-place pass left unconsumed: the start of the next chunk's
-    /// line.
+    /// What the in-place pass left unconsumed ([`Leftover::Tail`]): the start
+    /// of the next chunk's line.
     tail: Vec<u8>,
-    /// Where in the current chunk [`ChunkPass::InPlace`] begins.
-    split: usize,
-    /// Whether `line` still holds no newline after the current chunk was
-    /// absorbed — the chunk held none — so its carry pass has nothing to scan
-    /// unless the file ends here.
-    unfinished: bool,
     /// Whether the line carried into the next chunk is a row whose reader
     /// holds none of its bytes, so it may be streamed.
     streams: bool,
-    /// The row being streamed, no chunk having ended it yet.
-    streamed: Option<StreamedLine>,
-    /// The streamed row the current chunk ended, or the file's end did,
-    /// which its carry pass hands out.
-    ended: Option<StreamedLine>,
     /// The field of a streamed row its fold holds whole, until it ends.
     field: CarriedLine,
+}
+
+/// **What a carry's last chunk left for the next**: nothing, a line in exactly
+/// one of the three places a chunk's passes can leave one, or a row being
+/// streamed. One value, so no two of them are ever carried at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Leftover {
+    /// Nothing: the last chunk's passes consumed every byte.
+    Nothing,
+    /// What the carry pass left of its line, `held` from `used` on — a reader
+    /// that stopped inside it, the in-place span then empty.
+    Held { used: usize },
+    /// A line no chunk has ended yet, in `line`, or one given up and read back.
+    Waiting,
+    /// What the in-place pass left, in `tail`.
+    Tail,
+    /// A row being streamed, no chunk having ended it yet, its field held
+    /// whole in `field`.
+    Streamed(StreamedLine),
 }
 
 /// **What a reader folds a streamed row's fields into**, as its bytes go by
@@ -439,15 +453,11 @@ impl ChunkCarry {
     /// longer than that leaves its buffer for a mapping of its own.
     pub fn new(chunk_size: usize) -> Self {
         Self {
+            left: Leftover::Nothing,
             line: CarriedLine::new(chunk_size),
             held: Bytes::new(),
-            line_used: 0,
             tail: Vec::new(),
-            split: 0,
-            unfinished: false,
             streams: false,
-            streamed: None,
-            ended: None,
             field: CarriedLine::new(chunk_size),
         }
     }
@@ -455,8 +465,10 @@ impl ChunkCarry {
     /// [`Passes::carried`], between two chunks: the bytes ahead of the next
     /// chunk that its carry pass begins with.
     pub fn carried(&self) -> usize {
-        let streamed = self.streamed.map_or(0, |line| line.len as usize);
-        self.held.len() - self.line_used + self.line.len() + self.tail.len() + streamed
+        match self.left {
+            Leftover::Streamed(row) => row.len as usize,
+            _ => self.carried_line().len(),
+        }
     }
 
     /// **What it holds past its chunk once it absorbs `next`**, in bytes, the
@@ -480,22 +492,20 @@ impl ChunkCarry {
     /// ([`charge_absorbing`](Self::charge_absorbing)), uncapped, and how many
     /// of those bytes lie before `next`.
     fn holding(&self, next: &[u8], eof: bool, fold: Option<&dyn FieldFold>) -> (usize, usize) {
-        match self.streamed {
-            Some(_) if self.field.is_empty() => (0, 0),
-            Some(row) => {
+        match self.left {
+            Leftover::Nothing => (0, 0),
+            Leftover::Streamed(_) if self.field.is_empty() => (0, 0),
+            Leftover::Streamed(row) => {
                 let before = self.field.len() + usize::from(row.cr);
                 (before + memchr::memchr2(b'\t', b'\n', next).unwrap_or(next.len()), before)
             }
-            None => {
-                let line = self.held.len() - self.line_used + self.line.len() + self.tail.len();
-                if line == 0 {
-                    return (0, 0);
-                }
+            Leftover::Held { .. } | Leftover::Waiting | Leftover::Tail => {
+                let line = self.carried_line();
                 let newline = memchr::memchr(b'\n', next);
-                if self.streams_from(line, next.len(), newline.is_none(), eof) {
-                    return self.starting_field(next, fold);
+                if self.streams_from(line.len(), next.len(), newline.is_none(), eof) {
+                    return self.starting_field(line, next, fold);
                 }
-                (line + newline.map_or(next.len(), |nl| nl + 1), line)
+                (line.len() + newline.map_or(next.len(), |nl| nl + 1), line.len())
             }
         }
     }
@@ -509,15 +519,19 @@ impl ChunkCarry {
         unfinished && !eof && self.streams && line + next_len > STREAM_AFTER_BYTES
     }
 
-    /// The field of the row it carries that `fold` holds whole as the row
-    /// starts streaming over `next`, and how many of its bytes lie before
-    /// `next`: the one the line's last delimiter opens, to `next`'s first,
-    /// or none where it holds no such field. Any other field it holds lies
-    /// in the line or in `next`, each within a chunk — but for a line held
-    /// past its chunk before its reader streamed its rows, charged as a line
-    /// joined whole, an upper bound.
-    fn starting_field(&self, next: &[u8], fold: Option<&dyn FieldFold>) -> (usize, usize) {
-        let line = self.carried_line();
+    /// The field of the row it carries, `line`, that `fold` holds whole as
+    /// the row starts streaming over `next`, and how many of its bytes lie
+    /// before `next`: the one the line's last delimiter opens, to `next`'s
+    /// first, or none where it holds no such field. Any other field it holds
+    /// lies in the line or in `next`, each within a chunk — but for a line
+    /// held past its chunk before its reader streamed its rows, charged as a
+    /// line joined whole, an upper bound.
+    fn starting_field(
+        &self,
+        line: &[u8],
+        next: &[u8],
+        fold: Option<&dyn FieldFold>,
+    ) -> (usize, usize) {
         if line.len() > self.line.outgrows() {
             return (line.len() + next.len(), line.len());
         }
@@ -533,14 +547,14 @@ impl ChunkCarry {
 
     /// The line carried into the next chunk, wherever the last one's passes
     /// left it: what its carry pass left of its line, the line still
-    /// waiting, or the in-place pass's tail — never two ([`absorb`](Self::absorb)).
+    /// waiting, or the in-place pass's tail — empty where it carries none,
+    /// or streams a row.
     fn carried_line(&self) -> &[u8] {
-        if self.line_used < self.held.len() {
-            &self.held[self.line_used..]
-        } else if !self.line.is_empty() {
-            self.line.bytes()
-        } else {
-            &self.tail
+        match self.left {
+            Leftover::Held { used } => &self.held[used..],
+            Leftover::Waiting => self.line.bytes(),
+            Leftover::Tail => &self.tail,
+            Leftover::Nothing | Leftover::Streamed(_) => &[],
         }
     }
 
@@ -578,17 +592,20 @@ impl ChunkCarry {
     /// counted of a streamed row. Answers where those bytes lie, for
     /// [`restore`](Self::restore) to take back once they are read again.
     pub fn give_up(&mut self) -> GivenUp {
-        let given = match self.streamed {
-            Some(row) => {
+        let given = match self.left {
+            Leftover::Nothing => GivenUp { len: 0, after: 0 },
+            Leftover::Streamed(row) => {
                 let given = GivenUp { len: self.field.len(), after: usize::from(row.cr) };
                 self.field.clear();
                 given
             }
-            None => {
+            // Read back into `line`, where a line no chunk has ended waits.
+            Leftover::Held { .. } | Leftover::Waiting | Leftover::Tail => {
                 let given = GivenUp { len: self.carried(), after: 0 };
-                (self.held, self.line_used) = (Bytes::new(), 0);
+                self.held = Bytes::new();
                 self.line.clear();
                 self.tail.clear();
+                self.left = Leftover::Waiting;
                 given
             }
         };
@@ -599,9 +616,12 @@ impl ChunkCarry {
     /// Take back the next `bytes` of what [`give_up`](Self::give_up)
     /// dropped, read again from where it said they lie.
     pub fn restore(&mut self, bytes: &[u8]) {
-        match self.streamed {
-            Some(_) => self.field.extend(bytes),
-            None => self.line.extend(bytes),
+        match self.left {
+            Leftover::Streamed(_) => self.field.extend(bytes),
+            left => {
+                debug_assert_eq!(left, Leftover::Waiting, "a carry restores only what it gave up");
+                self.line.extend(bytes);
+            }
         }
     }
 
@@ -627,85 +647,85 @@ impl ChunkCarry {
         line_start: u64,
         mut fold: Option<&mut dyn FieldFold>,
     ) -> Passes<'a> {
-        // The line carried in is whichever pass left one, never both
-        // (`Passes::span`'s assertion): an unfinished line stays where it
-        // lies, what a carry pass left of its line is taken back, and a tail
-        // the in-place pass left becomes the line.
-        if self.line_used < self.held.len() {
-            debug_assert!(self.tail.is_empty(), "both passes left a line over");
-            debug_assert!(self.line.is_empty(), "a held line beside a waiting one");
-            self.line.extend(&self.held[self.line_used..]);
-        } else if self.line.is_empty() {
-            self.line.swap_in(&mut self.tail);
-        } else {
-            debug_assert!(self.tail.is_empty(), "both passes left a line over");
+        // The line carried in is wherever the last passes left it: what a
+        // carry pass left of its line is taken back, a tail the in-place pass
+        // left becomes the line, and an unfinished line stays where it lies.
+        let left = std::mem::replace(&mut self.left, Leftover::Nothing);
+        match left {
+            Leftover::Held { used } => self.line.extend(&self.held[used..]),
+            Leftover::Tail => self.line.swap_in(&mut self.tail),
+            Leftover::Nothing | Leftover::Waiting | Leftover::Streamed(_) => {}
         }
         // The last carry pass's line, freed here unless a batch kept it.
         self.held = Bytes::new();
-        self.line_used = 0;
-        self.ended = None;
-        if let Some(mut line) = self.streamed.take() {
-            let newline = memchr::memchr(b'\n', chunk);
-            self.split = newline.map_or(chunk.len(), |nl| nl + 1);
-            self.unfinished = newline.is_none();
-            line.read(
-                &chunk[..self.split],
-                newline.is_some(),
-                fold.as_deref_mut(),
-                &mut self.field,
-            );
-            if newline.is_some() || eof {
-                line.end(fold.as_deref_mut(), &mut self.field);
-                self.ended = Some(line);
-            } else {
-                self.streamed = Some(line);
-            }
-        } else if self.line.is_empty() {
-            self.split = 0;
-            self.unfinished = false;
-        } else {
-            let newline = memchr::memchr(b'\n', chunk);
-            self.split = newline.map_or(chunk.len(), |nl| nl + 1);
-            self.unfinished = newline.is_none();
-            // A row a whole chunk passes inside, which its reader does not
-            // read, is streamed from here: its bytes are folded in, not kept.
-            if self.streams_from(self.line.len(), chunk.len(), self.unfinished, eof) {
-                let mut line = StreamedLine::default();
-                if let Some(fold) = fold.as_deref_mut() {
-                    fold.begin_row(line_start);
+        let mut ended = None;
+        // Where in the chunk the in-place pass begins, and whether the chunk
+        // ends no line the carry pass would scan.
+        let (split, unfinished) = match left {
+            Leftover::Nothing => (0, false),
+            Leftover::Streamed(mut line) => {
+                let newline = memchr::memchr(b'\n', chunk);
+                let split = newline.map_or(chunk.len(), |nl| nl + 1);
+                line.read(&chunk[..split], newline.is_some(), fold.as_deref_mut(), &mut self.field);
+                if newline.is_some() || eof {
+                    line.end(fold.as_deref_mut(), &mut self.field);
+                    ended = Some(line);
+                } else {
+                    self.left = Leftover::Streamed(line);
                 }
-                line.read(self.line.bytes(), false, fold.as_deref_mut(), &mut self.field);
-                line.read(chunk, false, fold, &mut self.field);
-                self.line.clear();
-                self.streamed = Some(line);
-            } else {
-                self.line.extend(&chunk[..self.split]);
+                (split, newline.is_none())
             }
-        }
+            Leftover::Held { .. } | Leftover::Waiting | Leftover::Tail => {
+                let newline = memchr::memchr(b'\n', chunk);
+                let split = newline.map_or(chunk.len(), |nl| nl + 1);
+                // A row a whole chunk passes inside, which its reader does not
+                // read, is streamed from here: its bytes are folded in, not kept.
+                if self.streams_from(self.line.len(), chunk.len(), newline.is_none(), eof) {
+                    let mut line = StreamedLine::default();
+                    if let Some(fold) = fold.as_deref_mut() {
+                        fold.begin_row(line_start);
+                    }
+                    line.read(self.line.bytes(), false, fold.as_deref_mut(), &mut self.field);
+                    line.read(chunk, false, fold, &mut self.field);
+                    self.line.clear();
+                    self.left = Leftover::Streamed(line);
+                } else {
+                    self.line.extend(&chunk[..split]);
+                }
+                (split, newline.is_none())
+            }
+        };
         // Nothing in an unfinished line is consumable before the end of the
         // file, so it is not searched again (the type's docs), and it grows on
         // where it lies; one the carry pass scans is frozen, its allocation
         // handed over whole.
-        let line_waits = self.unfinished && !eof;
-        if !line_waits && !self.line.is_empty() {
-            self.held = self.line.freeze();
+        let line_waits = unfinished && !eof;
+        if !self.line.is_empty() {
+            if line_waits {
+                self.left = Leftover::Waiting;
+            } else {
+                self.held = self.line.freeze();
+            }
         }
-        let streaming = self.streamed.map_or(0, |line| line.len as usize);
-        let Self { line, held, line_used, tail, split, streams, ended, .. } = self;
+        let streaming = match self.left {
+            Leftover::Streamed(row) => row.len as usize,
+            _ => 0,
+        };
+        let Self { left, line, held, tail, streams, .. } = self;
         let (line, held): (&'a [u8], &'a Bytes) = (line.bytes(), held);
         Passes {
             line: if line_waits { line } else { held },
             held,
-            rest: &chunk[*split..],
+            rest: &chunk[split..],
             line_waits,
-            ended: *ended,
+            ended,
             streaming,
             streams,
             // The carry pass runs to the true end of the file only when
             // nothing of the chunk is left over for the in-place pass.
-            line_eof: eof && *split == chunk.len(),
+            line_eof: eof && split == chunk.len(),
             eof,
-            line_used,
+            left,
             tail,
         }
     }
@@ -725,7 +745,9 @@ pub struct Passes<'a> {
     streaming: usize,
     line_eof: bool,
     eof: bool,
-    line_used: &'a mut usize,
+    /// What the passes leave for the next chunk, as each records what it
+    /// consumed.
+    left: &'a mut Leftover,
     tail: &'a mut Vec<u8>,
     streams: &'a mut bool,
 }
@@ -770,7 +792,7 @@ impl<'a> Passes<'a> {
                 // chunk with no newline in it — took the whole chunk, leaving
                 // this span empty.
                 debug_assert!(
-                    *self.line_used == self.line.len() || self.rest.is_empty(),
+                    !matches!(*self.left, Leftover::Held { .. }) || self.rest.is_empty(),
                     "an unfinished carry beside a non-empty in-place span mis-bases the scanner"
                 );
                 (self.rest, self.eof)
@@ -780,11 +802,18 @@ impl<'a> Passes<'a> {
 
     /// Record that the scanner consumed `used` bytes of `pass`'s span. After
     /// the in-place pass this is what makes the next chunk's carry: the tail
-    /// the scanner could not finish, which is at most one line.
+    /// the scanner could not finish, which is at most one line. A carry pass
+    /// that scanned nothing — its line waits, or it hands out a streamed row —
+    /// leaves what the absorb left.
     pub fn consumed(&mut self, pass: ChunkPass, used: usize) {
         match pass {
-            ChunkPass::Carry => *self.line_used = used,
-            ChunkPass::InPlace => self.tail.extend_from_slice(&self.rest[used..]),
+            ChunkPass::Carry if used < self.held.len() => *self.left = Leftover::Held { used },
+            ChunkPass::Carry => {}
+            ChunkPass::InPlace if used < self.rest.len() => {
+                self.tail.extend_from_slice(&self.rest[used..]);
+                *self.left = Leftover::Tail;
+            }
+            ChunkPass::InPlace => {}
         }
     }
 
@@ -792,7 +821,13 @@ impl<'a> Passes<'a> {
     /// what they used: a single line's prefix, so a file whose lines fit
     /// stays flat here however large it is.
     pub fn carried(&self) -> usize {
-        self.line.len() - *self.line_used + self.tail.len() + self.streaming
+        match *self.left {
+            Leftover::Nothing => 0,
+            Leftover::Held { used } => self.held.len() - used,
+            Leftover::Waiting => self.line.len(),
+            Leftover::Tail => self.tail.len(),
+            Leftover::Streamed(_) => self.streaming,
+        }
     }
 }
 
