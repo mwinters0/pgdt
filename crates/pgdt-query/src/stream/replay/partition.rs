@@ -8,7 +8,7 @@ use pgdt_io::{
     ByteRangeSource, Parallelism, Partitioning, RetainedUnit, WorkerMemory,
     internal::{cut, worker_count},
 };
-use pgdt_model::CopyBlock;
+use pgdt_model::{BlockId, CopyBlock};
 
 use super::segment::{Segment, SegmentEntry};
 use crate::stream::note::PlanNote;
@@ -140,7 +140,7 @@ fn compressed_first_pass(source: &dyn ByteRangeSource) -> Option<PlanNote> {
 pub(super) fn plan_partitions(
     source: &dyn ByteRangeSource,
     matches: &[CopyBlock],
-    kept: &BTreeMap<u64, Vec<Range<u64>>>,
+    kept: &BTreeMap<BlockId, Vec<Range<u64>>>,
     parallelism: Parallelism,
     max_source_span: Option<usize>,
     chunk_size: usize,
@@ -268,7 +268,7 @@ pub(super) fn plan_partitions(
 /// `workers` sub-streams ([`distribute`]), byte-balanced over what they read.
 pub(in crate::stream) fn cut_blocks(
     matches: &[CopyBlock],
-    kept: &BTreeMap<u64, Vec<Range<u64>>>,
+    kept: &BTreeMap<BlockId, Vec<Range<u64>>>,
     advice: &[Partitioning],
     workers: usize,
 ) -> Vec<Vec<Segment>> {
@@ -281,7 +281,7 @@ pub(in crate::stream) fn cut_blocks(
         // A pruned block's runs are cut instead of its data, each into a
         // share of `want` proportional to its bytes, so the readers are
         // balanced over what remains to be read.
-        let Some(runs) = kept.get(&block.header_offset) else {
+        let Some(runs) = kept.get(&block.id()) else {
             // The **data** range is what is cut, not `[header_offset, …)`: a
             // cut inside the header line would give the first piece no rows.
             // The first piece is then extended back over the header, its

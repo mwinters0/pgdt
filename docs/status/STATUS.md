@@ -91,7 +91,7 @@ Spec: [`../design/roadmap-P43-block-model.md`](../design/roadmap-P43-block-model
 
 - [x] **43.1** `pgdt-model`'s `persisted/` split: the serde shapes alone in it, contracts, walks, diagnostics and recipes beside it; a move, no bump; the concept map's claims follow — [notes](../design/roadmap-P43.1-persisted-notes.md)
 - [x] **43.2** The mapping pass context for every function under `too_many_arguments`; `forward.rs`'s cancel-save-return and `whole_file.rs`'s interrupted exit each written once — [notes](../design/roadmap-P43.2-pass-context-notes.md)
-- [ ] **43.3** `BlockId`, derived from the header offset, at every identity site; display sites print the address; no format change
+- [x] **43.3** `BlockId`, derived from the header offset, at every identity site; display sites print the address; no format change — [notes](../design/roadmap-P43.3-block-id-notes.md)
 - [ ] **43.4** `CopyBlock` as header, partition root, `BlockAddress` and `Arc<BlockRecord>`; `LongestLine` block-relative; `InsertRun` holding a record; copy-on-write in the back-fill and `settle.rs`; `Segment` holding header and address, no whole block cloned; the cache-format bump; `--count-pair` on the typed query
 - [ ] **43.5** `BlockObserver`'s one-call close; the `Gatherer` as a block's gatherer, a piece's and the strict checker; `--count-pair` on a data-level parse
 - [ ] **43.6** The `Recorder` in `pgdt-model`: a held row split once, `RowFold` replaced, the three hosts fed through it, `Builder` recording nothing and `on_copy_end` taking the record; `--count-pair` on a data-level parse
@@ -127,3 +127,15 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`Error::CachedBlockChanged` keeps its offset at 43.3, though the P43 spec
+  lists it among `BlockId`'s identity sites.** The call is that it is a
+  display site. The error is `pgdt-core`'s, which can name no model type
+  (D68), and nothing matches on its offset. `pgdt`'s `refusal.rs` and
+  `datafusion-cli-pgdump`'s `spelling.rs` read its path alone, and the
+  back-fill raises it by comparing extents, not ids. So it prints the address,
+  as the spec says a display site does, and 43.3's box is ticked with it.
+  Reconsidering means either amending the spec's list to drop it, or deciding
+  that an error naming a block should carry its identity. The second puts a
+  block type in `pgdt-core` or moves the error out of it
+  ([`../design/roadmap-P43.3-block-id-notes.md`](../design/roadmap-P43.3-block-id-notes.md)).

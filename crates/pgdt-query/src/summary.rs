@@ -26,7 +26,7 @@ use pgdt_mapping::internal::{
     believed_under, declared_column, dictionary_holds_field_text, keeps_sums, stored_resolution,
 };
 use pgdt_model::{
-    Bounds, ColumnDictionary, CopyBlock, DumpMetadata, Sortedness, StatisticsView,
+    BlockId, Bounds, ColumnDictionary, CopyBlock, DumpMetadata, Sortedness, StatisticsView,
     UnrepresentableTier,
 };
 
@@ -403,7 +403,7 @@ pub(crate) fn partition_orders(
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
     resolved: &ResolvedSchema,
-    runs: &[Vec<u64>],
+    runs: &[Vec<BlockId>],
     reading: StatisticsView,
 ) -> Vec<Sortedness> {
     (0..resolved.schema().fields().len())
@@ -424,16 +424,16 @@ fn column_order(
     database: Option<&str>,
     resolved: &ResolvedSchema,
     i: usize,
-    runs: &[Vec<u64>],
+    runs: &[Vec<BlockId>],
     reading: StatisticsView,
 ) -> Option<Sortedness> {
     let kind =
         resolved.columns()[i].comparison().bounds_read_by(ComparisonSemantics::DataFusion)?;
     let name = resolved.schema().field(i).name();
     let mut order = None;
-    // Each block's first and last group holding a row, by header offset. A
-    // block holding no row has none, and orders nothing.
-    let mut edges: HashMap<u64, (&Bounds, &Bounds)> = HashMap::new();
+    // Each block's first and last group holding a row. A block holding no
+    // row has none, and orders nothing.
+    let mut edges: HashMap<BlockId, (&Bounds, &Bounds)> = HashMap::new();
     for block in matches {
         let statistics = block.statistics.as_deref()?;
         if statistics.columns.len() != block.header.columns.len() {
@@ -480,7 +480,7 @@ fn column_order(
             (recorded, Some(held)) if recorded != held => return None,
             _ => {}
         }
-        edges.insert(block.header_offset, (first?, last?));
+        edges.insert(block.id(), (first?, last?));
     }
     // Where every block holding a row is constant, the edges alone decide a
     // direction, ascending first.
@@ -497,15 +497,15 @@ fn column_order(
 /// Whether each boundary a partition of `runs` crosses between two of
 /// `edges`' blocks is in `order`, `None` where a bound does not key.
 fn edges_in_order(
-    edges: &HashMap<u64, (&Bounds, &Bounds)>,
-    runs: &[Vec<u64>],
+    edges: &HashMap<BlockId, (&Bounds, &Bounds)>,
+    runs: &[Vec<BlockId>],
     order: Sortedness,
     key: impl Fn(&str) -> Option<OrderKey>,
 ) -> Option<bool> {
     for run in runs {
-        let mut offsets = run.clone();
-        offsets.dedup();
-        let blocks: Vec<_> = offsets.iter().filter_map(|offset| edges.get(offset)).collect();
+        let mut ids = run.clone();
+        ids.dedup();
+        let blocks: Vec<_> = ids.iter().filter_map(|id| edges.get(id)).collect();
         for pair in blocks.windows(2) {
             let ((_, earlier), (later, _)) = (pair[0], pair[1]);
             let (high, low) = match order {

@@ -21,6 +21,7 @@ use pgdt_core::internal::{RawRow, RowSplit, validated_prefix};
 use pgdt_dump::internal::{Drawing, announce_read_loop};
 use pgdt_dump::{ChunkedScanner, CopyScanner, Event, Row};
 use pgdt_io::{Admission, ByteRangeSource, Holder, Ledger};
+use pgdt_model::BlockId;
 
 use self::dynamic::{DynamicRead, Skip};
 use self::plan::{ReplayPlan, charged, resolve_for_query};
@@ -120,7 +121,7 @@ pub(super) fn replay<'a>(
         // resumes the first segment only where that segment holds the pause.
         let paused_in = resume
             .as_ref()
-            .and_then(|t| t.in_copy.as_ref().map(|in_copy| (t.offset, in_copy.header_offset)));
+            .and_then(|t| t.in_copy.as_ref().map(|in_copy| (t.offset, in_copy.block)));
 
         // Only the first segment can start mid-row (a resumed stream paused
         // between two of one block's rows); its scanner and in-flight batcher
@@ -147,11 +148,11 @@ pub(super) fn replay<'a>(
         {
             let mut early_stops = shared.early_stops.lock().unwrap();
             for segment in &segments {
-                let header_offset = segment.block.header_offset;
-                if plan.stops.contains_key(&header_offset)
-                    && early_stops.last().is_none_or(|last| last.header_offset != header_offset)
+                let block = segment.block.id();
+                if plan.stops.contains_key(&block)
+                    && early_stops.last().is_none_or(|last| last.block != block)
                 {
-                    early_stops.push(EarlyStop { header_offset, unread_bytes: None });
+                    early_stops.push(EarlyStop { block, unread_bytes: None });
                 }
             }
         }
@@ -161,17 +162,18 @@ pub(super) fn replay<'a>(
         let mut queue = VecDeque::from(segments);
         while let Some(segment) = queue.pop_front() {
             let block = &segment.block;
+            let id = block.id();
             let seg_start = segment.start;
             let seg_limit = segment.limit;
             let seg_end = block.end_offset;
             let block_database = plan.database.clone();
-            let stop = plan.stops.get(&block.header_offset);
+            let stop = plan.stops.get(&id);
             if let Some(dynamic) = dynamic.as_mut() {
                 dynamic.enter(block, &plan);
             }
 
-            let resumes_here = paused_in.is_some_and(|(offset, header_offset)| {
-                header_offset == block.header_offset
+            let resumes_here = paused_in.is_some_and(|(offset, paused)| {
+                paused == id
                     && segment.start < offset
                     && offset <= seg_limit
             });
@@ -215,6 +217,7 @@ pub(super) fn replay<'a>(
                         // No header line is in range, so the block's state
                         // comes off the map's own copy of it.
                         active = Some(activate(
+                            id,
                             block.header.clone(),
                             block.header_offset,
                             block_database.clone(),
@@ -325,6 +328,7 @@ pub(super) fn replay<'a>(
                     match event {
                         Event::CopyStart(start) => {
                             let opened = activate(
+                                start.id(),
                                 start.header,
                                 start.header_offset,
                                 block_database.clone(),
@@ -554,7 +558,7 @@ pub(super) fn replay<'a>(
                 let unread = owned_end.saturating_sub(stopped_at);
                 if unread > 0 {
                     let mut early_stops = shared.early_stops.lock().unwrap();
-                    record_unread(&mut early_stops, block.header_offset, unread);
+                    record_unread(&mut early_stops, id, unread);
                 }
             }
             if let Some(start) = rest_from {
@@ -588,17 +592,17 @@ fn reads_no_field(active: &Active, stop: Option<&SortedStop>) -> bool {
     !active.batcher.decodes_fields() && !active.filter.reads_fields() && stop.is_none()
 }
 
-/// Add `unread` to the entry of `early_stops` for the block at
-/// `header_offset`, adding the entry in file order where there is none: a
-/// dynamic filter's stop is found as the replay runs, not planned.
-fn record_unread(early_stops: &mut Vec<EarlyStop>, header_offset: u64, unread: u64) {
-    match early_stops.iter().position(|e| e.header_offset >= header_offset) {
-        Some(at) if early_stops[at].header_offset == header_offset => {
+/// Add `unread` to the entry of `early_stops` for `block`, adding the entry
+/// in file order where there is none: a dynamic filter's stop is found as the
+/// replay runs, not planned.
+fn record_unread(early_stops: &mut Vec<EarlyStop>, block: BlockId, unread: u64) {
+    match early_stops.iter().position(|e| e.block >= block) {
+        Some(at) if early_stops[at].block == block => {
             *early_stops[at].unread_bytes.get_or_insert(0) += unread;
         }
         at => early_stops.insert(
             at.unwrap_or(early_stops.len()),
-            EarlyStop { header_offset, unread_bytes: Some(unread) },
+            EarlyStop { block, unread_bytes: Some(unread) },
         ),
     }
 }
@@ -608,7 +612,9 @@ fn record_unread(early_stops: &mut Vec<EarlyStop>, header_offset: u64, unread: u
 /// block's own schema (a table's blocks can order its columns differently),
 /// and the database this block is attributed to.
 struct Active {
-    /// Where the block's `COPY` header starts.
+    block: BlockId,
+    /// Where the block's `COPY` header starts: its address, which a refusal
+    /// of one of its rows names.
     header_offset: u64,
     header: CopyHeader,
     batcher: RowBatcher,
@@ -627,6 +633,7 @@ impl Active {
     fn in_copy(&self, rows_in_block: u64) -> InCopyResume {
         InCopyResume {
             header: self.header.clone(),
+            block: self.block,
             header_offset: self.header_offset,
             rows_in_block,
             database: self.database.clone(),
@@ -640,10 +647,12 @@ impl Active {
 ///
 /// The three places a block becomes active — a `COPY` header the scanner
 /// read, a partition that started inside a block, and a resumed token —
-/// differ only in where the header comes from. None publishes a schema: a
+/// differ only in where the block's identity, header and address come from.
+/// None publishes a schema: a
 /// stream holds its plan's from before its first poll
 /// ([`TableStream::resolved_schema`](crate::stream::TableStream::resolved_schema)).
 fn activate(
+    id: BlockId,
     header: CopyHeader,
     header_offset: u64,
     database: Option<String>,
@@ -653,7 +662,7 @@ fn activate(
     let resolved_here;
     let block = match plan
         .blocks
-        .get(&header_offset)
+        .get(&id)
         .filter(|planned| planned.database == database && planned.header == header)
     {
         Some(planned) => planned,
@@ -679,7 +688,14 @@ fn activate(
         block.field_targets.clone(),
         block.unrepresentable.clone(),
     );
-    Ok(Active { header_offset, header, batcher, filter: Arc::clone(&block.filter), database })
+    Ok(Active {
+        block: id,
+        header_offset,
+        header,
+        batcher,
+        filter: Arc::clone(&block.filter),
+        database,
+    })
 }
 
 /// Reconstruct the in-progress block state a [`ResumeToken`] captured, if any:
@@ -698,7 +714,14 @@ fn resume_state(
         .in_copy
         .as_ref()
         .map(|ic| {
-            activate(ic.header.clone(), ic.header_offset, ic.database.clone(), plan, max_rows)
+            activate(
+                ic.block,
+                ic.header.clone(),
+                ic.header_offset,
+                ic.database.clone(),
+                plan,
+                max_rows,
+            )
         })
         .transpose()?;
     Ok((scanner, active))

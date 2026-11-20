@@ -19,7 +19,8 @@ use pgdt_core::{Error, Result};
 use pgdt_dump::ReadOptions;
 use pgdt_io::{ByteRangeSource, Parallelism, Partitioning};
 use pgdt_model::{
-    ArrayShape, CopyBlock, DumpMetadata, Unrepresentable, UnrepresentableTier, union_census,
+    ArrayShape, BlockId, CopyBlock, DumpMetadata, Unrepresentable, UnrepresentableTier,
+    union_census,
 };
 
 use super::partition::plan_partitions;
@@ -59,16 +60,16 @@ pub(in crate::stream) struct ReplayPlan {
     /// The schema every batch of the table is reported under ([`read_schema`]).
     pub(in crate::stream) schema: ResolvedSchema,
     /// Every matched block, resolved and keyed by the
-    /// block's `header_offset` — see [`plan_blocks`], which refuses the whole
+    /// block's [`BlockId`] — see [`plan_blocks`], which refuses the whole
     /// plan on any block's resolution refusal.
-    pub(in crate::stream) blocks: BTreeMap<u64, PlannedBlock>,
+    pub(in crate::stream) blocks: BTreeMap<BlockId, PlannedBlock>,
     /// The runs of row groups each pruned block keeps, keyed as `blocks` is
     /// ([`crate::prune::BlockPruning::kept`]); a block absent here is read
     /// whole.
-    pub(in crate::stream) kept: BTreeMap<u64, Vec<Range<u64>>>,
+    pub(in crate::stream) kept: BTreeMap<BlockId, Vec<Range<u64>>>,
     /// Where each block sorted on a column the filter bounds stops being read,
     /// keyed as `blocks` is ([`SortedStop`]).
-    pub(in crate::stream) stops: BTreeMap<u64, SortedStop>,
+    pub(in crate::stream) stops: BTreeMap<BlockId, SortedStop>,
     /// What pruning skipped, where any block's statistics were consulted.
     pruned: Option<PlanNote>,
     /// Each materialized column's values read as NULL
@@ -162,7 +163,7 @@ impl ReplayPlan {
     /// statistics keep: the run holding group 0 starts at the block's header,
     /// as a whole block does, and every other starts inside its data.
     pub(in crate::stream) fn segments(&self, block: &CopyBlock) -> Vec<Segment> {
-        let Some(kept) = self.kept.get(&block.header_offset) else {
+        let Some(kept) = self.kept.get(&block.id()) else {
             return vec![Segment::new(
                 block,
                 block.header_offset,
@@ -175,7 +176,7 @@ impl ReplayPlan {
 }
 
 /// The largest of `blocks`' decode and key factors ([`ReplayPlan::factor`]).
-fn query_factor(blocks: &BTreeMap<u64, PlannedBlock>) -> Option<Factor> {
+fn query_factor(blocks: &BTreeMap<BlockId, PlannedBlock>) -> Option<Factor> {
     blocks.values().flat_map(PlannedBlock::factors).reduce(Factor::max)
 }
 
@@ -204,7 +205,7 @@ pub(in crate::stream) fn charged(factor: Option<Factor>, held: u64) -> u64 {
 /// `activate` builds from the header, so a header resolving otherwise than
 /// its plan would split them; no test dump does.
 pub(in crate::stream) fn line_charge(
-    blocks: &BTreeMap<u64, PlannedBlock>,
+    blocks: &BTreeMap<BlockId, PlannedBlock>,
     matches: &[CopyBlock],
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
@@ -219,7 +220,7 @@ pub(in crate::stream) fn line_charge(
 /// where that charge is nothing — what a plan holds against its ledger's
 /// floor before it reads a byte (`docs/design/decisions.md`, "D161").
 pub(in crate::stream) fn held_line(
-    blocks: &BTreeMap<u64, PlannedBlock>,
+    blocks: &BTreeMap<BlockId, PlannedBlock>,
     matches: &[CopyBlock],
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
@@ -229,7 +230,7 @@ pub(in crate::stream) fn held_line(
     let Pruned { kept, stops, .. } =
         prune_blocks(matches, blocks, query_options, metadata, database);
     let holds = |block: &&CopyBlock| {
-        let at = &block.header_offset;
+        let at = &block.id();
         let reached = kept.get(at).is_none_or(|runs| !runs.iter().all(Range::is_empty));
         let reads = blocks.get(at).is_none_or(PlannedBlock::reads_fields) || stops.contains_key(at);
         reached && reads
@@ -256,7 +257,7 @@ pub(in crate::stream) fn plan_table(
     matches: &[CopyBlock],
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
-) -> Result<(TableColumns, BTreeMap<u64, PlannedBlock>, ResolvedSchema)> {
+) -> Result<(TableColumns, BTreeMap<BlockId, PlannedBlock>, ResolvedSchema)> {
     refuse_metadata_level(matches, query_options)?;
     let table = TableColumns::settle(database, table, matches, metadata, query_options)?;
     let blocks = plan_blocks(database, matches, query_options, metadata, &table)?;
@@ -274,12 +275,12 @@ fn read_schema(
     database: Option<&str>,
     table: &TableColumns,
     matches: &[CopyBlock],
-    blocks: &BTreeMap<u64, PlannedBlock>,
+    blocks: &BTreeMap<BlockId, PlannedBlock>,
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
 ) -> Result<ResolvedSchema> {
     let own = matches.iter().find(|b| b.header.qualified_name() == table.name);
-    if let Some(planned) = own.and_then(|own| blocks.get(&own.header_offset)) {
+    if let Some(planned) = own.and_then(|own| blocks.get(&own.id())) {
         return Ok(planned.resolved.clone());
     }
     let Some(first) = matches.first() else { return Ok(ResolvedSchema::default()) };
@@ -294,8 +295,8 @@ fn read_schema(
 
 /// What [`prune_blocks`] settles for a [`ReplayPlan`].
 struct Pruned {
-    kept: BTreeMap<u64, Vec<Range<u64>>>,
-    stops: BTreeMap<u64, SortedStop>,
+    kept: BTreeMap<BlockId, Vec<Range<u64>>>,
+    stops: BTreeMap<BlockId, SortedStop>,
     note: Option<PlanNote>,
     /// The rows of every group pruning kept, plus the `row_count` of every
     /// block it did not consult: never fewer than the replay emits, and
@@ -319,7 +320,7 @@ struct Pruned {
 /// it is replayed exactly as an unpruned query replays it, bar its stop.
 fn prune_blocks(
     matches: &[CopyBlock],
-    blocks: &BTreeMap<u64, PlannedBlock>,
+    blocks: &BTreeMap<BlockId, PlannedBlock>,
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
@@ -332,7 +333,7 @@ fn prune_blocks(
     let (mut consulted, mut groups, mut skipped_groups, mut skipped_bytes) = (false, 0, 0, 0);
     for block in matches {
         let pruning = blocks
-            .get(&block.header_offset)
+            .get(&block.id())
             .filter(|planned| query_options.use_statistics && planned.filter.reads_fields())
             .and_then(|planned| {
                 prune_block(
@@ -344,7 +345,7 @@ fn prune_blocks(
                 )
             });
         let kept_groups = pruning.as_ref().map(|pruning| pruning.kept_groups.as_slice());
-        let block_bytes = field_value_bytes(block, blocks.get(&block.header_offset), kept_groups);
+        let block_bytes = field_value_bytes(block, blocks.get(&block.id()), kept_groups);
         for (field, held) in value_bytes.iter_mut().enumerate() {
             *held = held.zip(block_bytes.get(field).copied().flatten()).map(|(a, b)| a + b);
         }
@@ -358,10 +359,10 @@ fn prune_blocks(
         skipped_groups += pruning.skipped_groups;
         skipped_bytes += pruning.skipped_bytes;
         if let Some(stop) = pruning.stop {
-            stops.insert(block.header_offset, stop);
+            stops.insert(block.id(), stop);
         }
         if pruning.skipped_groups > 0 {
-            kept.insert(block.header_offset, pruning.kept);
+            kept.insert(block.id(), pruning.kept);
         }
     }
     let bytes = matches.iter().map(|b| b.terminator_offset.saturating_sub(b.data_offset)).sum();
@@ -391,7 +392,7 @@ struct MaterializedUnrepresentable {
 fn materialized_unrepresentable(
     table: &TableColumns,
     matches: &[CopyBlock],
-    blocks: &BTreeMap<u64, PlannedBlock>,
+    blocks: &BTreeMap<BlockId, PlannedBlock>,
     query_options: &QueryOptions,
 ) -> Vec<MaterializedUnrepresentable> {
     if query_options.schema_mode != SchemaMode::Typed {
@@ -667,7 +668,7 @@ fn plan_blocks(
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
     table: &TableColumns,
-) -> Result<BTreeMap<u64, PlannedBlock>> {
+) -> Result<BTreeMap<BlockId, PlannedBlock>> {
     matches
         .iter()
         .map(|block| {
@@ -680,7 +681,7 @@ fn plan_blocks(
                 table,
                 block.unrepresentable(),
             )?;
-            Ok((block.header_offset, planned))
+            Ok((block.id(), planned))
         })
         .collect()
 }

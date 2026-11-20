@@ -36,7 +36,8 @@ mod chunked;
 use crate::lex::{Lexer, Region, standard_conforming_strings};
 use pgdt_core::{CopyHeader, is_terminator, parse_copy_header};
 use pgdt_core::{Error, Result, RowEndingRefusal};
-use pgdt_model::LongestLine;
+use pgdt_model::internal::BlockIdExt;
+use pgdt_model::{BlockId, LongestLine};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use self::chunked::with_line_bound;
@@ -55,6 +56,14 @@ pub struct CopyStart {
     /// Absolute file offset of the first data byte, just past the header
     /// line's newline.
     pub data_offset: u64,
+}
+
+impl CopyStart {
+    /// The identity of the block this header opens, as the map's own
+    /// [`CopyBlock::id`](pgdt_model::CopyBlock::id) derives it.
+    pub fn id(&self) -> BlockId {
+        BlockId::at_header(self.header_offset)
+    }
 }
 
 /// One raw data row inside a COPY block.

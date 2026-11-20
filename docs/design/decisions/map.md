@@ -85,3 +85,14 @@ level only, which a metadata-level parse finds for free; showing it in `info`'s 
 query: it is an offset, beside the four `--detail` adds, and a line refused names itself; folding an
 `Option<LongestLine>` per row, tested and rebuilt at each, where `CopyScanner` holds a row's length against the
 longest's. Evidence: `pgdt-mapping`'s `tests/longest_line.rs`, `runs/count-pair-33.26-20261112/`.
+
+### D167 A block's identity is derived from its address, ordered in dump order, and never persisted
+`BlockId` is what every site keying, matching or ordering a block holds: the replay plan's maps, a dynamic filter's,
+`EarlyStop`, `InCopyResume`, the back-fill's loaded set, the partition-order edges and the through-root sorts. It is
+derived wherever an address is held (`CopyBlock::id`, `CopyStart::id`), so the replay recognises a block by the header
+it scans, with no lookup. Opaque, and `Ord` in dump order. A display site prints the address: an error is
+`pgdt-core`'s and names no model type (D68). Never persisted, since nothing holding one outlives its process (D49's
+token). Rejected: an ordinal, which needs an address-to-id map to recognise a scanned block and a renumbering on every
+append; the address as its own key, which orders an enum across arms once a block can be addressed by an archive entry.
+Reopens: an identity that must outlive its process. Code: `pgdt_model::BlockId`. Evidence: `pgdt-query`'s replay unit
+tests and `tests/pruning.rs`, which key on it.

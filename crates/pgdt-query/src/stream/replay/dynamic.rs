@@ -18,7 +18,7 @@ use pgdt_core::{
     instrument::EvaluationPart,
     internal::{row_evaluated, timed},
 };
-use pgdt_model::{BlockStatistics, CopyBlock, PostgresInvalidValues};
+use pgdt_model::{BlockId, BlockStatistics, CopyBlock, PostgresInvalidValues};
 
 use super::plan::{ReplayPlan, query_reads, resolve_block};
 use super::segment::Segment;
@@ -82,14 +82,14 @@ pub(in crate::stream) struct DynamicRead {
     filter: Arc<dyn DynamicFilter>,
     /// Whether each row is evaluated against the state.
     evaluation: RowEvaluation,
-    statistics: Arc<BTreeMap<u64, Arc<BlockStatistics>>>,
+    statistics: Arc<BTreeMap<BlockId, Arc<BlockStatistics>>>,
     /// The cut the sub-stream was handed, whose verdicts a state it read is
     /// read with again rather than asked of each group anew.
     cut: Arc<Cut>,
-    /// The block last entered, by `header_offset`, as the filter reads it —
+    /// The block last entered, by its [`BlockId`], as the filter reads it —
     /// `None` before any is, and the inner `None` for one whose schema does
     /// not resolve.
-    block: Option<(u64, Option<DynamicBlock>)>,
+    block: Option<(BlockId, Option<DynamicBlock>)>,
     /// The groups ruled out so far ([`TableStream::dynamic_filter_pruned_groups`](crate::stream::table::TableStream::dynamic_filter_pruned_groups)).
     pruned: Arc<AtomicU64>,
     /// The rows dropped so far ([`TableStream::dynamic_filter_pruned_rows`](crate::stream::table::TableStream::dynamic_filter_pruned_rows)).
@@ -205,7 +205,7 @@ impl DynamicRead {
     pub(in crate::stream) fn new(
         filter: Arc<dyn DynamicFilter>,
         evaluation: RowEvaluation,
-        statistics: Arc<BTreeMap<u64, Arc<BlockStatistics>>>,
+        statistics: Arc<BTreeMap<BlockId, Arc<BlockStatistics>>>,
         cut: Arc<Cut>,
         pruned: Arc<AtomicU64>,
         rows: Arc<AtomicU64>,
@@ -216,11 +216,12 @@ impl DynamicRead {
     /// Make `block` the block being read, unless it already is. Its state is
     /// first read at the first group it enters or chunk it takes.
     pub(in crate::stream) fn enter(&mut self, block: &CopyBlock, plan: &ReplayPlan) {
-        if self.block.as_ref().is_some_and(|(at, _)| *at == block.header_offset) {
+        let id = block.id();
+        if self.block.as_ref().is_some_and(|(at, _)| *at == id) {
             return;
         }
-        let statistics = self.statistics.get(&block.header_offset);
-        self.block = Some((block.header_offset, DynamicBlock::new(block, statistics, plan)));
+        let statistics = self.statistics.get(&id);
+        self.block = Some((id, DynamicBlock::new(block, statistics, plan)));
     }
 
     /// The block being read, where its schema resolves.
@@ -234,7 +235,7 @@ impl DynamicRead {
         let moved = self.filter.generation();
         let (filter, cut) = (Arc::clone(&self.filter), Arc::clone(&self.cut));
         let evaluation = self.evaluation;
-        let Some(block) = self.block() else { return false };
+        let Some((id, Some(block))) = self.block.as_mut() else { return false };
         if block.generation == Some(moved) {
             return false;
         }
@@ -243,7 +244,7 @@ impl DynamicRead {
         // A generation names one state, so the cut's verdicts under it are
         // this state's.
         if generation == cut.generation
-            && let Some(verdicts) = cut.verdicts.get(&block.header_offset)
+            && let Some(verdicts) = cut.verdicts.get(&*id)
             && let Some(pruning) = block.pruning.as_mut()
         {
             pruning.seed(verdicts);
@@ -394,12 +395,11 @@ pub(in crate::stream) struct Cut {
     /// The row groups the cut ruled out, until the first sub-stream to take
     /// it counts them.
     pub(in crate::stream) ruled_out: AtomicU64,
-    /// The generation of the state the cut read, and per block by header
-    /// offset the verdict it reached on each group under that state: a
-    /// sub-stream reading the same state takes them rather than asking each
-    /// group again ([`DynamicPruning::seed`](crate::prune::DynamicPruning::seed)).
+    /// The generation of the state the cut read, and per block the verdict
+    /// it reached on each group under that state: a sub-stream reading the
+    /// same state takes them rather than asking each group again ([`DynamicPruning::seed`](crate::prune::DynamicPruning::seed)).
     pub(in crate::stream) generation: u64,
-    pub(in crate::stream) verdicts: BTreeMap<u64, Vec<Option<bool>>>,
+    pub(in crate::stream) verdicts: BTreeMap<BlockId, Vec<Option<bool>>>,
 }
 
 #[cfg(test)]

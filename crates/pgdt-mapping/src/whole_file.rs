@@ -17,7 +17,10 @@ use pgdt_dump::internal::{derived_diagnostics, scan_preamble};
 use pgdt_dump::{Event, ReadOptions, ScanOptions, scan as scan_events};
 use pgdt_io::{Arrangement, ByteRangeSource, Extent};
 use pgdt_model::internal::IgnoredRefusalsExt;
-use pgdt_model::{Diagnostic, DumpIndex, DumpMetadata, PostgresInvalidValues, Span, timescaledb};
+use pgdt_model::{
+    BlockId, CopyBlock, Diagnostic, DumpIndex, DumpMetadata, PostgresInvalidValues, Span,
+    timescaledb,
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::backfill::{
@@ -381,11 +384,8 @@ async fn map_file_watched(
     // Which statistics the *cache* supplied, by the one identity a block keeps
     // across the splice: what a back-fill replaces leaves this term, and what
     // this run gathered leaves `Term::Retained` instead.
-    let loaded: HashSet<u64> = index
-        .blocks()
-        .filter(|block| block.statistics.is_some())
-        .map(|b| b.header_offset)
-        .collect();
+    let loaded: HashSet<BlockId> =
+        index.blocks().filter(|block| block.statistics.is_some()).map(CopyBlock::id).collect();
     // The diagnostics about the cache *file* rather than about the map — what
     // the load said about its identity; the rest are the derived ones,
     // recomputed below.

@@ -2,7 +2,7 @@
 //! settings it names, and the blocks an early stop left unread.
 
 use pgdt_codec::compare::ComparisonSemantics;
-use pgdt_model::{Finding, Severity};
+use pgdt_model::{BlockId, Finding, Severity};
 
 /// One fact about *this query's plan*, as opposed to a fact about the file
 /// ([`pgdt_model::DiagnosticKind`], the model), about one column
@@ -272,15 +272,15 @@ pub enum PlanNoteKind {
 /// **Per block, not a count**, because a partitioned replay can hand one
 /// block's pieces to several sub-streams and a piece past the stopping row
 /// stops at its own first row: a caller summing over sub-streams counts a
-/// block once by its `header_offset`, and adds its bytes. Rejected: counting
+/// block once by its `block`, and adds its bytes. Rejected: counting
 /// rows past the stop, never read and so only estimable; a zero for a stop
 /// planned and never reached; exact bytes when split, read past each piece's
 /// limit. Reopens: an account needing exact bytes, which each piece reporting
 /// its first row's start would give.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EarlyStop {
-    /// The block, by its [`CopyBlock::header_offset`](pgdt_model::CopyBlock::header_offset).
-    pub header_offset: u64,
+    /// The block, by its [`CopyBlock::id`](pgdt_model::CopyBlock::id).
+    pub block: BlockId,
     /// The bytes of rows the stop left unread in the pieces of the block this
     /// stream replayed, summed; `None` where it ended no piece before its last
     /// row — the bound never passed, or passed only there — which saved

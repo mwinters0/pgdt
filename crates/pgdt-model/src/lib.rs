@@ -36,7 +36,7 @@ pub use persisted::statistics::{
     BlockStatistics, Bounds, ColumnDictionary, ColumnRefusals, ColumnStatistics, FieldRefusal,
     GroupSizing, IgnoredRefusals, RowGroup, Sortedness,
 };
-pub use span::{SPAN_STORED_TEXT_MAX_BYTES, TableName, ThroughRoot, union_census};
+pub use span::{BlockId, SPAN_STORED_TEXT_MAX_BYTES, TableName, ThroughRoot, union_census};
 pub use statistics::{
     BlockGathered, BoundsSet, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
     PostgresInvalidValues, StatisticsView,
@@ -50,6 +50,7 @@ pub mod internal {
     pub use crate::catalog::{DatabaseMetadataExt, TableDefExt};
     pub use crate::diagnostic::DiagnosticExt;
     pub use crate::persisted::statistics::{BoundsView, ColumnBounds};
+    pub use crate::span::BlockIdExt;
     pub use crate::statistics::{
         BlockObserver, ColumnStatisticsExt, ColumnStatisticsParts, FieldRefusalExt,
         IgnoredRefusalsExt, text_heap, vec_heap,

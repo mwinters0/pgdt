@@ -172,7 +172,8 @@ extends a map, and what is found wrong with the file
 
 - **pgdt-model** — `persisted/span.rs`: the spans and their blocks as the
   cache persists them (D68); `span.rs`: what a map answers of them — its
-  blocks, the tables they hold rows for, and the partition roots blocks are
+  blocks and each one's identity, derived and never persisted (D167), the
+  tables they hold rows for, and the partition roots blocks are
   written through, which a read's refusals and the map's findings both read
   (D136); `diagnostic.rs`: what is found wrong with the file, recomputed on
   load rather than persisted.

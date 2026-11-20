@@ -13,8 +13,8 @@ use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ReadOptions, ScanOp
 use pgdt_io::{Arrangement, ByteRangeSource};
 use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
 use pgdt_model::{
-    BlockCensus, BlockGathered, BlockStatistics, CopyBlock, DataBlock, DumpIndex, DumpMetadata,
-    IgnoredRefusals, PostgresInvalidValues, Span, SpanBody, internal::BlockObserver,
+    BlockCensus, BlockGathered, BlockId, BlockStatistics, CopyBlock, DataBlock, DumpIndex,
+    DumpMetadata, IgnoredRefusals, PostgresInvalidValues, Span, SpanBody, internal::BlockObserver,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -76,7 +76,7 @@ pub(crate) async fn backfill_statistics(
     ctx: &PassContext<'_>,
     gathering: Gathering<'_>,
     index: &mut DumpIndex,
-    loaded: HashSet<u64>,
+    loaded: HashSet<BlockId>,
     which: Backfill,
 ) -> Result<BackfillRun> {
     let (statistics, allowance) = (gathering.request, gathering.allowance());
@@ -294,7 +294,7 @@ pub async fn backfill_block(
     let account = Arc::new(StatisticsAccount::charging(allowance, arrangement.ledger().clone()));
     let held = block.statistics.as_deref().map_or(0, BlockStatistics::heap_bytes);
     account.apply(&[(Term::Loaded, held as i64)]);
-    let loaded = block.statistics.is_some().then_some(block.header_offset).into_iter().collect();
+    let loaded = block.statistics.is_some().then_some(block.id()).into_iter().collect();
     let cancel = CancellationToken::new();
     let read = ReadContext {
         source,
@@ -323,9 +323,9 @@ struct Rereads<'a> {
     read: ReadContext<'a>,
     cache_path: Option<&'a Path>,
     gathering: Gathering<'a>,
-    /// The header offsets of the blocks whose statistics the gathering's
-    /// account carries as [`Term::Loaded`], until a re-read replaces them.
-    loaded: HashSet<u64>,
+    /// The blocks whose statistics the gathering's account carries as
+    /// [`Term::Loaded`], until a re-read replaces them.
+    loaded: HashSet<BlockId>,
     shortfall_reported: bool,
 }
 
@@ -437,11 +437,8 @@ impl Rereads<'_> {
                 // supplied, and `Term::Retained` for one this run
                 // gathered — which a block re-read for a stated maximum
                 // is, its own first read included.
-                let term = if self.loaded.remove(&block.header_offset) {
-                    Term::Loaded
-                } else {
-                    Term::Retained
-                };
+                let term =
+                    if self.loaded.remove(&block.id()) { Term::Loaded } else { Term::Retained };
                 block.statistics = Some(Arc::new(gathered));
                 // A block that holds what was asked declines nothing,
                 // so a record from an earlier, tighter allowance goes.

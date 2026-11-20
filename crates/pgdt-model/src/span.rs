@@ -30,7 +30,35 @@ impl LongestLine {
     }
 }
 
+/// **A block's identity**: what every site keying, matching or ordering a
+/// block holds, in dump order, and nothing it prints — a display site prints
+/// the block's address (`docs/design/decisions.md`, "D167"). Derived from
+/// the address wherever one is held ([`CopyBlock::id`], and the scanner's
+/// `CopyStart`), and never persisted: nothing holding one outlives its
+/// process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BlockId(u64);
+
+/// What builds a [`BlockId`] outside this crate: the scanner deriving one
+/// from the header it reads.
+pub trait BlockIdExt {
+    /// The identity of the block whose `COPY` header starts at
+    /// `header_offset` — a plain dump's address.
+    fn at_header(header_offset: u64) -> Self;
+}
+
+impl BlockIdExt for BlockId {
+    fn at_header(header_offset: u64) -> Self {
+        Self(header_offset)
+    }
+}
+
 impl CopyBlock {
+    /// The block's identity ([`BlockId`]), derived from its address.
+    pub fn id(&self) -> BlockId {
+        BlockId::at_header(self.header_offset)
+    }
+
     /// The census's array shapes, where the block holds one.
     pub fn array_shapes(&self) -> Option<&[ArrayShape]> {
         self.census.as_ref().map(|census| census.shapes.as_slice())

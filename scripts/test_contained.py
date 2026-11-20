@@ -184,7 +184,10 @@ class Argv(unittest.TestCase):
         )
         dests = [str(d) for _, d in binds]
         self.assertFalse([d for d in dests if d.startswith(("/proc", "/sys"))], dests)
-        self.assertFalse([d for d in dests if d.startswith("/dev") and not d.startswith("/dev/shm/")], dests)
+        # The staging path's nearest existing directory is mounted, which is
+        # `/dev/shm` itself wherever nothing is staged yet.
+        staged = [d for d in dests if Path(d) == contained.STAGED or contained.STAGED in Path(d).parents]
+        self.assertFalse([d for d in dests if d.startswith("/dev") and d not in staged], dests)
 
     def test_the_environment_reaches_the_container_and_its_paths_are_mounted(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -62,10 +62,7 @@ async fn the_filter_is_resolved_once_per_block_at_plan_time() {
     ));
 
     let plan = plan_for(&query_options).unwrap();
-    assert_eq!(
-        plan.blocks.keys().copied().collect::<Vec<_>>(),
-        [first.header_offset, second.header_offset]
-    );
+    assert_eq!(plan.blocks.keys().copied().collect::<Vec<_>>(), [first.id(), second.id()]);
 
     // The planned entry is what resolving the block where it is reached
     // would have produced.
@@ -80,16 +77,16 @@ async fn the_filter_is_resolved_once_per_block_at_plan_time() {
             block.unrepresentable(),
         )
     };
-    let planned = &plan.blocks[&first.header_offset];
+    let planned = &plan.blocks[&first.id()];
     assert_eq!(format!("{planned:?}"), format!("{:?}", live(first).unwrap()));
 
     // The second block's `a` is its second field, and it is `a` that
     // feeds the projection.
-    assert_eq!(plan.blocks[&second.header_offset].field_targets, [None, Some(0)]);
+    assert_eq!(plan.blocks[&second.id()].field_targets, [None, Some(0)]);
 
     // Activating the planned block hands out the plan's own tree.
     let open = |header: &CopyHeader, block: &CopyBlock| {
-        activate(header.clone(), block.header_offset, database.clone(), &plan, 8192)
+        activate(block.id(), header.clone(), block.header_offset, database.clone(), &plan, 8192)
     };
     let active = open(&first.header, first).unwrap();
     assert!(Arc::ptr_eq(&active.filter, &planned.filter));

@@ -154,7 +154,7 @@ enum Slot {
 fn publish(shared: &StreamShared, streams: &[TableStream<'static>]) {
     let mut stops: Vec<EarlyStop> = Vec::new();
     for stop in streams.iter().flat_map(TableStream::early_stops) {
-        match stops.iter_mut().find(|held| held.header_offset == stop.header_offset) {
+        match stops.iter_mut().find(|held| held.block == stop.block) {
             Some(held) => {
                 if let Some(unread) = stop.unread_bytes {
                     *held.unread_bytes.get_or_insert(0) += unread;
@@ -163,7 +163,7 @@ fn publish(shared: &StreamShared, streams: &[TableStream<'static>]) {
             None => stops.push(stop),
         }
     }
-    stops.sort_by_key(|stop| stop.header_offset);
+    stops.sort_by_key(|stop| stop.block);
     *shared.early_stops.lock().unwrap() = stops;
     let groups = streams.iter().map(TableStream::dynamic_filter_pruned_groups).sum();
     let rows = streams.iter().map(TableStream::dynamic_filter_pruned_rows).sum();

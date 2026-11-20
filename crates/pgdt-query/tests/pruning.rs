@@ -23,7 +23,9 @@ use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSizing};
-use pgdt_model::{Bounds, BoundsSet, ColumnStatistics, CopyBlock, DumpIndex, StatisticsView};
+use pgdt_model::{
+    BlockId, Bounds, BoundsSet, ColumnStatistics, CopyBlock, DumpIndex, StatisticsView,
+};
 use pgdt_query::{
     EarlyStop, Expr, PlanNote, PlanNoteKind, Predicate, PredicateOp, QueryOptions, TablePartitions,
 };
@@ -221,10 +223,10 @@ async fn answer_in(
 
 /// Per block, what `stops` — gathered over sub-streams — left unread, a block
 /// whose stop fired in no sub-stream mapping to `None`.
-fn unread_per_block(stops: &[EarlyStop]) -> BTreeMap<u64, Option<u64>> {
+fn unread_per_block(stops: &[EarlyStop]) -> BTreeMap<BlockId, Option<u64>> {
     let mut out = BTreeMap::new();
     for stop in stops {
-        let entry: &mut Option<u64> = out.entry(stop.header_offset).or_default();
+        let entry: &mut Option<u64> = out.entry(stop.block).or_default();
         if let Some(bytes) = stop.unread_bytes {
             *entry.get_or_insert(0) += bytes;
         }
@@ -1327,7 +1329,7 @@ async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
                     let end = ordered_line_end(&dump, block, id);
                     let past = starts.iter().filter(|&&s| s >= end).count();
                     let rest = block.terminator_offset - end;
-                    let reported = unread.get(&block.header_offset).copied().flatten();
+                    let reported = unread.get(&block.id()).copied().flatten();
                     assert_eq!(unread.len(), 1, "{what}: {stops:?}");
                     if jobs == 1 {
                         assert_eq!(past, 0, "{what}: read at {last}, past {end}");
@@ -1346,7 +1348,7 @@ async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
                         block.terminator_offset
                     );
                     let entries = match stop {
-                        Stop::Unreached => BTreeMap::from([(block.header_offset, None)]),
+                        Stop::Unreached => BTreeMap::from([(block.id(), None)]),
                         _ => BTreeMap::new(),
                     };
                     assert_eq!(unread, entries, "{what}: {stops:?}");
@@ -1392,23 +1394,19 @@ async fn a_pruned_stop_reports_the_rest_of_its_run_beside_the_skipped_groups() {
         let (_, _, skipped_bytes, bytes) = pruned(&notes).unwrap();
         let serial = unread_per_block(&serial);
         if !stops_inside {
-            assert_eq!(serial, BTreeMap::from([(block.header_offset, None)]), "pg_dump {version}");
+            assert_eq!(serial, BTreeMap::from([(block.id(), None)]), "pg_dump {version}");
             continue;
         }
         fired += 1;
         let unread = run_end - end;
-        assert_eq!(
-            serial,
-            BTreeMap::from([(block.header_offset, Some(unread))]),
-            "pg_dump {version}"
-        );
+        assert_eq!(serial, BTreeMap::from([(block.id(), Some(unread))]), "pg_dump {version}");
         let read = end - block.data_offset;
         let straddling = bytes - read - unread - skipped_bytes;
         assert!(straddling < n, "pg_dump {version}: {straddling} byte(s) in neither count");
 
         let (_, _, _, split) =
             answer(&dump, &cache, "public.ordered", with(filter, true, SPLIT_JOBS)).await.unwrap();
-        let split = unread_per_block(&split)[&block.header_offset].unwrap_or(0);
+        let split = unread_per_block(&split)[&block.id()].unwrap_or(0);
         assert!(split <= unread, "pg_dump {version}: {split} of {unread}");
     }
     assert!(fired > 0, "no fixture's stop fell inside a kept group");

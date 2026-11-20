@@ -146,10 +146,10 @@ impl Refused {
     }
 
     /// Blocks written through a root, refusing a read of what they hold: the
-    /// first's root, every one's offset; `None` where there are none.
-    fn through(blocks: &[(String, u64)]) -> Option<Self> {
+    /// first's root, every one's address; `None` where there are none.
+    fn through(blocks: &[(String, &CopyBlock)]) -> Option<Self> {
         let (root, _) = blocks.first()?;
-        let header_offsets = blocks.iter().map(|(_, offset)| *offset).collect();
+        let header_offsets = blocks.iter().map(|(_, block)| block.header_offset).collect();
         Some(Self::Through { root: root.clone(), header_offsets })
     }
 
@@ -213,7 +213,7 @@ pub(super) fn table_read(index: &DumpIndex, name: &TableName) -> TableRead {
             if !held.as_ref().map_or_else(|| below(&root.root), reads) {
                 continue;
             }
-            let at = (root.root.qualified_name(), block.header_offset);
+            let at = (root.root.qualified_name(), *block);
             let own = match held {
                 Some(held) => held == name,
                 None => !partitioned,
@@ -226,9 +226,9 @@ pub(super) fn table_read(index: &DumpIndex, name: &TableName) -> TableRead {
         }
     }
     // In file order, whichever root each is written through.
-    through.sort_by_key(|block| block.header_offset);
-    through_any.sort_by_key(|(_, offset)| *offset);
-    through_own.sort_by_key(|(_, offset)| *offset);
+    through.sort_by_key(CopyBlock::id);
+    through_any.sort_by_key(|(_, block)| block.id());
+    through_own.sort_by_key(|(_, block)| block.id());
     let mut refused = Refusals {
         descendants: Refused::through(&through_any),
         only: Refused::through(&through_own),

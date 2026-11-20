@@ -4,6 +4,7 @@
 use pgdt_codec::SchemaMode;
 use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_core::CopyHeader;
+use pgdt_model::BlockId;
 
 use crate::options::QueryOptions;
 use crate::predicate::{Expr, PredicateOp};
@@ -33,6 +34,8 @@ pub struct ResumeToken {
 #[derive(Debug, Clone)]
 pub(super) struct InCopyResume {
     pub(super) header: CopyHeader,
+    pub(super) block: BlockId,
+    /// The block's address, where its scanner resumes reporting it.
     pub(super) header_offset: u64,
     pub(super) rows_in_block: u64,
     pub(super) database: Option<String>,

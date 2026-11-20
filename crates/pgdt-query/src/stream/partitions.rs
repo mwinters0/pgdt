@@ -15,7 +15,7 @@ use pgdt_core::{Error, Result};
 use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::SourceWatch;
 use pgdt_io::{Arrangement, ByteRangeSource, Ledger, Partitioning};
-use pgdt_model::{BlockStatistics, CopyBlock, DumpMetadata, Sortedness, TableName};
+use pgdt_model::{BlockId, BlockStatistics, CopyBlock, DumpMetadata, Sortedness, TableName};
 
 use super::merge;
 use super::note::PlanNote;
@@ -103,7 +103,7 @@ pub struct TablePartitions {
     plan_notes: Vec<PlanNote>,
     orders: Vec<Sortedness>,
     table: String,
-    statistics: Arc<BTreeMap<u64, Arc<BlockStatistics>>>,
+    statistics: Arc<BTreeMap<BlockId, Arc<BlockStatistics>>>,
     /// Every matched block in file order, its statistics held where the query
     /// uses them, and the advice the planned cut was made by: what a dynamic
     /// filter's cut is made from again ([`Self::cut_under`]).
@@ -177,7 +177,7 @@ impl TablePartitions {
             .collect();
         let statistics = matches
             .iter()
-            .filter_map(|block| Some((block.header_offset, Arc::clone(block.statistics.as_ref()?))))
+            .filter_map(|block| Some((block.id(), Arc::clone(block.statistics.as_ref()?))))
             .collect();
         Ok(Self {
             source,
@@ -414,12 +414,13 @@ impl TablePartitions {
             };
             dynamic.read(generation, &state, semantics, RowEvaluation::Off);
             let Some(pruning) = dynamic.pruning.as_mut() else { continue };
-            let within = self.plan.kept.get(&block.header_offset).map(Vec::as_slice);
+            let id = block.id();
+            let within = self.plan.kept.get(&id).map(Vec::as_slice);
             let (runs, out) = pruning.kept_within(within);
-            verdicts.insert(block.header_offset, pruning.verdicts().to_vec());
+            verdicts.insert(id, pruning.verdicts().to_vec());
             if out > 0 {
                 ruled_out += out;
-                kept.insert(block.header_offset, runs);
+                kept.insert(id, runs);
             }
         }
         let cut = (ruled_out > 0)
@@ -522,11 +523,11 @@ impl TablePartitions {
     }
 }
 
-/// Each sub-stream's blocks, by header offset, in the order it reads them.
-fn block_runs(groups: &[Vec<Segment>]) -> Vec<Vec<u64>> {
+/// Each sub-stream's blocks, in the order it reads them.
+fn block_runs(groups: &[Vec<Segment>]) -> Vec<Vec<BlockId>> {
     groups
         .iter()
-        .map(|segments| segments.iter().map(|segment| segment.block.header_offset).collect())
+        .map(|segments| segments.iter().map(|segment| segment.block.id()).collect())
         .collect()
 }
 
