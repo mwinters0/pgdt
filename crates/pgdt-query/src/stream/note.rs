@@ -67,16 +67,15 @@ pub enum PlanNoteKind {
     /// [`PlanNoteKind::BatchSpanNarrowed`] names that smaller number and the
     /// span is not among the levers left.
     ///
-    /// **Both levers that are left are named, because neither always works**
-    /// (`KD32`, as [`PlanNoteKind::BatchSpanNarrowed`] states it too, and `KD41`):
-    /// a source recommending no per-reader cost is left on
+    /// **Both levers that are left are named, because the budget does not
+    /// always work** (`KD32`, as [`PlanNoteKind::BatchSpanNarrowed`] states it
+    /// too): a source recommending no per-reader cost is left on
     /// `pgdt_io::DEFAULT_MEMORY_BUDGET` however large an allowance is stated
     /// (`docs/design/decisions.md`, "D83"), so a message offering the budget
     /// alone is inert exactly where this fires on a plain one. The other is
-    /// the announced read chunk
-    /// (`pgdt_dump::ReadOptions::chunk_size_bytes`), which a replay plan
-    /// never announces (`KD41`), and which a source cutting by it sizes
-    /// `footprint` from, a fixed multiple of it
+    /// the read chunk (`pgdt_dump::ReadOptions::chunk_size_bytes`), which the
+    /// plan announces before asking the source's advice, which a source
+    /// cutting by it sizes `footprint` from, a fixed multiple of it
     /// (`pgdt_io::Partitioning::partition_bytes`), and which floors the
     /// span unless the span was stated below it (`derived_source_span`).
     /// The arm with no span names it with that condition; **the span arm

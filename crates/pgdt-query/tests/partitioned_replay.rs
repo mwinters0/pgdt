@@ -1040,6 +1040,42 @@ async fn the_span_floors_at_the_announced_chunk_not_the_shipped_one() {
     assert_eq!(rows, expected, "the rows are the serial oracle's whatever the chunk");
 }
 
+/// **A plan over a complete cache prices its readers at its own chunk**: the
+/// plan announces the chunk it reads in before asking the source's advice, so
+/// a source nothing has read yet — a cache's, opened with no mapping pass —
+/// sizes a reader from that chunk rather than from its pool's ceiling. The
+/// note at the shipped chunk advises a smaller one, and planned again at that
+/// smaller one over the same, still unread, source the budget seats seven of
+/// the eight sub-streams; priced at the ceiling it seats one.
+#[tokio::test]
+async fn a_plan_over_a_complete_cache_prices_its_own_chunk() {
+    let path = types_fixture(16, "default");
+    let expected = serial_rows(local(&path), "public.t_int", QueryOptions::default()).await;
+
+    let small = ReadOptions::default().with_chunk_size(64 << 10);
+    let scan = ScanOptions { read: small, ..ScanOptions::default() };
+    let unit = partition_unit(&local(&path), &scan);
+    let replay = arranged_as(Parallelism::workers(8, 8 * unit));
+
+    let mapper = local(&path);
+    let index = pgdt_mapping::build_index(mapper.as_ref(), &ScanOptions::default()).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dump_over(local(&path), &index, dir.path()).await.unwrap();
+    let table = dump.table(&common::selector("public.t_int")).unwrap().unwrap();
+
+    let shipped = table.plan(ReadOptions::default(), QueryOptions::default(), &replay).unwrap();
+    let advised = shipped
+        .plan_notes()
+        .iter()
+        .find(|note| matches!(note.kind, PlanNoteKind::ParallelismBudgetLimited { .. }))
+        .unwrap_or_else(|| panic!("{:?}", shipped.plan_notes()));
+    assert!(advised.levers.contains(&PlanLever::SmallerReadChunk), "{advised:?}");
+
+    let plan = table.plan(small, QueryOptions::default(), &replay).unwrap();
+    assert_eq!(plan.len(), 7, "the smaller chunk seats what the note advised it for");
+    assert_eq!(drained(&plan, 8192).await, expected);
+}
+
 /// **`max_source_span: None` opts a query out of the span term entirely**,
 /// falling back to the decode-footprint-only divisor a discovery worker's own
 /// call uses — an unbounded batch has no number to add, and pretending it

@@ -182,8 +182,7 @@ than reading as a phase nobody has sliced.
   `MEMORY_RESERVE` and what is drawn, less what is held the margin cannot
   absorb) on a plain source whatever `--memory` states, so `query`'s sub-stream
   count and batch size are fixed at the number D3 picked to decline block decode
-  on an ordinary `.xz`, and `--chunk-size` moves them only as far as `KD41` lets
-  it. **(c) unowned**; promoted with `KD25` by a parallel plain scan read on a
+  on an ordinary `.xz`, only `--chunk-size` moving them. **(c) unowned**; promoted with `KD25` by a parallel plain scan read on a
   real device. Detail: `crates/pgdt-query/src/stream/replay/partition.rs`.
 
 - **KD14** — peak resident set is flat in dump bytes but grows several
@@ -230,14 +229,6 @@ than reading as a phase nobody has sliced.
   collation's are announced as a possibility rather than a fact. **(c)
   unowned**; promoted by the roadmap's "Collation-aware comparison", whose
   environment-free half it belongs to. Detail: `crates/pgdt-codec/src/compare.rs`.
-
-- **KD41** — a replay plan never announces its read chunk, so a plain
-  source is cut by the chunk its last read announced: a `pgdt query` over a
-  complete cache plans at the default whatever `--chunk-size` states, and a
-  provider's first scan after `SET pgdump.chunk_size` at the chunk before it,
-  so the smaller chunk a plan note advises seats nothing more on that plan.
-  **(b) owned by `M297`**. Detail:
-  `crates/pgdt-query/src/stream/replay/partition.rs`.
 
 - **KD53** — a dynamic filter's cut at the first poll is not made where it
   would put two blocks in one sub-stream that nothing proves in a declared

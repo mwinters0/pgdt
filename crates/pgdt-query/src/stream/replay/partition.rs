@@ -137,18 +137,6 @@ fn compressed_first_pass(source: &dyn ByteRangeSource) -> Option<PlanNote> {
 /// `BOUNDARIED_PARTITION_UNITS` does not bound this path. **(c) unowned**;
 /// promoted by a phase taking up query-path memory, the repair reversing a
 /// recorded decision either way.
-///
-/// Deficiency register: `deficiency: KD41` — `chunk_size` is never announced
-/// here, so a plain source's advice is cut from the chunk the last read on it
-/// announced, or `POOL_MAX_BYTES` where none has: a `pgdt query` over a
-/// complete cache prices its unit at the default chunk whatever
-/// `--chunk-size` states, and a provider's first scan after `SET
-/// pgdump.chunk_size` at the chunk before it. Only `max_source_span` follows
-/// the stated chunk, so the smaller chunk
-/// [`PlanNoteKind::ParallelismBudgetLimited`](crate::stream::note::PlanNoteKind::ParallelismBudgetLimited) advises does not seat more on
-/// the plan it advises. The fix is `hint_read_size(chunk_size)` beside
-/// `hint_parallelism` — a plan announcing a read size to a source other scans
-/// share.
 pub(super) fn plan_partitions(
     source: &dyn ByteRangeSource,
     matches: &[CopyBlock],
@@ -160,8 +148,13 @@ pub(super) fn plan_partitions(
     // **Announced before the advice is asked for**, since a compressed source
     // decides from the stated budget whether it can decode a whole block at
     // all (`ByteRangeSource::partitions`): asking under the mapping pass's
-    // budget would plan against a read path the replay will not take. Each
-    // sub-stream re-announces the same value, idempotently.
+    // budget would plan against a read path the replay will not take. The
+    // read chunk goes first, as the replay loop announces it
+    // (`pgdt_dump::internal::announce_read_loop`): a source sizing a reader
+    // from its chunk prices this plan's own, not whatever chunk a read before
+    // it announced — none at all over a complete cache. Each sub-stream
+    // re-announces the same values, idempotently.
+    source.hint_read_size(chunk_size);
     source.hint_parallelism(parallelism);
     // A block's own advice, and its footprint, are read once per block; the
     // footprint that decides the sub-stream count is the largest of them.
