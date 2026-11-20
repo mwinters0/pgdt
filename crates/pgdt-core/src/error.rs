@@ -50,7 +50,9 @@ pub enum Error {
     /// refuses (I91): psql finds the marker only as `\.` LF or `\.` CR LF, and
     /// the server refuses `\.` alone as corrupt and `\.` CR as mismatched in a
     /// block whose rows end in LF or CR LF. `offset` is the marker's, and
-    /// `table` the block's where its reader knows one.
+    /// `table` the block's where its reader knows one. Not
+    /// [`Error::UnterminatedCopyBlock`], whose message denies the marker is
+    /// there.
     #[error(
         "the `\\.` line at offset {offset}{} ends the file with no line ending after it, so psql does not read it as the end of the COPY and the server refuses it — restoring this dump fails there, and so does this read",
         in_copy(table.as_deref())

@@ -26,7 +26,8 @@ test guarding one.
 
 **Origin.** 2026-10-06
 ([`../status/history/2026-10-06.md`](../status/history/2026-10-06.md),
-"30.8's read-back goes with it"); the shim, 2026-11-19 (`M284`). *Contingent
+"30.8's read-back goes with it"); the shim, 2026-11-19
+(`crates/pgdt/src/alloc/purge.c`). *Contingent
 on* mimalloc still exporting `mi_options_print_out`, and on
 `libmimalloc-sys` still exporting its include directory.
 
