@@ -7,20 +7,20 @@ use std::sync::Arc;
 use pgdt_codec::internal::counter_for;
 use pgdt_core::{CopyHeader, Error, Result};
 use pgdt_dump::attach_text;
-use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_dump::dump_metadata_from_spans;
 use pgdt_dump::internal::Builder;
 use pgdt_dump::internal::derived_diagnostics;
 use pgdt_dump::internal::{Drawing, announce_read_loop};
-use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ScanOptions};
-use pgdt_io::{ByteRangeSource, Extent, Ledger, internal::memory_budget_display};
-use pgdt_model::{DumpIndex, PostgresInvalidValues, Span, SpanBody, timescaledb};
+use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event};
+use pgdt_io::internal::memory_budget_display;
+use pgdt_model::{DumpIndex, Span, SpanBody, timescaledb};
 use tokio_util::sync::CancellationToken;
 
-use crate::interior::{CensusPlan, RegionOutcome, RegionScan, report_shortfall, scan_region};
-use crate::statistics::account::StatisticsAccount;
+use crate::context::{Gathering, PassContext};
+use crate::interior::{
+    CensusPlan, Region, RegionOutcome, RegionScan, report_shortfall, scan_region,
+};
 use crate::statistics::gather;
-use crate::statistics::request::StatisticsRequest;
 
 mod save;
 
@@ -144,6 +144,28 @@ pub enum MapStop {
     Interrupted,
 }
 
+/// The stretch of the file one [`map_forward`] call maps, and what its
+/// [`splice`]s close it against: the spans that already tiled the file up to
+/// its start, untouched, and where the file ends, wherever the source has said
+/// so.
+struct Segment {
+    /// The spans tiling `[0, start)`.
+    prefix: Vec<Span>,
+    /// The frontier the call started from.
+    start: u64,
+    /// Where the file ends, or `None` while the source has not said: a map
+    /// of such a source ends at each watermark ([`splice`]).
+    file_end: Option<u64>,
+}
+
+impl Segment {
+    /// The map through `watermark`: the prefix, then `built`, a complete
+    /// tiling of `[start, watermark)` ([`splice`]).
+    fn splice(&self, built: Vec<Span>, watermark: u64) -> Vec<Span> {
+        splice(&self.prefix, built, self.start, watermark, self.file_end)
+    }
+}
+
 /// Whether this error is the interrupt arriving by another door.
 ///
 /// A source whose wait is a request rather than a `pread` answers a
@@ -156,23 +178,32 @@ pub(crate) fn cancelled_read(error: &Error, cancel: &CancellationToken) -> bool 
     matches!(error, Error::ScanCancelled { .. }) && cancel.is_cancelled()
 }
 
+/// [`map_forward`]'s answer to its cancellation at a check point of its own:
+/// bank `index`, consistent at the last spliced watermark whatever the
+/// scanner's buffer holds, and stop ([`MapStop::Interrupted`]).
+async fn interrupted(ctx: &PassContext<'_>, index: &DumpIndex) -> Result<MapStop> {
+    ctx.save(index).await?;
+    Ok(MapStop::Interrupted)
+}
+
 /// What a mapping pass records of each block it maps
 /// (`docs/design/decisions.md`, "D77").
 #[derive(Clone, Copy)]
 pub enum Pass<'a> {
-    /// [`map_file`](crate::map_file)'s: each block at the level `.0` gives its table, censused
-    /// where that is the data level, and its data-level columns gathered,
-    /// every observer charging `.1` and treating a field its type's `*_in`
-    /// refuses as `.2` says ([`PostgresInvalidValues`]).
-    Parse(&'a StatisticsRequest, &'a Arc<StatisticsAccount>, PostgresInvalidValues),
+    /// [`map_file`](crate::map_file)'s: each block at the level the request
+    /// gives its table, censused where that is the data level, and its
+    /// data-level columns gathered, every observer charging the account and
+    /// treating a field its type's `*_in` refuses as the gathering says
+    /// ([`Gathering`]).
+    Parse(Gathering<'a>),
     /// A query's: every block censused, nothing gathered, whatever level a
     /// parse would have given it (`docs/design/decisions.md`, "D35").
     Query,
 }
 
 /// Extend `index`'s map forward from its own `scanned_through`, persisting as
-/// it goes, until the queried table is settled, EOF is reached, or `cancel`
-/// fires. Emits no rows. `target` is the
+/// it goes, until the queried table is settled, EOF is reached, or `ctx`'s
+/// token fires. Emits no rows. `target` is the
 /// table a query may stop early for once
 /// [`target_settled`] says so; **`None` means "run to EOF"**, what
 /// `pgdt_query::ScanExtent::Full` asks for and what [`map_file`](crate::map_file) always wants. Rejected:
@@ -198,23 +229,17 @@ pub enum Pass<'a> {
 /// this loop, or piece by piece where the leader takes it, every observer
 /// charging the account [`Pass::Parse`] carries.
 ///
-/// **Each reader draws what its carry holds past its chunk from `ledger`**,
-/// the run's (`docs/design/decisions.md`, "D157"): this loop's own, which
-/// returns its draw before the leader hands a region to workers that read
-/// past it, and each worker's ([`scan_region`]).
-#[allow(clippy::too_many_arguments)]
+/// **Each reader draws what its carry holds past its chunk from `ctx`'s
+/// ledger**, the run's (`docs/design/decisions.md`, "D157"): this loop's own,
+/// which returns its draw before the leader hands a region to workers that
+/// read past it, and each worker's ([`scan_region`]).
 pub async fn map_forward(
-    source: &dyn ByteRangeSource,
-    scan_options: &ScanOptions,
-    ledger: &Ledger,
-    cancel: &CancellationToken,
-    cache: &CacheMode,
-    watch: &SourceWatch,
+    ctx: &PassContext<'_>,
     index: &mut DumpIndex,
     target: Option<Target<'_>>,
     mapping: Pass<'_>,
-    extent: Extent,
 ) -> Result<MapStop> {
+    let (source, scan_options, extent) = (ctx.source(), ctx.read.scan, ctx.read.extent);
     if extent.reached_by(index.scanned_through) {
         return Ok(MapStop::Reached);
     }
@@ -235,9 +260,9 @@ pub async fn map_forward(
         "scan started",
     );
 
-    let seg_start = index.scanned_through;
-    let prefix: Vec<Span> = index.spans.iter().filter(|s| s.end <= seg_start).cloned().collect();
-    // The prefix tiles `[0, seg_start)`, so its last span ends exactly at the
+    let start = index.scanned_through;
+    let prefix: Vec<Span> = index.spans.iter().filter(|s| s.end <= start).cloned().collect();
+    // The prefix tiles `[0, start)`, so its last span ends exactly at the
     // frontier and its `database` is the one in scope there. With no prefix
     // the frontier is byte zero — a preamble of no bytes, or a prepass
     // skipped for a first preamble already known — and I1 puts it inside the
@@ -258,19 +283,16 @@ pub async fn map_forward(
     // [`scan_region`] grants it around an interior region's workers and
     // restores this policy on the way out.
     announce_read_loop(source, scan_options.read, scan_options.parallelism);
-    let mut chunked = ChunkedScanner::to_source_end(
-        CopyScanner::resume(seg_start, None),
-        extent,
-        scan_options.read,
-    );
+    let mut chunked =
+        ChunkedScanner::to_source_end(CopyScanner::resume(start, None), extent, scan_options.read);
     // Where the file ends, wherever the source has said so: one whose end is
-    // not known yet has its map end at each watermark ([`splice`]), and is
-    // asked again after each chunk, a read being where it can meet the end —
-    // so a map saved after it carries the tail the saved extent states.
-    let mut file_end = extent.exact();
+    // not known yet is asked again after each chunk, a read being where it
+    // can meet the end — so a map saved after it carries the tail the saved
+    // extent states.
+    let mut segment = Segment { prefix, start, file_end: extent.exact() };
     let mut throttle = SaveThrottle::new();
     // This loop's draws: one reader, so never waiting on a line of its own.
-    let mut holder = ledger.holder();
+    let mut holder = ctx.read.ledger.holder();
     // Whether the open `COPY` block is one `target_settled` would count — see
     // the `CopyEnd` arm and the `CopyStart` arm's closed region, its readers.
     let mut open_block_targets = false;
@@ -284,9 +306,8 @@ pub async fn map_forward(
         // `index`'s spans are consistent at the last *spliced* watermark
         // whatever the buffer holds, so the save needs no snapshot logic of
         // its own.
-        if cancel.is_cancelled() {
-            cache.save(watch, source, index).await?;
-            return Ok(MapStop::Interrupted);
+        if ctx.cancel().is_cancelled() {
+            return interrupted(ctx, index).await;
         }
         // A row the open block streams hands its fields to its census and
         // its observer.
@@ -300,14 +321,11 @@ pub async fn map_forward(
             // The check point above, reached through the read rather than
             // through the token ([`cancelled_read`]): the same chunk and the
             // same watermark, so this banks what that would have banked.
-            Err(e) if cancelled_read(&e, cancel) => {
-                cache.save(watch, source, index).await?;
-                return Ok(MapStop::Interrupted);
-            }
+            Err(e) if cancelled_read(&e, ctx.cancel()) => return interrupted(ctx, index).await,
             Err(e) => return Err(e),
         };
-        if file_end.is_none() {
-            file_end = source.extent().await?.exact();
+        if segment.file_end.is_none() {
+            segment.file_end = source.extent().await?.exact();
         }
 
         // Where the leader closed a block the workers scanned, and so where
@@ -329,11 +347,11 @@ pub async fn map_forward(
                     let data_offset = start.data_offset;
                     // The block's level: censused, and gathering where
                     // a statistics request tracks its columns.
-                    let (census, request) = match mapping {
+                    let (census, gathering) = match mapping {
                         Pass::Query => (true, None),
-                        Pass::Parse(request, account, invalid) => (
-                            request.tracked_columns(&start.header).is_some(),
-                            Some((request, account, invalid)),
+                        Pass::Parse(gathering) => (
+                            gathering.request.tracked_columns(&start.header).is_some(),
+                            Some(gathering),
                         ),
                     };
                     let header = start.header.clone();
@@ -351,13 +369,7 @@ pub async fn map_forward(
                     open_block_targets =
                         target.is_some_and(|target| target(db.as_deref(), &header));
                     if metadata_covers.as_ref() != Some(&db) {
-                        let spans = splice(
-                            &prefix,
-                            builder.snapshot(boundary),
-                            seg_start,
-                            boundary,
-                            file_end,
-                        );
+                        let spans = segment.splice(builder.snapshot(boundary), boundary);
                         index.metadata = Some(Arc::new(dump_metadata_from_spans(&spans)));
                         metadata_covers = Some(db.clone());
                     }
@@ -372,14 +384,14 @@ pub async fn map_forward(
                     });
                     // A block no request tracks is observed too under
                     // `PostgresInvalidValues::Strict`, to check its fields.
-                    let observer = request.and_then(|(request, account, invalid)| {
+                    let observer = gathering.and_then(|gathering| {
                         gather::observer_for(
-                            request,
+                            gathering.request,
                             &header,
                             index.metadata.as_deref(),
                             db.as_deref(),
-                            account,
-                            invalid,
+                            gathering.account,
+                            gathering.invalid,
                         )
                     });
                     if let Some(observer) = observer {
@@ -415,19 +427,14 @@ pub async fn map_forward(
                             // the region, it is the earliest, which no
                             // worker's draw could pass.
                             holder.release();
-                            scan_region(
-                                source,
-                                scan_options,
-                                ledger,
-                                cancel,
-                                &header.qualified_name(),
+                            let region = Region {
+                                table: &header.qualified_name(),
                                 header_offset,
                                 data_offset,
-                                plan,
-                                extent,
-                                builder.block_observer(),
-                            )
-                            .await?
+                                census: plan,
+                                observer: builder.block_observer(),
+                            };
+                            scan_region(&ctx.read, region).await?
                         }
                     };
                     report_shortfall(&mut shortfall_reported, outcome.shortfall);
@@ -438,20 +445,15 @@ pub async fn map_forward(
                             // loop never made.
                             builder.absorb_census(&interior.census);
                             let watermark = interior.end.end_offset;
-                            let targets = std::mem::take(&mut open_block_targets);
+                            let settles = target.filter(|_| open_block_targets);
+                            open_block_targets = false;
                             match close_copy_block(
-                                source,
-                                cancel,
-                                cache,
-                                watch,
+                                ctx,
                                 index,
                                 &mut builder,
                                 &mut throttle,
-                                &prefix,
-                                seg_start,
-                                file_end,
-                                target,
-                                targets,
+                                &segment,
+                                settles,
                                 interior.end,
                             )
                             .await?
@@ -484,10 +486,7 @@ pub async fn map_forward(
                         // Cancelled between two windows, so nothing about
                         // this block is known. `index` is consistent at
                         // the last spliced watermark, which is before it.
-                        RegionScan::Cancelled => {
-                            cache.save(watch, source, index).await?;
-                            return Ok(MapStop::Interrupted);
-                        }
+                        RegionScan::Cancelled => return interrupted(ctx, index).await,
                     }
                 }
                 // This pass needs only the block's extent; row bytes
@@ -501,21 +500,16 @@ pub async fn map_forward(
                 // scanner counted and the census and observer folded.
                 Event::StreamedRow(_) => debug_assert!(!builder.reads_rows()),
                 Event::CopyEnd(end) => {
-                    let targets = std::mem::take(&mut open_block_targets);
+                    let settles = target.filter(|_| open_block_targets);
+                    open_block_targets = false;
                     let end_offset = end.end_offset;
                     match close_copy_block(
-                        source,
-                        cancel,
-                        cache,
-                        watch,
+                        ctx,
                         index,
                         &mut builder,
                         &mut throttle,
-                        &prefix,
-                        seg_start,
-                        file_end,
-                        target,
-                        targets,
+                        &segment,
+                        settles,
                         *end,
                     )
                     .await?
@@ -563,13 +557,10 @@ pub async fn map_forward(
     let roles: Vec<String> = builder.roles().iter().cloned().collect();
     let tablespaces: Vec<String> = builder.tablespaces().iter().cloned().collect();
     let size = chunked.end().expect("a scan out of its loop reached the end");
-    let mut spans = splice(&prefix, builder.finish(size), seg_start, size, Some(size));
+    let mut spans = splice(&segment.prefix, builder.finish(size), start, size, Some(size));
     match attach_text(source, &mut spans).await {
         Ok(()) => {}
-        Err(e) if cancelled_read(&e, cancel) => {
-            cache.save(watch, source, index).await?;
-            return Ok(MapStop::Interrupted);
-        }
+        Err(e) if cancelled_read(&e, ctx.cancel()) => return interrupted(ctx, index).await,
         Err(e) => return Err(e),
     }
     index.roles.extend(roles);
@@ -581,8 +572,8 @@ pub async fn map_forward(
     // complete, so a later run never trusts bytes that fail their own check
     // ([`SourceWatch::finish`]) — the file's last unit, which the scan's last
     // read stopped inside, above all.
-    watch.finish(source).await?;
-    cache.save(watch, source, index).await?;
+    ctx.watch.finish(source).await?;
+    ctx.save(index).await?;
     // The true end of the file, as opposed to the early
     // `Ok(MapStop::Reached)`s above: one for a map already there, three
     // stopping a query at its settled target.
@@ -609,22 +600,15 @@ enum BlockClose {
 /// `CopyEnd` and a region [`scan_region`] closed
 /// (`docs/design/decisions.md`, "D52") — and
 /// the ordering it holds is splice before the settled test, save before the
-/// return. `targets` is whether this block's header could be the one that
-/// settles `target`, read at `CopyStart`.
-#[allow(clippy::too_many_arguments)]
+/// return. `settles` is the target, where this block's header could be the
+/// one that settles it, read at `CopyStart`, and `None` otherwise.
 async fn close_copy_block(
-    source: &dyn ByteRangeSource,
-    cancel: &CancellationToken,
-    cache: &CacheMode,
-    watch: &SourceWatch,
+    ctx: &PassContext<'_>,
     index: &mut DumpIndex,
     builder: &mut Builder,
     throttle: &mut SaveThrottle,
-    prefix: &[Span],
-    seg_start: u64,
-    file_end: Option<u64>,
-    target: Option<Target<'_>>,
-    targets: bool,
+    segment: &Segment,
+    settles: Option<Target<'_>>,
     end: CopyEnd,
 ) -> Result<BlockClose> {
     // `end_offset` is always a safe, resumable watermark — the scanner is back
@@ -637,7 +621,7 @@ async fn close_copy_block(
     // The second of the guard's two check points (`docs/design/decisions.md`,
     // "D63"): the two together bound the response by the shorter of a chunk
     // and a block, or by a leader window while a region is cut.
-    let cancelled = cancel.is_cancelled();
+    let cancelled = ctx.cancel().is_cancelled();
     let due = throttle.due();
     // **The splice rides the throttle's gate** (`docs/design/decisions.md`,
     // "D62"). Nothing between gate openings needs `index.spans` current: an
@@ -646,8 +630,8 @@ async fn close_copy_block(
     // copy, and
     // `target_settled` is the one reader that would — which is why a block
     // whose header could satisfy it opens the gate too.
-    if targets || cancelled || due {
-        index.spans = splice(prefix, builder.snapshot(watermark), seg_start, watermark, file_end);
+    if settles.is_some() || cancelled || due {
+        index.spans = segment.splice(builder.snapshot(watermark), watermark);
         index.roles.extend(builder.roles().iter().cloned());
         index.tablespaces.extend(builder.tablespaces().iter().cloned());
         index.scanned_through = index.scanned_through.max(watermark);
@@ -655,7 +639,7 @@ async fn close_copy_block(
     // Only a block `target_settled` counts can turn it from false to true, and
     // `index` has just been spliced for exactly those — so this always reads a
     // map current through `watermark`.
-    let settled = targets && target.is_some_and(|target| target_settled(index, target));
+    let settled = settles.is_some_and(|target| target_settled(index, target));
     // The save at the *last* watermark before an early stop is what persists
     // the map for the next query, so a settled target and an interrupt save
     // whether or not the throttle would have.
@@ -677,7 +661,7 @@ async fn close_copy_block(
     // close leaving the save to the end-of-file path, and that path finishing
     // before it marks the map complete.
     if settled || cancelled || due {
-        throttle.save(cache, watch, source, index).await?;
+        throttle.save(ctx, index).await?;
     }
     if settled {
         return Ok(BlockClose::Settled);

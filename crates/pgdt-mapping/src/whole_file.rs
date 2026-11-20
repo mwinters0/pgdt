@@ -15,7 +15,7 @@ use pgdt_dump::dump_metadata_from_spans;
 use pgdt_dump::internal::Builder;
 use pgdt_dump::internal::{derived_diagnostics, scan_preamble};
 use pgdt_dump::{Event, ReadOptions, ScanOptions, scan as scan_events};
-use pgdt_io::{Arrangement, ByteRangeSource, Extent, Ledger};
+use pgdt_io::{Arrangement, ByteRangeSource, Extent};
 use pgdt_model::internal::IgnoredRefusalsExt;
 use pgdt_model::{Diagnostic, DumpIndex, DumpMetadata, PostgresInvalidValues, Span, timescaledb};
 use tokio_util::sync::CancellationToken;
@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 use crate::backfill::{
     Backfill, backfill_statistics, report_density_shortfall, report_statistics_declines,
 };
+use crate::context::{Gathering, PassContext, ReadContext};
 use crate::forward::{MapStop, Pass, cancelled_read, map_forward, splice};
 use crate::statistics::account::{StatisticsAccount, StatisticsHeld, Term};
 use crate::statistics::request::StatisticsRequest;
@@ -333,41 +334,37 @@ pub async fn map_file(
     // Before the first read, the prepass's included: it polls nothing, so a
     // source told of the token is what stops a read it has in flight.
     source.hint_cancellation(cancel.clone());
-    let scan_options = ScanOptions { read, parallelism: arrangement.parallelism() };
-    let run = map_file_watched(
-        source.as_ref(),
-        &scan_options,
-        arrangement.ledger(),
-        cancel,
-        invalid,
-        arrangement.statistics_allowance(),
-        &mode,
-        cache,
-        statistics,
-        &watch,
-    )
-    .await;
+    let extent = watch.attribute(source.as_ref(), source.extent().await).await?;
+    let ctx = PassContext {
+        read: ReadContext {
+            source: source.as_ref(),
+            scan: ScanOptions { read, parallelism: arrangement.parallelism() },
+            ledger: arrangement.ledger(),
+            cancel,
+            extent,
+        },
+        cache: &mode,
+        watch: &watch,
+    };
+    let allowance = arrangement.statistics_allowance();
+    let run = map_file_watched(&ctx, cache, statistics, invalid, allowance).await;
     let mapped = watch.attribute(source.as_ref(), run).await?;
     Ok(mapped.handing_back(source, watch))
 }
 
 /// [`map_file`] once its watch is open, which then attributes any failure:
-/// reading with `scan_options`, its parallelism the arrangement's, drawing on
-/// `ledger`, and bounding the account by `allowance`, both the arrangement's.
-#[allow(clippy::too_many_arguments)]
+/// reading under `ctx`, whose parallelism and ledger are the arrangement's,
+/// over what the open `held`, and bounding the account by `allowance`, the
+/// arrangement's too.
 async fn map_file_watched(
-    source: &dyn ByteRangeSource,
-    scan_options: &ScanOptions,
-    ledger: &Ledger,
-    cancel: &CancellationToken,
-    invalid: PostgresInvalidValues,
-    allowance: Option<u64>,
-    cache: &CacheMode,
+    ctx: &PassContext<'_>,
     held: Held,
     statistics: &StatisticsRequest,
-    watch: &SourceWatch,
+    invalid: PostgresInvalidValues,
+    allowance: Option<u64>,
 ) -> Result<Mapped> {
-    let extent = source.extent().await?;
+    let (source, cache, watch) = (ctx.source(), ctx.cache, ctx.watch);
+    let extent = ctx.read.extent;
     let mut index = match held {
         Held::Loaded(loaded) => loaded.index,
         // Nothing to build forward from, or a cache the mode may replace,
@@ -375,7 +372,8 @@ async fn map_file_watched(
         Held::Disabled | Held::Missing | Held::Replacing(_) => DumpIndex::default(),
     };
     refuse_recorded(invalid, cache, statistics, &index)?;
-    let account = Arc::new(StatisticsAccount::charging(allowance, ledger.clone()));
+    let account = Arc::new(StatisticsAccount::charging(allowance, ctx.read.ledger.clone()));
+    let gathering = Gathering { request: statistics, account: &account, invalid };
     let loaded = index.statistics_heap_bytes();
     #[cfg(feature = "introspect")]
     statistics_loaded(loaded);
@@ -411,7 +409,7 @@ async fn map_file_watched(
         // whole.
         let prepass = async {
             let (metadata, spans, preamble_end, roles, tablespaces) =
-                scan_preamble(source, scan_options).await?;
+                scan_preamble(source, &ctx.read.scan).await?;
             // Asked again rather than read off `extent`: a source whose end
             // was open at the start may have met it in the preamble's reads.
             let end = source.extent().await?.exact();
@@ -427,7 +425,7 @@ async fn map_file_watched(
                 index.roles.extend(roles);
                 index.tablespaces.extend(tablespaces);
                 index.scanned_through = preamble_end;
-                cache.save(watch, source, &index).await?;
+                ctx.save(&index).await?;
             }
             // **Nothing to bank, so nothing is written.** The prepass holds
             // every span aside until it is whole, and this arm is reached
@@ -435,9 +433,8 @@ async fn map_file_watched(
             // describing zero bytes, which can then refuse the resume it
             // invited through `Error::CacheUnusable`. The source is asked directly,
             // there being no save left to ride ([`pgdt_dump::cache::SourceWatch`]).
-            Err(e) if cancelled_read(&e, cancel) => {
-                watch.check(source).await?;
-                return Ok(interrupted_run(index, resumed_from, &account));
+            Err(e) if cancelled_read(&e, ctx.cancel()) => {
+                return interrupted(ctx, index, resumed_from, &account).await;
             }
             Err(e) => return Err(e),
         }
@@ -449,71 +446,36 @@ async fn map_file_watched(
     // statistics they lack.
     let mut checked_before = 0;
     if !extent.reached_by(resumed_from) {
-        let checked = backfill_statistics(
-            source,
-            scan_options,
-            ledger,
-            cancel,
-            invalid,
-            allowance,
-            cache,
-            watch,
-            &mut index,
-            statistics,
-            &account,
-            extent,
-            HashSet::new(),
-            Backfill::Unchecked,
-        )
-        .await?;
+        let checked =
+            backfill_statistics(ctx, gathering, &mut index, HashSet::new(), Backfill::Unchecked)
+                .await?;
         if checked.interrupted {
-            watch.check(source).await?;
-            return Ok(interrupted_run(index, resumed_from, &account));
+            return interrupted(ctx, index, resumed_from, &account).await;
         }
         // Banked before mapping on, which may stop at a refusal.
         if checked.checked > 0 {
-            cache.save(watch, source, &index).await?;
+            ctx.save(&index).await?;
         }
         checked_before = checked.checked;
     }
 
-    let stopped = match map_forward(
-        source,
-        scan_options,
-        ledger,
-        cancel,
-        cache,
-        watch,
-        &mut index,
-        None,
-        Pass::Parse(statistics, &account, invalid),
-        extent,
-    )
-    .await
-    {
+    let stopped = match map_forward(ctx, &mut index, None, Pass::Parse(gathering)).await {
         Ok(stop) => stop,
         // The interrupt arriving by another door ([`cancelled_read`]). The
         // pass's own check points save before they return and an unwinding
         // read has not, so the bank happens here, at the watermark the map
-        // was already consistent at. **The check is this arm's own**: an
-        // enabled save makes the same one before it writes, and a disabled
-        // cache makes none at all, so leaving it to the save is how a
-        // `--cache none` run reached the interrupt below unverified. Only a
+        // was already consistent at, and the exit's check follows it. Only a
         // read the leader dispatched unwinds this far, and the end-of-file
         // finish's on a fetched gzip first pass (`KD178`); every other one the
         // pass makes is caught at a check point of its own.
-        Err(e) if cancelled_read(&e, cancel) => {
-            watch.check(source).await?;
-            cache.save(watch, source, &index).await?;
-            return Ok(interrupted_run(index, resumed_from, &account));
+        Err(e) if cancelled_read(&e, ctx.cancel()) => {
+            ctx.save(&index).await?;
+            return interrupted(ctx, index, resumed_from, &account).await;
         }
         Err(e) => return Err(e),
     };
     if stopped == MapStop::Interrupted {
-        // The run's own last word, for a run that saved nothing to ride
-        // (`pgdt_dump::cache::SourceWatch`).
-        watch.check(source).await?;
-        return Ok(interrupted_run(index, resumed_from, &account));
+        return interrupted(ctx, index, resumed_from, &account).await;
     }
 
     // The pass reached the end, so the map's watermark is the file's end
@@ -523,23 +485,9 @@ async fn map_file_watched(
     let mut diagnostics = carried;
     diagnostics.extend(derived_diagnostics(&index, size, source.compression_index().as_ref()));
     index.diagnostics = diagnostics;
-    let backfill = backfill_statistics(
-        source,
-        scan_options,
-        ledger,
-        cancel,
-        invalid,
-        allowance,
-        cache,
-        watch,
-        &mut index,
-        statistics,
-        &account,
-        Extent::Exact(size),
-        loaded,
-        Backfill::Lacking,
-    )
-    .await?;
+    let at_end = ctx.ending_at(Extent::Exact(size));
+    let backfill =
+        backfill_statistics(&at_end, gathering, &mut index, loaded, Backfill::Lacking).await?;
     let checked = checked_before + backfill.checked;
     let mut declined_statistics = 0;
     if backfill.interrupted {
@@ -552,7 +500,7 @@ async fn map_file_watched(
         // saved. An interrupted run
         // leaves the block it stopped inside for the resume to re-read.
         watch.finish(source).await?;
-        cache.save(watch, source, &index).await?;
+        ctx.save(&index).await?;
         report_density_shortfall(statistics, &index);
         declined_statistics = report_statistics_declines(statistics, allowance, &index);
     }
@@ -568,21 +516,26 @@ async fn map_file_watched(
     })
 }
 
-/// What [`map_file`] returns for a run that stopped before EOF: the map as far
-/// as it is consistent, and **none of the three counts a back-fill states** —
-/// a strict parse's check of a map short of EOF may have re-read and banked
-/// blocks before the interrupt, and the caller is told the map is short
-/// rather than what was re-read.
+/// **[`map_file`]'s one exit for a run that stopped before EOF**: the source
+/// checked, and the map as far as it is consistent, with **none of the three
+/// counts a back-fill states** — a strict parse's check of a map short of EOF
+/// may have re-read and banked blocks before the interrupt, and the caller is
+/// told the map is short rather than what was re-read.
 ///
-/// The caller banks first where there is anything to bank — the prepass's
-/// interrupt has nothing — whether that is the pass's own save at a check
-/// point or one made where an unwinding read was caught.
-fn interrupted_run(
+/// **The check is this exit's own**, the run's last word: an enabled save
+/// makes the same one before it writes, but a disabled cache makes none at
+/// all, and the prepass's interrupt saves nothing to ride
+/// (`pgdt_dump::cache::SourceWatch`). The caller banks first where there is
+/// anything to bank — whether that is the pass's own save at a check point
+/// or one made where an unwinding read was caught.
+async fn interrupted(
+    ctx: &PassContext<'_>,
     index: DumpIndex,
     resumed_from: u64,
-    account: &Arc<StatisticsAccount>,
-) -> Mapped {
-    Mapped {
+    account: &StatisticsAccount,
+) -> Result<Mapped> {
+    ctx.watch.check(ctx.source()).await?;
+    Ok(Mapped {
         index,
         resumed_from,
         interrupted: true,
@@ -591,7 +544,7 @@ fn interrupted_run(
         checked: 0,
         declined_statistics: 0,
         statistics: announce_statistics_held(account),
-    }
+    })
 }
 
 /// Read `account` whole as a pass returns, and say what it held on the status

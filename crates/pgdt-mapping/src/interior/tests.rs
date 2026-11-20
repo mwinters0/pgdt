@@ -344,6 +344,37 @@ fn a_cut_inside_a_row_whose_tail_is_a_backslash_dot_is_resynced_past() {
 /// is one whole partition, so a larger partition would decline a trailing
 /// block and the sweeps below, which assert a closed region and a non-empty
 /// read list for every block, would fail on it.
+/// What a pass over a file of `size` bytes reads `source` under: `options`,
+/// `ledger` and `cancel`.
+fn reads<'a>(
+    source: &'a dyn ByteRangeSource,
+    options: &ScanOptions,
+    ledger: &'a Ledger,
+    cancel: &'a CancellationToken,
+    size: u64,
+) -> ReadContext<'a> {
+    ReadContext { source, scan: *options, ledger, cancel, extent: pgdt_io::Extent::Exact(size) }
+}
+
+/// [`scan_region`] over the region of `public.t` whose header is at
+/// `header_offset` and whose rows begin at `data_offset`, in a file of `size`
+/// bytes, read under `options` and `cancel` with no ledger limit, censused
+/// as `census` says and observed by nobody.
+async fn region(
+    source: &dyn ByteRangeSource,
+    options: &ScanOptions,
+    cancel: &CancellationToken,
+    header_offset: u64,
+    data_offset: u64,
+    census: Option<CensusPlan>,
+    size: u64,
+) -> Result<RegionOutcome> {
+    let ledger = Ledger::unlimited();
+    let ctx = reads(source, options, &ledger, cancel, size);
+    let region = Region { table: "public.t", header_offset, data_offset, census, observer: None };
+    scan_region(&ctx, region).await
+}
+
 fn scheduled(source: &LocalFileSource, jobs: usize) -> ScanOptions {
     source.hint_read_size(8);
     ScanOptions {
@@ -376,17 +407,14 @@ async fn a_scheduled_region_answers_what_the_serial_scanner_answers() {
         for block in &blocks {
             for jobs in [2usize, 3, 8] {
                 let options = scheduled(&source, jobs);
-                let got = scan_region(
+                let got = region(
                     &source,
                     &options,
-                    &Ledger::unlimited(),
                     &CancellationToken::new(),
-                    "public.t",
                     block.header_offset,
                     block.data_offset,
                     plan(block.columns),
-                    pgdt_io::Extent::Exact(size),
-                    None,
+                    size,
                 )
                 .await
                 .unwrap();
@@ -480,17 +508,14 @@ async fn no_read_a_worker_makes_exceeds_the_chunk_size() {
         for jobs in [2usize, 3, 8] {
             source.reads.lock().unwrap().clear();
             let options = scheduled(&source.inner, jobs);
-            let got = scan_region(
+            let got = region(
                 &source,
                 &options,
-                &Ledger::unlimited(),
                 &CancellationToken::new(),
-                "public.t",
                 block.header_offset,
                 block.data_offset,
                 plan(block.columns),
-                pgdt_io::Extent::Exact(size),
-                None,
+                size,
             )
             .await
             .unwrap();
@@ -542,17 +567,14 @@ async fn no_read_a_worker_makes_exceeds_the_stated_unit() {
         for jobs in [2usize, 3, 8] {
             source.reads.lock().unwrap().clear();
             let options = scheduled(&source.inner, jobs);
-            let got = scan_region(
+            let got = region(
                 &source,
                 &options,
-                &Ledger::unlimited(),
                 &CancellationToken::new(),
-                "public.t",
                 block.header_offset,
                 block.data_offset,
                 plan(block.columns),
-                pgdt_io::Extent::Exact(size),
-                None,
+                size,
             )
             .await
             .unwrap();
@@ -596,17 +618,14 @@ async fn a_region_too_small_to_cut_is_left_to_the_serial_scanner() {
 
     let serial = scheduled(&source, 1);
     assert!(serial.parallelism.is_serial(), "one job is the serial value, not a Workers of 1");
-    let got = scan_region(
+    let got = region(
         &source,
         &serial,
-        &Ledger::unlimited(),
         &CancellationToken::new(),
-        "public.t",
         block.header_offset,
         block.data_offset,
         plan(block.columns),
-        pgdt_io::Extent::Exact(size),
-        None,
+        size,
     )
     .await
     .unwrap();
@@ -617,17 +636,14 @@ async fn a_region_too_small_to_cut_is_left_to_the_serial_scanner() {
         ..ScanOptions::default()
     };
     source.hint_read_size(shipped.read.chunk_size_bytes);
-    let got = scan_region(
+    let got = region(
         &source,
         &shipped,
-        &Ledger::unlimited(),
         &CancellationToken::new(),
-        "public.t",
         block.header_offset,
         block.data_offset,
         plan(block.columns),
-        pgdt_io::Extent::Exact(size),
-        None,
+        size,
     )
     .await
     .unwrap();
@@ -644,17 +660,14 @@ async fn a_cancelled_region_closes_nothing_and_raises_nothing() {
     let block = &reference(&file)[0];
     let source = LocalFileSource::open(&path).unwrap();
     let options = scheduled(&source, 4);
-    let got = scan_region(
+    let got = region(
         &source,
         &options,
-        &Ledger::unlimited(),
         &cancelled(),
-        "public.t",
         block.header_offset,
         block.data_offset,
         plan(block.columns),
-        pgdt_io::Extent::Exact(size),
-        None,
+        size,
     )
     .await
     .unwrap();
@@ -680,17 +693,14 @@ async fn a_budget_affording_fewer_readers_than_asked_for_answers_a_shortfall() {
 
     let options =
         ScanOptions { parallelism: Parallelism::workers(4, 128), ..scheduled(&source, 4) };
-    let got = scan_region(
+    let got = region(
         &source,
         &options,
-        &Ledger::unlimited(),
         &CancellationToken::new(),
-        "public.t",
         block.header_offset,
         block.data_offset,
         plan(block.columns),
-        pgdt_io::Extent::Exact(size),
-        None,
+        size,
     )
     .await
     .unwrap();
@@ -721,17 +731,14 @@ async fn an_arrangement_that_delivers_what_was_asked_answers_no_shortfall() {
     let source = LocalFileSource::open(&path).unwrap();
 
     let serial = scheduled(&source, 1);
-    let got = scan_region(
+    let got = region(
         &source,
         &serial,
-        &Ledger::unlimited(),
         &CancellationToken::new(),
-        "public.t",
         block.header_offset,
         block.data_offset,
         plan(block.columns),
-        pgdt_io::Extent::Exact(size),
-        None,
+        size,
     )
     .await
     .unwrap();
@@ -746,17 +753,14 @@ async fn an_arrangement_that_delivers_what_was_asked_answers_no_shortfall() {
         ..ScanOptions::default()
     };
     source.hint_read_size(shipped.read.chunk_size_bytes);
-    let got = scan_region(
+    let got = region(
         &source,
         &shipped,
-        &Ledger::unlimited(),
         &CancellationToken::new(),
-        "public.t",
         block.header_offset,
         block.data_offset,
         plan(block.columns),
-        pgdt_io::Extent::Exact(size),
-        None,
+        size,
     )
     .await
     .unwrap();
@@ -780,17 +784,14 @@ async fn a_block_the_file_ends_inside_is_unterminated() {
 
     let source = LocalFileSource::open(&path).unwrap();
     let options = scheduled(&source, 4);
-    let err = scan_region(
+    let err = region(
         &source,
         &options,
-        &Ledger::unlimited(),
         &CancellationToken::new(),
-        "public.t",
         0,
         data_offset,
         plan(Some(1)),
-        pgdt_io::Extent::Exact(file.len() as u64),
-        None,
+        file.len() as u64,
     )
     .await
     .expect_err("a COPY block with no terminator");
@@ -816,17 +817,14 @@ async fn a_row_longer_than_a_tail_read_is_still_one_row() {
     let source = LocalFileSource::open(&path).unwrap();
     for jobs in [2usize, 4, 8] {
         let options = scheduled(&source, jobs);
-        let got = scan_region(
+        let got = region(
             &source,
             &options,
-            &Ledger::unlimited(),
             &CancellationToken::new(),
-            "public.t",
             block.header_offset,
             block.data_offset,
             plan(block.columns),
-            pgdt_io::Extent::Exact(file.len() as u64),
-            None,
+            file.len() as u64,
         )
         .await
         .unwrap();
@@ -870,9 +868,13 @@ async fn a_worker_reads_a_line_longer_than_a_read_once() {
     let (file, data_offset, source) = long_line(dir.path());
     let options = scheduled(&source.inner, 2);
     let (scans, _) = scan_partition(
-        &source,
-        &options,
-        &Ledger::unlimited(),
+        &reads(
+            &source,
+            &options,
+            &Ledger::unlimited(),
+            &CancellationToken::new(),
+            file.len() as u64,
+        ),
         PartitionRead::Chunked,
         PieceEntry::RowStart,
         data_offset..data_offset + 16,
@@ -904,9 +906,13 @@ async fn a_piece_inside_a_line_reads_its_own_range_alone() {
     let start = data_offset + 2 + 64;
     let limit = start + 64;
     let (scans, _) = scan_partition(
-        &source,
-        &options,
-        &Ledger::unlimited(),
+        &reads(
+            &source,
+            &options,
+            &Ledger::unlimited(),
+            &CancellationToken::new(),
+            file.len() as u64,
+        ),
         PartitionRead::Chunked,
         PieceEntry::Resync,
         start..limit,
@@ -941,9 +947,13 @@ async fn a_worker_holds_a_line_to_the_bound_exactly() {
             options.read = with_line_bound(options.read, bound);
             source.reads.lock().unwrap().clear();
             let scanned = scan_partition(
-                &source,
-                &options,
-                &Ledger::unlimited(),
+                &reads(
+                    &source,
+                    &options,
+                    &Ledger::unlimited(),
+                    &CancellationToken::new(),
+                    file.len() as u64,
+                ),
                 read,
                 PieceEntry::RowStart,
                 data_offset..end,
@@ -996,17 +1006,14 @@ async fn a_split_block_refuses_the_row_a_serial_scan_refuses() {
             let source = LocalFileSource::open(&path).unwrap();
             for jobs in [2usize, 3, 8] {
                 let options = scheduled(&source, jobs);
-                let got = scan_region(
+                let got = region(
                     &source,
                     &options,
-                    &Ledger::unlimited(),
                     &CancellationToken::new(),
-                    "public.t",
                     0,
                     header.len() as u64,
                     plan(Some(1)),
-                    pgdt_io::Extent::Exact(file.len() as u64),
-                    None,
+                    file.len() as u64,
                 )
                 .await;
                 let context = format!("{block:?} block, odd row {odd_row:?}, {jobs} jobs");

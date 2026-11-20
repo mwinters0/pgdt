@@ -3,9 +3,9 @@
 use std::time::{Duration, Instant};
 
 use pgdt_core::Result;
-use pgdt_dump::cache::{CacheMode, SourceWatch};
-use pgdt_io::ByteRangeSource;
 use pgdt_model::DumpIndex;
+
+use crate::context::PassContext;
 
 /// How many times the elapsed scan has to cover the last save's own cost
 /// before another save is worth taking, which bounds save overhead at roughly
@@ -48,15 +48,9 @@ impl SaveThrottle {
     /// decision. A disabled cache makes this ~free and so seldom throttles:
     /// only a block ending within [`SAVE_THROTTLE_K`] times that measured
     /// cost of the last is held back.
-    pub(crate) async fn save(
-        &mut self,
-        cache: &CacheMode,
-        watch: &SourceWatch,
-        source: &dyn ByteRangeSource,
-        index: &DumpIndex,
-    ) -> Result<()> {
+    pub(crate) async fn save(&mut self, ctx: &PassContext<'_>, index: &DumpIndex) -> Result<()> {
         let started = Instant::now();
-        cache.save(watch, source, index).await?;
+        ctx.save(index).await?;
         self.last_cost = started.elapsed();
         self.last_save = Instant::now();
         Ok(())

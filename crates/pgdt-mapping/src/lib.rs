@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 mod backfill;
+mod context;
 mod forward;
 mod interior;
 pub mod statistics;
@@ -23,6 +24,7 @@ pub use whole_file::{MapRun, build_index, build_map, map_file};
 /// past the API names the word.
 pub mod internal {
     pub use crate::backfill::reread_rows;
+    pub use crate::context::{PassContext, ReadContext};
     pub use crate::forward::{MapStop, Pass, Target, map_forward, splice};
     #[cfg(feature = "test-support")]
     pub use crate::statistics::gather::one_group_bounds;

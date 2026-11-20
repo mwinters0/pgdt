@@ -7589,7 +7589,7 @@ def subtraction_sweep(source: str, a: str, b: str) -> int:
 STREAM = (
     *(
         f"crates/pgdt-mapping/src/{name}.rs"
-        for name in ("backfill", "forward", "forward/save", "whole_file")
+        for name in ("backfill", "context", "forward", "forward/save", "whole_file")
     ),
     "crates/pgdt-query/src/dump.rs",
     "crates/pgdt-query/src/dump/settle.rs",

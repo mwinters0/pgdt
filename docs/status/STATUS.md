@@ -90,7 +90,7 @@ commits the same way, as the account their pairs must sum to.
 Spec: [`../design/roadmap-P43-block-model.md`](../design/roadmap-P43-block-model.md).
 
 - [x] **43.1** `pgdt-model`'s `persisted/` split: the serde shapes alone in it, contracts, walks, diagnostics and recipes beside it; a move, no bump; the concept map's claims follow — [notes](../design/roadmap-P43.1-persisted-notes.md)
-- [ ] **43.2** The mapping pass context for every function under `too_many_arguments`; `forward.rs`'s cancel-save-return and `whole_file.rs`'s interrupted exit each written once
+- [x] **43.2** The mapping pass context for every function under `too_many_arguments`; `forward.rs`'s cancel-save-return and `whole_file.rs`'s interrupted exit each written once — [notes](../design/roadmap-P43.2-pass-context-notes.md)
 - [ ] **43.3** `BlockId`, derived from the header offset, at every identity site; display sites print the address; no format change
 - [ ] **43.4** `CopyBlock` as header, partition root, `BlockAddress` and `Arc<BlockRecord>`; `LongestLine` block-relative; `InsertRun` holding a record; copy-on-write in the back-fill and `settle.rs`; `Segment` holding header and address, no whole block cloned; the cache-format bump; `--count-pair` on the typed query
 - [ ] **43.5** `BlockObserver`'s one-call close; the `Gatherer` as a block's gatherer, a piece's and the strict checker; `--count-pair` on a data-level parse
@@ -127,3 +127,15 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`backfill_block` keeps its eight parameters** (`crates/pgdt-mapping/src/backfill.rs`).
+  43.2 read "every function under `too_many_arguments`" as every mapping-pass
+  function, and the spec's field list names exactly those. `backfill_block`
+  opens no pass and has no cache or watch, so it cannot take a `PassContext`.
+  Its parameters are what an embedder states, as `map_file`'s are. Changing
+  that would reshape a public entry point, which is P44's concern, the
+  embedder protocol. `scan_read` and `ColumnGatherer::new` keep the allow too,
+  and neither takes a pass field. Reconsidering means grouping the block's
+  location (`metadata`, `database`, `block`) or taking a public context, so
+  `backfill_block`'s signature changes for its callers
+  ([notes](../design/roadmap-P43.2-pass-context-notes.md), "Negative results").

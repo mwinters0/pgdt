@@ -23,13 +23,14 @@ use pgdt_core::{Error, Result};
 use pgdt_dump::internal::{ChunkCarry, Drawing, FieldFold, draw_absorbing};
 use pgdt_dump::{CopyEnd, ScanOptions};
 use pgdt_io::{
-    ByteRangeSource, Extent, Ledger, PartitionRead, Partitioning, WaitPolicy,
+    ByteRangeSource, PartitionRead, Partitioning, WaitPolicy,
     internal::{cut, worker_count},
 };
 use pgdt_model::LongestLine;
 use pgdt_model::internal::BlockCensusExt;
 use pgdt_model::internal::BlockObserver;
-use tokio_util::sync::CancellationToken;
+
+use crate::context::ReadContext;
 
 mod piece;
 
@@ -37,6 +38,23 @@ use self::piece::{
     BlockEndings, PieceEntry, PieceObserver, PieceScan, empty_census, merge, row_fold, scan_read,
 };
 pub(crate) use self::piece::{CensusPlan, Interior};
+
+/// One open `COPY` region, as the leader is offered it: the block it opens,
+/// where its rows begin, how they are censused and who observes them.
+pub(crate) struct Region<'a> {
+    /// The block's table, as a refusal inside it names it.
+    pub table: &'a str,
+    /// Where the block's header begins, carried only to name the block in
+    /// [`Error::UnterminatedCopyBlock`].
+    pub header_offset: u64,
+    /// The block's first data byte, after `COPY … FROM stdin;`.
+    pub data_offset: u64,
+    /// How the block is censused and counted, `None` where it is not
+    /// ([`scan_piece`]).
+    pub census: Option<CensusPlan>,
+    /// The block's statistics observer, where it gathers any.
+    pub observer: Option<&'a mut (dyn BlockObserver + 'static)>,
+}
 
 /// What the leader made of one open `COPY` region.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,25 +175,23 @@ pub(crate) fn report_shortfall(flag: &mut bool, shortfall: Option<Shortfall>) {
     );
 }
 
-/// Scan the interior of the `COPY` block that opens at `data_offset` with
-/// concurrent fused workers, and answer the block's totals.
+/// Scan the interior of the `COPY` block `region` opens with concurrent fused
+/// workers, and answer the block's totals.
 ///
 /// The caller has read `COPY … FROM stdin;`, or the map has, so it knows every byte from
-/// `data_offset` until `\.` is line-structured rows — which is the whole
+/// the region's `data_offset` until `\.` is line-structured rows — which is the whole
 /// licence for handing them out to workers that never parse structure
 /// (`docs/design/decisions.md`, "D52").
 ///
-/// **Where the file ends is `extent`, and `census` is how the block is
-/// censused and counted**, `None` where it is not ([`scan_piece`]). A source
+/// **Where the file ends is `ctx`'s extent.** A source
 /// whose end is not known yet is never cut: what is left of the file is
 /// unknown, and every cut is a range up to it — so it is left to the serial
 /// scanner as a source declining to be split is.
-/// `header_offset` is carried only to name the block in
-/// [`Error::UnterminatedCopyBlock`], which is this function's to raise: a
+/// [`Error::UnterminatedCopyBlock`] is this function's to raise: a
 /// [`scan_piece`] never claims end of file, and the leader is the only party
 /// that knows there is none left.
 ///
-/// **`observer` is the block's statistics observer, where it gathers any.**
+/// **The region's observer is the block's statistics observer, where it gathers any.**
 /// Each partition observes its rows into one [`BlockObserver::piece`] made,
 /// and every partition up to the one holding the terminator is absorbed back
 /// into it in file order, so a block closed here has observed what the serial
@@ -217,25 +233,17 @@ pub(crate) fn report_shortfall(flag: &mut bool, shortfall: Option<Shortfall>) {
 /// costs. Erring towards the serial scanner is the direction this bound is
 /// wanted in — the alternative admits readers the budget never granted.
 ///
-/// **Each worker draws what its carry holds past its chunk from `ledger`**,
-/// the run's, waiting in file order behind an earlier piece's line and
-/// giving its own up to one, so the leftmost line always progresses and no
+/// **Each worker draws what its carry holds past its chunk from `ctx`'s
+/// ledger**, the run's, waiting in file order behind an earlier piece's line
+/// and giving its own up to one, so the leftmost line always progresses and no
 /// window deadlocks (`docs/design/decisions.md`, "D157"); every piece of a
 /// window is polled while any waits.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn scan_region(
-    source: &dyn ByteRangeSource,
-    options: &ScanOptions,
-    ledger: &Ledger,
-    cancel: &CancellationToken,
-    table: &str,
-    header_offset: u64,
-    data_offset: u64,
-    census: Option<CensusPlan>,
-    extent: Extent,
-    observer: Option<&mut (dyn BlockObserver + 'static)>,
+    ctx: &ReadContext<'_>,
+    region: Region<'_>,
 ) -> Result<RegionOutcome> {
-    let Some(size) = extent.exact() else {
+    let (source, options, data_offset) = (ctx.source, &ctx.scan, region.data_offset);
+    let Some(size) = ctx.extent.exact() else {
         let shortfall = (options.parallelism.jobs() > 1).then(|| Shortfall {
             asked: options.parallelism.jobs(),
             delivered: 1,
@@ -266,25 +274,13 @@ pub(crate) async fn scan_region(
     // dropped mid-await.
     source.hint_parallelism(options.parallelism);
     source.hint_wait_policy(WaitPolicy::MayWait);
-    let scanned = run_region(
-        source,
-        options,
-        ledger,
-        cancel,
-        table,
-        &advice,
-        workers,
-        data_offset,
-        census,
-        size,
-        observer,
-    )
-    .await;
+    let header_offset = region.header_offset;
+    let scanned = run_region(ctx, region, &advice, workers, size).await;
     source.hint_wait_policy(WaitPolicy::NeverWait);
 
     let scan = match scanned? {
         Some(interior) => RegionScan::Closed(interior),
-        None if cancel.is_cancelled() => RegionScan::Cancelled,
+        None if ctx.cancel.is_cancelled() => RegionScan::Cancelled,
         // Every window ran to the end of the file and none held the
         // terminator: `UnterminatedCopyBlock`, reached the parallel way.
         // deficiency: KD177 — a file ending in `\.` or `\.` CR with no LF
@@ -355,21 +351,16 @@ fn shortfall(
 /// `docs/design/decisions.md`, "D8"): the charge covers a block unit, a chunk
 /// and a decoder, so sizing the window by it would offer `cut` more boundaries
 /// than there are workers. A source cut anywhere has no boundary to count, and
-/// its window is `workers` charges wide.
-#[allow(clippy::too_many_arguments)]
+/// its window is `workers` charges wide. `size` is where the file ends,
+/// which a region is cut only once the source has said.
 async fn run_region(
-    source: &dyn ByteRangeSource,
-    options: &ScanOptions,
-    ledger: &Ledger,
-    cancel: &CancellationToken,
-    table: &str,
+    ctx: &ReadContext<'_>,
+    region: Region<'_>,
     advice: &Partitioning,
     workers: usize,
-    data_offset: u64,
-    plan: Option<CensusPlan>,
     size: u64,
-    mut observer: Option<&mut (dyn BlockObserver + 'static)>,
 ) -> Result<Option<Interior>> {
+    let Region { table, data_offset, census: plan, mut observer, .. } = region;
     let mut rows = 0u64;
     let mut longest_line = None;
     let mut census = empty_census(plan.as_ref());
@@ -381,7 +372,7 @@ async fn run_region(
         // Once per window, on the same argument the mapping loop checks once
         // per chunk (`docs/design/decisions.md`, "D26"): the window is the
         // shortest boundary inside a block a stop can be answered at.
-        if cancel.is_cancelled() {
+        if ctx.cancel.is_cancelled() {
             return Ok(None);
         }
         let ranges = cut(frontier..advice.window_end(frontier, workers, size), advice, workers);
@@ -397,9 +388,7 @@ async fn run_region(
                 let piece =
                     observer.as_deref().map(|block| PieceObserver::new(block.piece(), data_offset));
                 scan_partition(
-                    source,
-                    options,
-                    ledger,
+                    ctx,
                     advice.partition_read(),
                     entry,
                     range,
@@ -523,11 +512,8 @@ async fn run_region(
 /// [`PieceScan`]s keeps [`merge`]'s fold the only fold. **Exactly one read is
 /// alive at a time**, which is what makes [`WaitPolicy::MayWait`] safe here
 /// (`docs/design/decisions.md`, "D5").
-#[allow(clippy::too_many_arguments)]
 async fn scan_partition(
-    source: &dyn ByteRangeSource,
-    options: &ScanOptions,
-    ledger: &Ledger,
+    ctx: &ReadContext<'_>,
     read: PartitionRead,
     entry: PieceEntry,
     range: Range<u64>,
@@ -535,12 +521,13 @@ async fn scan_partition(
     size: u64,
     mut piece: Option<PieceObserver>,
 ) -> Result<(Vec<PieceScan>, Option<PieceObserver>)> {
+    let source = ctx.source;
     let limit = range.end;
     let mut out = Vec::new();
     let mut entry = entry;
-    let (chunk, bound) = (options.read.chunk(), options.read.line_bound());
+    let (chunk, bound) = (ctx.scan.read.chunk(), ctx.scan.read.line_bound());
     let mut carry = ChunkCarry::new(chunk);
-    let mut holder = ledger.holder();
+    let mut holder = ctx.ledger.holder();
     let mut fold = census.as_ref().map(CensusPlan::fold);
     let mut at = range.start;
     let mut want = match read {

@@ -8,10 +8,9 @@ use std::sync::Arc;
 use pgdt_codec::internal::counter_for;
 use pgdt_core::internal::StatisticsScope;
 use pgdt_core::{Error, Result};
-use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_dump::internal::{Drawing, RowFold, announce_read_loop};
 use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ReadOptions, ScanOptions};
-use pgdt_io::{Arrangement, ByteRangeSource, Extent, Ledger};
+use pgdt_io::{Arrangement, ByteRangeSource};
 use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
 use pgdt_model::{
     BlockCensus, BlockGathered, BlockStatistics, CopyBlock, DataBlock, DumpIndex, DumpMetadata,
@@ -19,8 +18,9 @@ use pgdt_model::{
 };
 use tokio_util::sync::CancellationToken;
 
+use crate::context::{Gathering, PassContext, ReadContext};
 use crate::forward::{SaveThrottle, cancelled_read};
-use crate::interior::{CensusPlan, RegionScan, report_shortfall, scan_region};
+use crate::interior::{CensusPlan, Region, RegionScan, report_shortfall, scan_region};
 use crate::statistics::account::{StatisticsAccount, Term};
 use crate::statistics::density::BlockStatisticsExt;
 use crate::statistics::gather;
@@ -51,7 +51,7 @@ pub(crate) enum Backfill {
 }
 
 /// Re-read every block of a map that has reached EOF which lacks what
-/// `statistics` asks for ([`Backfill::Lacking`]), or of a map short of it
+/// `gathering`'s request asks for ([`Backfill::Lacking`]), or of a map short of it
 /// only those no strict parse checked ([`Backfill::Unchecked`]), in file order, storing each block's statistics as it
 /// closes and saving through a [`SaveThrottle`] as [`map_forward`](crate::forward::map_forward) does; an
 /// interrupt saves and stops. Announces how many blocks lacked them and, once
@@ -63,7 +63,8 @@ pub(crate) enum Backfill {
 /// block this pass mapped holds what its own request asked, except for a
 /// maximum no single read can deliver. So what a re-read replaces leaves the
 /// term that carried it — `loaded`, the header offsets the cache supplied
-/// statistics for, telling the two apart.
+/// statistics for, telling the two apart. What a re-read gathers charges
+/// `gathering`'s account, under its allowance.
 ///
 /// **Under [`PostgresInvalidValues::Strict`] a block no strict parse checked
 /// is re-read too**, checking every field and recording that it did
@@ -71,26 +72,17 @@ pub(crate) enum Backfill {
 /// statistics as well — so a clean strict run has checked every field
 /// whichever runs built the map. `which` says whether this is that pass alone
 /// ([`Backfill::Unchecked`]).
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn backfill_statistics(
-    source: &dyn ByteRangeSource,
-    scan_options: &ScanOptions,
-    ledger: &Ledger,
-    cancel: &CancellationToken,
-    invalid: PostgresInvalidValues,
-    allowance: Option<u64>,
-    cache: &CacheMode,
-    watch: &SourceWatch,
+    ctx: &PassContext<'_>,
+    gathering: Gathering<'_>,
     index: &mut DumpIndex,
-    statistics: &StatisticsRequest,
-    account: &Arc<StatisticsAccount>,
-    extent: Extent,
     loaded: HashSet<u64>,
     which: Backfill,
 ) -> Result<BackfillRun> {
+    let (statistics, allowance) = (gathering.request, gathering.allowance());
     // Positions into `index.spans`, which nothing below adds to or reorders.
     let metadata = index.metadata.as_deref();
-    let strict = invalid == PostgresInvalidValues::Strict;
+    let strict = gathering.strict();
     let gathers = statistics.gathers() && which == Backfill::Lacking;
     let rereads: Vec<(usize, Option<StatisticsBackfill>, bool)> = index
         .spans
@@ -117,23 +109,16 @@ pub(crate) async fn backfill_statistics(
     if unchecked > 0 {
         tracing::info!(blocks = unchecked, "check of blocks no strict parse checked started");
     }
-    announce_read_loop(source, scan_options.read, scan_options.parallelism);
+    announce_read_loop(ctx.source(), ctx.read.scan.read, ctx.read.scan.parallelism);
     let mut reader = Rereads {
-        source,
-        scan_options,
-        ledger,
-        cancel,
-        invalid,
+        read: ctx.read,
         // There is no cache file to name in a `CachedBlockChanged` refusal
         // unless one is enabled. A block can lack what was asked under any
         // mode — a stated maximum no single read delivers leaves a freshly
         // mapped block lacking, `CacheMode::Disabled` included (see this
         // function's doc).
-        cache_path: cache.path(),
-        request: statistics,
-        allowance,
-        account,
-        extent,
+        cache_path: ctx.cache.path(),
+        gathering,
         loaded,
         shortfall_reported: false,
     };
@@ -147,28 +132,28 @@ pub(crate) async fn backfill_statistics(
     let mut throttle = SaveThrottle::new();
     let blocks = rereads.len();
     for (done, (at, backfill, unchecked)) in rereads.into_iter().enumerate() {
-        let gathering = backfill.is_some();
+        let regathers = backfill.is_some();
         let DumpIndex { spans, metadata, .. } = &mut *index;
         let Span { database, body, .. } = &mut spans[at];
         let SpanBody::Data(DataBlock::Copy(block)) = body else {
             unreachable!("the positions were read off copy blocks of this span list");
         };
         if !reader.fill(metadata.as_deref(), database.as_deref(), block, backfill).await? {
-            cache.save(watch, source, index).await?;
+            ctx.save(index).await?;
             run.interrupted = true;
             return Ok(run);
         }
-        run.reread += usize::from(gathering);
+        run.reread += usize::from(regathers);
         run.checked += usize::from(unchecked);
         // Both of `map_forward`'s check points, a block's close being the
         // second (`docs/design/decisions.md`, "D63").
-        if cancel.is_cancelled() && done + 1 < blocks {
-            cache.save(watch, source, index).await?;
+        if ctx.cancel().is_cancelled() && done + 1 < blocks {
+            ctx.save(index).await?;
             run.interrupted = true;
             return Ok(run);
         }
         if throttle.due() {
-            throttle.save(cache, watch, source, index).await?;
+            throttle.save(ctx, index).await?;
         }
     }
     if lacking > 0 {
@@ -281,6 +266,9 @@ pub(crate) fn report_statistics_declines(
 /// [`Error::FieldRefused`], in a column `request` tracks — in every column
 /// under [`PostgresInvalidValues::Strict`] — as it fails a mapping pass,
 /// unless `invalid` ignores it; in any other column it is recorded.
+///
+/// **Its parameters are what an embedder states**, as [`map_file`](crate::map_file)'s are:
+/// it opens no pass, so has no [`PassContext`] to take.
 #[allow(clippy::too_many_arguments)]
 pub async fn backfill_block(
     source: &dyn ByteRangeSource,
@@ -308,17 +296,17 @@ pub async fn backfill_block(
     account.apply(&[(Term::Loaded, held as i64)]);
     let loaded = block.statistics.is_some().then_some(block.header_offset).into_iter().collect();
     let cancel = CancellationToken::new();
-    let mut reader = Rereads {
+    let read = ReadContext {
         source,
-        scan_options: &scan_options,
+        scan: scan_options,
         ledger: arrangement.ledger(),
         cancel: &cancel,
-        invalid,
-        cache_path: None,
-        request,
-        allowance,
-        account: &account,
         extent,
+    };
+    let mut reader = Rereads {
+        read,
+        cache_path: None,
+        gathering: Gathering { request, account: &account, invalid },
         loaded,
         shortfall_reported: false,
     };
@@ -327,26 +315,16 @@ pub async fn backfill_block(
     Ok(true)
 }
 
-/// What every re-read of one back-fill shares: the source, how it is read,
-/// what a refused field does, the cache a moved block's refusal names, what
-/// the request asks and under what allowance, the account the observers
-/// charge, which blocks' statistics it carries as loaded, and the flag
-/// [`report_shortfall`] keeps once per pass.
+/// What every re-read of one back-fill shares: what it reads under, the
+/// cache a moved block's refusal names, what it gathers under, which blocks'
+/// statistics it carries as loaded, and the flag [`report_shortfall`] keeps
+/// once per pass.
 struct Rereads<'a> {
-    source: &'a dyn ByteRangeSource,
-    scan_options: &'a ScanOptions,
-    /// The run's ledger, which every reader draws what it holds past its
-    /// chunk from.
-    ledger: &'a Ledger,
-    cancel: &'a CancellationToken,
-    invalid: PostgresInvalidValues,
+    read: ReadContext<'a>,
     cache_path: Option<&'a Path>,
-    request: &'a StatisticsRequest,
-    allowance: Option<u64>,
-    account: &'a Arc<StatisticsAccount>,
-    extent: Extent,
-    /// The header offsets of the blocks whose statistics `account` carries
-    /// as [`Term::Loaded`], until a re-read replaces them.
+    gathering: Gathering<'a>,
+    /// The header offsets of the blocks whose statistics the gathering's
+    /// account carries as [`Term::Loaded`], until a re-read replaces them.
     loaded: HashSet<u64>,
     shortfall_reported: bool,
 }
@@ -377,7 +355,8 @@ impl Rereads<'_> {
             };
             self.record(block, reread, plan.is_some());
             if plan.is_some() {
-                next = self.request.backfill(block, metadata, database, self.allowance).map(Some);
+                let (request, allowance) = (self.gathering.request, self.gathering.allowance());
+                next = request.backfill(block, metadata, database, allowance).map(Some);
             }
         }
         Ok(true)
@@ -393,23 +372,20 @@ impl Rereads<'_> {
         block: &CopyBlock,
         plan: Option<&StatisticsBackfill>,
     ) -> Result<Option<BlockReread>> {
-        let (header, account) = (&block.header, self.account);
+        let (header, account, invalid) =
+            (&block.header, self.gathering.account, self.gathering.invalid);
         let mut observer = match plan {
             Some(plan) => {
-                gather::observer_tracking(plan, header, metadata, database, account, self.invalid)
+                gather::observer_tracking(plan, header, metadata, database, account, invalid)
             }
             None => gather::checker(header, metadata, database, account),
         };
         let read = reread_rows(
-            self.source,
-            self.scan_options,
-            self.ledger,
-            self.cancel,
+            &self.read,
             self.cache_path,
             metadata,
             database,
             block,
-            self.extent,
             Some(observer.as_mut()),
             &mut self.shortfall_reported,
         )
@@ -471,7 +447,7 @@ impl Rereads<'_> {
                 // so a record from an earlier, tighter allowance goes.
                 block.statistics_declined = None;
                 merge_ignored(&mut block.ignored_refusals, ignored);
-                self.account.apply(&[(term, -(replaced as i64))]);
+                self.gathering.account.apply(&[(term, -(replaced as i64))]);
             }
         }
     }
@@ -500,22 +476,17 @@ struct BlockReread {
 /// `observer` where there is one, and answer the census and count:
 /// what a back-fill's read (`Rereads::reread`) and a query's census of a block mapped
 /// at the metadata level (`pgdt_query::Table::settle`) both read. `None` is
-/// `cancel` stopping it first, by its flag or by a read it dropped, whichever
+/// `ctx`'s token stopping it first, by its flag or by a read it dropped, whichever
 /// reader made that read, and nothing else answers it; a block no
 /// longer ending where the map says is [`Error::CachedBlockChanged`], naming
 /// `cache_path`. Each reader draws what it holds past its chunk from
-/// `ledger` (`docs/design/decisions.md`, "D157").
-#[allow(clippy::too_many_arguments)]
+/// `ctx`'s ledger (`docs/design/decisions.md`, "D157").
 pub async fn reread_rows(
-    source: &dyn ByteRangeSource,
-    scan_options: &ScanOptions,
-    ledger: &Ledger,
-    cancel: &CancellationToken,
+    ctx: &ReadContext<'_>,
     cache_path: Option<&Path>,
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
     block: &CopyBlock,
-    extent: Extent,
     mut observer: Option<&mut (dyn BlockObserver + 'static)>,
     shortfall_reported: &mut bool,
 ) -> Result<Option<BlockCensus>> {
@@ -526,46 +497,36 @@ pub async fn reread_rows(
     // A source cut short of the block's recorded end cannot end it there, and
     // every read loop below takes its length from the end less its position.
     // One whose end is not known yet is read until it ends.
-    if extent.exact().is_some_and(|size| block.end_offset > size) {
+    if ctx.extent.exact().is_some_and(|size| block.end_offset > size) {
         return Err(moved());
     }
     let plan = CensusPlan {
         width: block.header.columns.len(),
         counter: counter_for(&block.header, metadata, database),
     };
-    let outcome = match scan_region(
-        source,
-        scan_options,
-        ledger,
-        cancel,
-        &block.header.qualified_name(),
-        block.header_offset,
-        block.data_offset,
-        Some(plan.clone()),
-        extent,
-        observer.as_deref_mut(),
-    )
-    .await
-    {
+    let region = Region {
+        table: &block.header.qualified_name(),
+        header_offset: block.header_offset,
+        data_offset: block.data_offset,
+        census: Some(plan.clone()),
+        observer: observer.as_deref_mut(),
+    };
+    let outcome = match scan_region(ctx, region).await {
         Ok(outcome) => outcome,
         // A read the leader dispatched, dropped by the interrupt
         // ([`cancelled_read`]): the same `None` the token answers, as
         // [`map_file`](crate::map_file) banks the mapping pass's.
-        Err(e) if cancelled_read(&e, cancel) => return Ok(None),
+        Err(e) if cancelled_read(&e, ctx.cancel) => return Ok(None),
         Err(e) => return Err(e),
     };
     report_shortfall(shortfall_reported, outcome.shortfall);
     let (end, census) = match outcome.scan {
         RegionScan::Closed(interior) => (interior.end, interior.census),
         RegionScan::Cancelled => return Ok(None),
-        RegionScan::Declined => {
-            let read = scan_options.read;
-            match observe_rows(source, read, ledger, cancel, block, &plan, extent, observer).await?
-            {
-                Some(read) => read,
-                None => return Ok(None),
-            }
-        }
+        RegionScan::Declined => match observe_rows(ctx, block, &plan, observer).await? {
+            Some(read) => read,
+            None => return Ok(None),
+        },
     };
     let recorded = (block.terminator_offset, block.end_offset, block.row_count, block.longest_line);
     if (end.terminator_offset, end.end_offset, end.row_count, end.longest_line) != recorded {
@@ -580,24 +541,20 @@ pub async fn reread_rows(
 /// into both as they go by (`docs/design/decisions.md`, "D138") — and answer
 /// the `CopyEnd` the scanner met with the census —
 /// `None` where
-/// `cancel` fired first, read once per chunk as
+/// `ctx`'s token fired first, read once per chunk as
 /// [`map_forward`](crate::forward::map_forward) reads it.
-#[allow(clippy::too_many_arguments)]
 async fn observe_rows(
-    source: &dyn ByteRangeSource,
-    read: ReadOptions,
-    ledger: &Ledger,
-    cancel: &CancellationToken,
+    ctx: &ReadContext<'_>,
     block: &CopyBlock,
     plan: &CensusPlan,
-    extent: Extent,
     mut observer: Option<&mut (dyn BlockObserver + 'static)>,
 ) -> Result<Option<(CopyEnd, BlockCensus)>> {
+    let (source, cancel) = (ctx.source, ctx.cancel);
     let scanner = CopyScanner::resume(block.data_offset, Some((block.header_offset, 0)));
-    let mut chunked = ChunkedScanner::to_source_end(scanner, extent, read);
+    let mut chunked = ChunkedScanner::to_source_end(scanner, ctx.extent, ctx.scan.read);
     let mut census = BlockCensus::new(plan.width);
     let mut streamed = plan.fold();
-    let mut holder = ledger.holder();
+    let mut holder = ctx.ledger.holder();
     loop {
         if cancel.is_cancelled() {
             return Ok(None);

@@ -4,7 +4,7 @@ use std::num::NonZeroU64;
 use pgdt_dump::cache::{CacheMode, colocated_path};
 use pgdt_fixtures::{all_fixtures, refused_field, statistics_fixture};
 use pgdt_io::{
-    Allowance, ArrangementRequest, DEFAULT_MEMORY_BUDGET, Jobs, Ledger, LocalFileSource,
+    Allowance, ArrangementRequest, DEFAULT_MEMORY_BUDGET, Extent, Jobs, Ledger, LocalFileSource,
     Parallelism,
 };
 use pgdt_model::internal::{ColumnStatisticsExt, ColumnStatisticsParts};
@@ -45,18 +45,16 @@ async fn gathered_at(
     block: &CopyBlock,
     plan: &StatisticsBackfill,
 ) -> BlockStatistics {
-    let (cancel, account) = (CancellationToken::new(), Arc::default());
+    let (cancel, account, ledger) = (CancellationToken::new(), Arc::default(), Ledger::unlimited());
+    let extent = source.extent().await.unwrap();
     let mut reader = Rereads {
-        source,
-        scan_options: &options,
-        ledger: &Ledger::unlimited(),
-        cancel: &cancel,
-        invalid: PostgresInvalidValues::Default,
+        read: ReadContext { source, scan: options, ledger: &ledger, cancel: &cancel, extent },
         cache_path: None,
-        request: &StatisticsRequest::DATA,
-        allowance: None,
-        account: &account,
-        extent: source.extent().await.unwrap(),
+        gathering: Gathering {
+            request: &StatisticsRequest::DATA,
+            account: &account,
+            invalid: PostgresInvalidValues::Default,
+        },
         loaded: HashSet::new(),
         shortfall_reported: false,
     };

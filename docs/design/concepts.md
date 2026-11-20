@@ -185,8 +185,8 @@ Extending a map forward from its frontier, a block's interior split into
 pieces and folded back, each block closed, the cache saved on a throttle
 ([`decisions.md`](decisions.md), "D48", "Batches, streams and the leader").
 
-- **pgdt-mapping** — `forward/`, `whole_file.rs`, `backfill.rs`,
-  `interior/`: the pass whole — a map extended
+- **pgdt-mapping** — `context.rs`, `forward/`, `whole_file.rs`, `backfill.rs`,
+  `interior/`: the pass whole — what it reads and saves under, a map extended
   from its frontier with its observers attached, the whole-file map and the
   back-fill re-reading what a mapped block lacks, and a block's interior split
   into pieces and folded. Above the codec, since a block it maps is gathered

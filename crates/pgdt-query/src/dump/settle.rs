@@ -12,8 +12,10 @@ use pgdt_core::{CopyHeader, Error, Result};
 use pgdt_dump::cache::{CacheMode, Held, Opened, SourceWatch};
 use pgdt_dump::internal::{announce_read_loop, scan_preamble};
 use pgdt_dump::{ReadOptions, ScanOptions, attach_text};
-use pgdt_io::{Arrangement, ByteRangeSource, Extent, Ledger};
-use pgdt_mapping::internal::{MapStop, Pass, Target, map_forward, reread_rows, splice};
+use pgdt_io::{Arrangement, ByteRangeSource, Ledger};
+use pgdt_mapping::internal::{
+    MapStop, Pass, PassContext, ReadContext, Target, map_forward, reread_rows, splice,
+};
 use pgdt_model::timescaledb::TimescaleDb;
 use pgdt_model::{CopyBlock, DumpIndex, DumpMetadata, TableName};
 use tokio_util::sync::CancellationToken;
@@ -173,19 +175,18 @@ impl ColdPass<'_> {
             }
             ScanExtent::UntilTargetSettled | ScanExtent::Full => None,
         };
-        let stop = map_forward(
-            source,
-            &self.scan,
-            &self.ledger,
-            self.cancel,
-            mode,
+        let ctx = PassContext {
+            read: ReadContext {
+                source,
+                scan: self.scan,
+                ledger: &self.ledger,
+                cancel: self.cancel,
+                extent: source_extent,
+            },
+            cache: mode,
             watch,
-            &mut index,
-            target,
-            Pass::Query,
-            source_extent,
-        )
-        .await?;
+        };
+        let stop = map_forward(&ctx, &mut index, target, Pass::Query).await?;
         if stop == MapStop::Interrupted {
             return Err(Error::ScanCancelled { scanned_through: index.scanned_through });
         }
@@ -212,7 +213,7 @@ impl ColdPass<'_> {
                 true => &mut read.through,
                 false => &mut read.blocks,
             };
-            self.census(metadata.as_deref(), database, blocks, source_extent).await?;
+            self.census(&ctx.read, metadata.as_deref(), database, blocks).await?;
         }
         // **A streamed schema needs no completeness test**
         // (`docs/design/decisions.md`, "D34"): the pass has finished and the
@@ -224,14 +225,14 @@ impl ColdPass<'_> {
 
     /// **A query's cold semantics over a table the map holds at the metadata
     /// level** (`docs/design/decisions.md`, "D35"): each of `blocks` holding
-    /// no census is read again for one, as this pass would have censused it,
-    /// and holds it for this query alone.
+    /// no census is read again for one under `read`, as this pass would have
+    /// censused it, and holds it for this query alone.
     async fn census(
         &self,
+        read: &ReadContext<'_>,
         metadata: Option<&DumpMetadata>,
         database: Option<&str>,
         blocks: &mut [CopyBlock],
-        extent: Extent,
     ) -> Result<()> {
         let lacking: Vec<usize> =
             (0..blocks.len()).filter(|&i| blocks[i].census.is_none()).collect();
@@ -244,21 +245,10 @@ impl ColdPass<'_> {
         announce_read_loop(self.source, self.scan.read, self.scan.parallelism);
         let mut shortfall_reported = false;
         for at in lacking {
-            let read = reread_rows(
-                self.source,
-                &self.scan,
-                &self.ledger,
-                self.cancel,
-                self.mode.path(),
-                metadata,
-                database,
-                &blocks[at],
-                extent,
-                None,
-                &mut shortfall_reported,
-            )
-            .await?;
-            let Some(census) = read else {
+            let path = self.mode.path();
+            let reported = &mut shortfall_reported;
+            let census = reread_rows(read, path, metadata, database, &blocks[at], None, reported);
+            let Some(census) = census.await? else {
                 return Err(Error::ScanCancelled { scanned_through: blocks[at].header_offset });
             };
             blocks[at].census = Some(census);
