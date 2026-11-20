@@ -170,10 +170,12 @@ The spans tiling a dump and the `COPY` blocks among them, the builder that
 extends a map, and what is found wrong with the file
 ([`decisions.md`](decisions.md), "The file map and the preamble").
 
-- **pgdt-model** — `span.rs`: what the cache persists (D68), and the
-  partition roots blocks are written through, which a read's refusals and
-  the map's findings both read (D136); `diagnostic.rs`: what is found wrong
-  with the file, recomputed on load rather than persisted.
+- **pgdt-model** — `persisted/span.rs`: the spans and their blocks as the
+  cache persists them (D68); `span.rs`: what a map answers of them — its
+  blocks, the tables they hold rows for, and the partition roots blocks are
+  written through, which a read's refusals and the map's findings both read
+  (D136); `diagnostic.rs`: what is found wrong with the file, recomputed on
+  load rather than persisted.
 - **pgdt-dump** — `map/`: building a map — where a statement ends, a comment
   block read, and what every map is checked for and carries.
 
@@ -198,8 +200,9 @@ What the preamble declares, per database: tables, types, collations and
 extensions, kept as the words written ([`decisions.md`](decisions.md), "The
 file map and the preamble").
 
-- **pgdt-model** — `catalog.rs`: persisted, so never a codec conclusion
-  (D74); a database's DDL by name, every reader of a block's DDL finding it
+- **pgdt-model** — `persisted/catalog.rs`: the declarations as the cache
+  persists them, so never a codec conclusion (D74); `catalog.rs`: a
+  database's DDL by name, every reader of a block's DDL finding it
   there, and the walks over what it declares — a column through a table's
   parents, a table's descendants and ancestors — beside it, reading nothing
   else. The databases a dump holds are the map's (`DumpIndex::databases`),
@@ -217,8 +220,9 @@ hypertables, chunks and continuous aggregates
 ([`decisions.md`](decisions.md), "D133";
 [`timescaledb-invariants.md`](timescaledb-invariants.md)).
 
-- **pgdt-model** — `timescaledb/`: the rows persisted on their blocks, and
-  the recipes over them, reading no Arrow and doing no I/O, so `pgdt info`
+- **pgdt-model** — `persisted/timescaledb.rs`: the rows as the cache
+  persists them on their blocks; `timescaledb/`: which blocks' rows a pass
+  records, and the recipes over them, reading no Arrow and doing no I/O, so `pgdt info`
   and the query layer read one set of conclusions (D74): not beside
   resolution in pgdt-query, which `info` would reach into, nor a crate of
   their own, a seam with nothing on its other side. The mapping pass
@@ -237,6 +241,11 @@ hypertables, chunks and continuous aggregates
 Persisting a map and reloading it, the dump it was saved from identified
 ([`decisions.md`](decisions.md), "The compressed source and the cache"). Its
 format is pgdt-model's, `CACHE_FORMAT_VERSION` at that crate's root.
+
+- **pgdt-model** — `persisted.rs`: the namespace holding every shape the
+  cache persists and nothing else, each shape's file claimed by its own
+  concept, so an edit under it is the one asking whether the format bumps
+  (D68).
 
 - **pgdt-dump** — `cache/`: the loader re-derives the map's diagnostics with
   the map's own functions, so the cache sits beside the parsers (D68); its part is opening a source through its cache too, which
@@ -259,8 +268,9 @@ The array-shape census and the count of values a column's Arrow type cannot
 hold, and the contract over a block's rows that counts them, which a crate
 above implements ([`decisions.md`](decisions.md), "D35", "D74").
 
-- **pgdt-model** — `block.rs`: persisted, and a contract over the data is
-  model wherever its implementor sits (D74); how a row is folded in is
+- **pgdt-model** — `persisted/block.rs`: the census and the count as the
+  cache persists them; `block.rs`: a contract over the data is model
+  wherever its implementor sits (D74); how a row is folded in is
   model's too, a held row whole and a streamed one field by field as its
   bytes go by (`CensusFold`, which pgdt-dump's `RowFold` hands its carry
   beside the block's observer, D138), read by every pass that records, each
@@ -363,8 +373,9 @@ What a pass records of each column per row group, and what reads it: pruning,
 a table's summary, DataFusion's statistics, `pgdt info --detail`
 ([`decisions.md`](decisions.md), "Statistics").
 
-- **pgdt-model** — `statistics.rs`: the stored shape, persisted, and the
-  contract over a block's rows that answers it, a fold over each field's
+- **pgdt-model** — `persisted/statistics.rs`: the stored shape;
+  `statistics.rs`: the views it is read through, and the contract over a
+  block's rows that answers it, a fold over each field's
   runs as the census's is, model wherever its implementor sits (D74, D138).
 - **pgdt-mapping** — `statistics.rs`, `statistics/request.rs`,
   `statistics/density.rs`, `statistics/account.rs`, `statistics/stored.rs`,

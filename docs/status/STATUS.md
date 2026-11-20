@@ -89,7 +89,7 @@ commits the same way, as the account their pairs must sum to.
 
 Spec: [`../design/roadmap-P43-block-model.md`](../design/roadmap-P43-block-model.md).
 
-- [ ] **43.1** `pgdt-model`'s `persisted/` split: the serde shapes alone in it, contracts, walks, diagnostics and recipes beside it; a move, no bump; the concept map's claims follow
+- [x] **43.1** `pgdt-model`'s `persisted/` split: the serde shapes alone in it, contracts, walks, diagnostics and recipes beside it; a move, no bump; the concept map's claims follow — [notes](../design/roadmap-P43.1-persisted-notes.md)
 - [ ] **43.2** The mapping pass context for every function under `too_many_arguments`; `forward.rs`'s cancel-save-return and `whole_file.rs`'s interrupted exit each written once
 - [ ] **43.3** `BlockId`, derived from the header offset, at every identity site; display sites print the address; no format change
 - [ ] **43.4** `CopyBlock` as header, partition root, `BlockAddress` and `Arc<BlockRecord>`; `LongestLine` block-relative; `InsertRun` holding a record; copy-on-write in the back-fill and `settle.rs`; `Segment` holding header and address, no whole block cloned; the cache-format bump; `--count-pair` on the typed query

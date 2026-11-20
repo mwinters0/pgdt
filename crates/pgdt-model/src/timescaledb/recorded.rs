@@ -1,9 +1,10 @@
 //! What a mapping pass records of TimescaleDB's catalog: which blocks, and
 //! their rows as text, persisted on each block's `CopyBlock::recorded_rows`
-//! (`docs/design/decisions.md`, "D133").
+//! (`docs/design/decisions.md`, "D133") as `crate::persisted::timescaledb`'s
+//! shape.
 
+use crate::timescaledb::RecordedRows;
 use pgdt_core::{CopyHeader, split_fields, unescape_field};
-use serde::{Deserialize, Serialize};
 
 /// The schema TimescaleDB's catalog tables live in.
 pub const CATALOG_SCHEMA: &str = "_timescaledb_catalog";
@@ -27,15 +28,6 @@ const RECORDED: [&str; 8] = [
 // timescaledb: TS2 — the catalog reaches the dump as COPY blocks under its own schema.
 pub fn records_rows(header: &CopyHeader) -> bool {
     header.schema.as_deref() == Some(CATALOG_SCHEMA) && RECORDED.contains(&header.table.as_str())
-}
-
-/// The rows of one block a pass recorded ([`records_rows`]), each field's
-/// text with its `COPY` escapes undone and a NULL as `None`, in the order of
-/// the block's header. A field that is not UTF-8 once unescaped is kept as
-/// its escaped bytes read lossily, as the DDL around it is read.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RecordedRows {
-    pub rows: Vec<Vec<Option<String>>>,
 }
 
 impl RecordedRows {

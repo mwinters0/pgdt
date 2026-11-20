@@ -2,39 +2,19 @@
 //! array-shape census and the unrepresentable count (`docs/design/decisions.md`,
 //! "D35", "D96"), and how a row is folded into them — and the contract over a
 //! block's rows that counts it, which the parsers call and a crate above
-//! implements ([`FieldCount`]).
+//! implements ([`FieldCount`]). The shapes are the cache's
+//! (`crate::persisted::block`).
 
 use std::sync::Arc;
 
+use crate::{ArrayShape, BlockCensus, Unrepresentable};
 use pgdt_core::split_fields;
-use serde::{Deserialize, Serialize};
 
 /// The most dimensions PostgreSQL can give an array — `MAXDIM`, 6 in every
 /// supported version (I25). A literal whose leading brace run is longer than
 /// this did not come out of `array_out`, so a consumer must treat it as
 /// unusable rather than as a depth.
 pub const PG_ARRAY_MAX_DIMS: u8 = 6;
-
-/// What one column's array values look like within one `COPY` block — the
-/// shape census (`docs/design/decisions.md`, "D35").
-///
-/// Per column because an array's dimensionality belongs to the *value*
-/// (I21), not to the DDL; per block because that is what the map extends
-/// incrementally. Combining blocks is min-of-mins, max-of-maxes.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ArrayShape {
-    /// Fewest and most dimensions any value in this column carried, as
-    /// `(min, max)`. `None` until a value contributes one — a SQL NULL never
-    /// does, and neither does `{}`, which is what `array_out` writes for an
-    /// empty array of *any* dimensionality (I25) and so fits every depth.
-    /// Both bounds, never the maximum alone (`docs/design/decisions.md`,
-    /// "D35").
-    pub dims: Option<(u8, u8)>,
-    /// Whether any value carried an explicit `[lb:ub]=` lower-bound prefix.
-    /// Kept apart from `dims` because it disqualifies a column on its own:
-    /// Arrow lists are 0-based, with nowhere to record an index origin.
-    pub lower_bound_prefix: bool,
-}
 
 impl ArrayShape {
     /// Fold another block's census for the same column into this one —
@@ -180,17 +160,6 @@ pub enum UnrepresentableTier {
     Format,
 }
 
-/// One column's count of values its Arrow type cannot hold in one `COPY`
-/// block, each value in the one tier it is past — the format spec's
-/// dominating (`docs/design/decisions.md`, "D96"). Beside the array-shape
-/// census, and at the same level: a block mapped at the metadata level holds
-/// neither.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Unrepresentable {
-    format: u64,
-    engine: u64,
-}
-
 impl Unrepresentable {
     /// Values past Arrow's format spec.
     pub fn format(&self) -> u64 {
@@ -247,20 +216,6 @@ pub fn calendar_end() -> i32 {
     let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("the Unix epoch is a date");
     let days = chrono::NaiveDate::MAX.signed_duration_since(epoch).num_days();
     i32::try_from(days).expect("chrono's calendar ends inside Date32's range")
-}
-
-/// What one pass over a block's rows records beside its rows' extent: the
-/// array-shape census and the unrepresentable count, one entry each per
-/// column in `header.columns` order — the data level's two query affordances
-/// (`docs/design/decisions.md`, "D35", "D96"). The census grows for a row
-/// wider than its header holding a `{` or `[`, which a query refuses; the count never does, a
-/// column past the header having no declared type to be tested against. A
-/// column that saw no array-shaped literal holds the default shape, and both
-/// are empty only for a header naming no columns.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BlockCensus {
-    pub shapes: Vec<ArrayShape>,
-    pub unrepresentable: Vec<Unrepresentable>,
 }
 
 /// What a crate above calls on [`BlockCensus`] that is not its API: public only

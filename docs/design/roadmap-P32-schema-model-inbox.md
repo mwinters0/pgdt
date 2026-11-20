@@ -144,4 +144,4 @@ parameter of the fold, not a guard repeated on each arm. Folding the
 it adds. That is a cache-format change.
 
 **Origin.** An architecture review at `ec20c8fd`, 2026-11-20. *Contingent on*
-`crates/pgdt-dump/src/ddl/metadata.rs` and `crates/pgdt-model/src/span.rs`.
+`crates/pgdt-dump/src/ddl/metadata.rs` and `crates/pgdt-model/src/persisted/span.rs`.

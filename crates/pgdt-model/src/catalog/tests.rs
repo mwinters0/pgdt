@@ -1,4 +1,5 @@
 use super::*;
+use crate::TypeDef;
 
 /// A table as [`with_tables`] takes it: name, own columns, parents, `OF`
 /// type.

@@ -189,7 +189,7 @@ than reading as a phase nobody has sliced.
   kilobytes per table, about a fifth of it live structure the preamble alone
   pays (`measurements.md`, `peak-rss` and `rss-attribution`).
   **(c) unowned**; promoted by a dump with tens of thousands of tables, nothing
-  in hand being one. Detail: `crates/pgdt-model/src/catalog.rs`.
+  in hand being one. Detail: `crates/pgdt-model/src/persisted/catalog.rs`.
 
 - **KD33** — statistics stop where the account fills: nothing releases
   `Term::Retained` while the pass gathers forward, so a dump long enough fills

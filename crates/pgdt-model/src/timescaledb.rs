@@ -22,11 +22,12 @@ mod recipe;
 mod recorded;
 mod version;
 
+pub use crate::persisted::timescaledb::RecordedRows;
 use catalog::Catalog;
 pub use catalog::EXTENSION;
 pub use findings::{absent_chunks, compressed_chunks, findings, root_rows};
 pub use recipe::{Chunk, ContinuousAggregate, Dimension, Hypertable, Resolved, Slice};
-pub use recorded::{CATALOG_SCHEMA, RecordedRows, records_rows};
+pub use recorded::{CATALOG_SCHEMA, records_rows};
 pub use version::{Era, Recipe, Release, Version};
 
 /// What one database's catalog concludes, where the database is

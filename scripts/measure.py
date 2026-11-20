@@ -7658,6 +7658,7 @@ MAP = (
     "crates/pgdt-dump/src/map/tiling.rs",
     "crates/pgdt-dump/src/map/toc.rs",
     "crates/pgdt-model/src/span.rs",
+    "crates/pgdt-model/src/persisted/span.rs",
 )
 #: The map's own per-block cost is two modules, not one: `map::Builder::snapshot`
 #: clones the span list and `forward::splice` rebuilds the index from it,
@@ -7734,10 +7735,11 @@ PGTYPE = (
 )
 #: The unrepresentable count, which every data-level mapping pass takes beside
 #: the census (`docs/design/decisions.md`, "D96"), and the fold of a row into
-#: both, in `block.rs`.
+#: both, in `block.rs`, beside the count's persisted shape.
 UNREPRESENTABLE = (
     "crates/pgdt-codec/src/unrepresentable.rs",
     "crates/pgdt-model/src/block.rs",
+    "crates/pgdt-model/src/persisted/block.rs",
 )
 #: The nested literal codec, and the batch it is built into and read back
 #: from: what a query asks for, the batcher, its column builders and retained
@@ -7762,6 +7764,7 @@ PREAMBLE = (
     "crates/pgdt-dump/src/ddl/types.rs",
     "crates/pgdt-dump/src/lex.rs",
     "crates/pgdt-model/src/catalog.rs",
+    "crates/pgdt-model/src/persisted/catalog.rs",
 )
 #: A query figure also reads through the CLI's own row rendering. The whole
 #: `src/` directory rather than `main.rs`: a declared path is matched by
@@ -7794,7 +7797,8 @@ GEN_DYNFILTER = ("scripts/generate_dynamic_filter_bench.py", *GEN_PERF)
 #: around it, the library `pgdt` calls.
 DATAFUSION = ("crates/datafusion-pgdump/src/", "crates/datafusion-cli-pgdump/src/")
 #: Where statistics are gathered, stored and read back. `pgdt-mapping`'s
-#: `statistics` is the gathering, `model/statistics.rs` what is stored;
+#: `statistics` is the gathering, `model/persisted/statistics.rs` what is
+#: stored and `model/statistics.rs` how it is read;
 #: `PGTYPE`, `resolve.rs` and `PREDICATE` are the comparison a bound is
 #: keyed and ordered under.
 STATISTICS = (
@@ -7817,6 +7821,7 @@ STATISTICS = (
         )
     ),
     "crates/pgdt-model/src/statistics.rs",
+    "crates/pgdt-model/src/persisted/statistics.rs",
     *PGTYPE,
     "crates/pgdt-codec/src/resolve.rs",
     *PREDICATE,
