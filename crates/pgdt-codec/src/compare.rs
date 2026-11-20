@@ -226,6 +226,9 @@ impl CompareKind {
     ///
     /// A special value the emitted type cannot hold (D96) keeps its rank in
     /// the key, which no Arrow value contradicts.
+    ///
+    /// Every kind is named here and in [`Self::datafusion_divergence`], with no
+    /// catch-all, so a kind added is placed in both before it compiles.
     pub fn datafusion_order(&self) -> CompareKind {
         match self {
             Self::Interval { qualifier } => Self::IntervalFields { qualifier: *qualifier },
@@ -238,7 +241,19 @@ impl CompareKind {
             // The emitted text is the field's, so its length refuses as it
             // did.
             Self::PaddedText { length } => Self::Text { length: *length, varying: false },
-            kind => kind.clone(),
+            Self::Bool
+            | Self::Int { .. }
+            | Self::UnsignedInt
+            | Self::Float32
+            | Self::Float64
+            | Self::Decimal { .. }
+            | Self::Date
+            | Self::Time
+            | Self::Timestamp { .. }
+            | Self::Uuid
+            | Self::Bytea
+            | Self::Text { .. }
+            | Self::IntervalFields { .. } => self.clone(),
         }
     }
 
@@ -255,7 +270,19 @@ impl CompareKind {
             | Self::Jsonb => Some(ComparisonDivergence::ValueAsText),
             Self::Interval { .. } => Some(ComparisonDivergence::IntervalFields),
             Self::PaddedText { .. } => Some(ComparisonDivergence::PaddedText),
-            _ => None,
+            Self::Bool
+            | Self::Int { .. }
+            | Self::UnsignedInt
+            | Self::Float32
+            | Self::Float64
+            | Self::Decimal { .. }
+            | Self::Date
+            | Self::Time
+            | Self::Timestamp { .. }
+            | Self::Uuid
+            | Self::Bytea
+            | Self::Text { .. }
+            | Self::IntervalFields { .. } => None,
         }
     }
 }
