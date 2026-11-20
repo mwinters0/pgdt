@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P17, P19, P20, P25, P27–P31, P33, P35, P36, P38 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P43 — the block model: identity, address and record | Sketched; not grilled | this file, below — ahead of P8 and the archive phases, which each need a part of it |
+| P43 — the block model: identity, address and record | **Current** | [spec](roadmap-P43-block-model.md); progress in [`../status/STATUS.md`](../status/STATUS.md) |
 | P8 — `--inserts` and `--column-inserts` rows | Sketched; not grilled | this file, below; [inbox](roadmap-P8-inserts-inbox.md) |
 | P18 — zstd and lz4 input | Sketched; not grilled | this file, below; [inbox](roadmap-P18-zstd-inbox.md) — carved out of the gzip work |
 | P41 — archive formats: the shared model, and `--format=custom` | Sketched; not grilled | this file, below; [inbox](roadmap-P41-archive-formats-inbox.md) |
@@ -730,64 +730,11 @@ item; see below.
 
 ## P43 — The block model: identity, address and record
 
-**A block of rows has an identity, an address and a record, and one struct is
-all three.** `CopyBlock` (`crates/pgdt-model/src/span.rs`) holds plain
-format's address — the header and four absolute offsets — beside what any
-block of rows has recorded of it: its row count, partition root, statistics and
-their decline, ignored refusals, `checked_in_full`, census, recorded rows and
-longest line. Its `header_offset` is the block's identity everywhere above the
-model: the replay plan's maps, `EarlyStop`, the back-fill's `loaded` set,
-`Error::CachedBlockChanged`. `InsertRun` beside it holds a table and a count,
-and none of the record. Sketched to corner-avoidance depth, and scheduled ahead
-of P8 and the archive phases because each needs one part separated from the
-others:
-
-- **P8** needs an `INSERT` run carrying a census, statistics and a longest
-  line, without which it cannot be typed, pruned or carved for.
-- **P41** needs an address that is not a file offset, since an archive entry's
-  `COPY` statement is a TOC field and has no header offset.
-- **P42** needs an address that names a file.
-- **P21** needs to write a record for a block it reads through the replay.
-
-The candidate shape has three parts. An opaque `BlockId`, ordered in dump order,
-keys every map above the model. A `BlockAddress` is today's header and
-offsets, later an enum with an entry arm. A `BlockRecord` is shared by `Arc`
-as statistics already are (D34) and held by an `INSERT` run too. The replay
-then takes an address and an id and clones no record. Today `Segment::new`,
-`TablePartitions::new` and `Table::read` under `Inheritance::Only` each clone a
-whole block and strip its statistics. Row groups and `FieldRefusal::offset` are
-block-relative, so they are entry-relative already.
-
-**Recording a block's rows is the second half.** Feeding a row to the census,
-then to the observer, and closing the block into its record is hosted three
-times: by `map::Builder`, by an interior piece and by the back-fill's re-read.
-The close is written in both `map.rs` and `backfill.rs`, and the mapping crate
-opens a block three ways (`forward.rs`, `whole_file.rs`'s eager pass, the
-back-fill). P8 adds a fourth host, and P41 has no line machine to host one. So
-the shape to grill is one recorder that owns the census, the observer and the
-streamed fold, is fed rows, and finishes into the record, which the builder
-takes at the block's end. `build_index` and `build_map` (`whole_file.rs`) are
-public, are called only by tests, and carry an open sequence of their own. They
-take the shared one or move behind the fixtures crate's `mapping` feature.
-
-What it inherits:
-
-- **The row path is the hot path, and its shape is priced.** A recorder is a
-  concrete type, fed the calls the hosts make today in the same order, and
-  priced by `--count-pair` (D108). If the pair resolves a rise that rework
-  cannot remove, the hosts stay, with that reason written beside them. The
-  evidence comes first. Whether a data-level parse splits a row twice, once in
-  `BlockCensus::observe_row` and again in the observer's default
-  `observe_row`, has not been read. D28's single split covers the query path
-  alone, and one profile of a data-level parse answers it.
-- **A cache-format bump**, one for the phase (`bump-cache-format`).
-- **Whether `pgdt-model` separates what it persists from what it derives**
-  (`diagnostic.rs` is never persisted, `timescaledb/recipe.rs` is logic), so
-  that a file's path answers whether an edit to it bumps the format.
-
-It is behaviour-preserving apart from the bump ("Refactor when the shape stops
-fitting"). It survives P8, P41, P42 and P21, and each starts from its part
-instead of carving it out.
+A block of rows has an identity (`BlockId`), an address (`BlockAddress`) and a
+record (`BlockRecord`), each its own type, and one recorder in the model records
+a block's rows for every pass, opened and closed once. Ahead of P8 and the archive
+phases, each of which starts from one of the three. The spec is
+[`roadmap-P43-block-model.md`](roadmap-P43-block-model.md).
 
 ## P8 — `--inserts` and `--column-inserts` rows
 

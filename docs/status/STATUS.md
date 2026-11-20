@@ -85,12 +85,25 @@ apparatus gate and no marker ([`../design/measurements.md`](../design/measuremen
 the comparison alone; `--count-span <base>..<tip>` counts a run of landed
 commits the same way, as the account their pairs must sum to.
 
+## P43 progress
+
+Spec: [`../design/roadmap-P43-block-model.md`](../design/roadmap-P43-block-model.md).
+
+- [ ] **43.1** `pgdt-model`'s `persisted/` split: the serde shapes alone in it, contracts, walks, diagnostics and recipes beside it; a move, no bump; the concept map's claims follow
+- [ ] **43.2** The mapping pass context for every function under `too_many_arguments`; `forward.rs`'s cancel-save-return and `whole_file.rs`'s interrupted exit each written once
+- [ ] **43.3** `BlockId`, derived from the header offset, at every identity site; display sites print the address; no format change
+- [ ] **43.4** `CopyBlock` as header, partition root, `BlockAddress` and `Arc<BlockRecord>`; `LongestLine` block-relative; `InsertRun` holding a record; copy-on-write in the back-fill and `settle.rs`; `Segment` holding header and address, no whole block cloned; the cache-format bump; `--count-pair` on the typed query
+- [ ] **43.5** `BlockObserver`'s one-call close; the `Gatherer` as a block's gatherer, a piece's and the strict checker; `--count-pair` on a data-level parse
+- [ ] **43.6** The `Recorder` in `pgdt-model`: a held row split once, `RowFold` replaced, the three hosts fed through it, `Builder` recording nothing and `on_copy_end` taking the record; `--count-pair` on a data-level parse
+- [ ] **43.7** One open under per-pass policies, `map_forward`'s `CopyStart` arm becoming it; one close, the back-fill merging through `BlockRecord`; `--count-pair` on a data-level parse
+- [ ] **43.8** `build_index` and `build_map` in `pgdt-fixtures` behind `mapping`, the eager pass opening through the open under its policy
+
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdt info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is open.** A dump is readable over HTTP, plain, `.xz` and gzip,
+- **P43 is open** (above). A dump is readable over HTTP, plain, `.xz` and gzip,
   with nothing about the network's speed priced
   (`KD35`, `KD36`). What statistics may hold resident is bounded and their
   coverage is not (`KD33`, `KD34`), both owned by P23, whose sketch in
@@ -100,8 +113,8 @@ commits the same way, as the account their pairs must sum to.
   source recommends, a memory limit discovered and filled under the reserve
   and the margin, and a `parse` saying what it delivered rather than what it
   was asked for — is in [`../design/decisions.md`](../design/decisions.md).
-  Fourteen phases remain sketched — P8, P18, P41, P42, P32, P34, P37, P22,
-  P21, P23, P26, P24, P39, P40, in the roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
+  Sixteen phases remain sketched — P8, P18, P41, P42, P32, P34, P37, P22,
+  P21, P23, P26, P44, P24, P45, P39, P40, in the roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
   nothing about the order they run in. Each gets its own full grilling when it
   becomes current, and every one that carries an inbox must have it drained as
   part of that grilling.
