@@ -10,8 +10,9 @@
 //! complete — whichever provider its window was read through. Inside the open
 //! unit it is a forward decode resumed at the unit's checkpoint, whose bytes
 //! are the frontier's own, from the window the frontier began from, and
-//! checked where the frontier's are — none of them once the frontier has
-//! closed that unit (`KD137`).
+//! checked where the frontier's are; it serves only while that unit is the
+//! open one, a read once the frontier has closed it beginning the closed
+//! unit's decode at its checkpoint.
 
 use std::sync::Arc;
 
@@ -145,17 +146,10 @@ impl Pass {
     /// Which decode serves a read from `offset`: the frontier at or past it,
     /// a decode behind it otherwise — the one kept from an earlier read where
     /// it can continue there, or one begun at the last checkpoint at or
-    /// before `offset` once the kept one has been left.
-    ///
-    /// Deficiency register: `deficiency: KD137` — a kept decode is continued
-    /// whatever kind it is, so one begun in the open unit, a forward decode,
-    /// goes on serving after the frontier has closed that unit, handing out
-    /// its bytes, and every closed unit's after it, compared against no
-    /// CRC-32 a unit recorded, the member's trailer checking them only where a
-    /// read reaches it. Neither the resumed decode's own CRC-32s, which
-    /// compare nothing for a decode left mid-unit, nor decoding the closed
-    /// unit whole, holding plaintext no charge names, closes it; leaving a
-    /// kept `Behind::Open` decode once its unit has closed does.
+    /// before `offset` once the kept one has been left. A kept forward decode
+    /// is left once the frontier has closed the unit it stands in, so every
+    /// byte a closed unit hands out is compared against the CRC-32 it
+    /// recorded.
     pub(super) fn route(&mut self, offset: u64) -> Result<Route> {
         if offset >= self.frontier_position()? {
             return Ok(Route::Frontier);
@@ -165,10 +159,12 @@ impl Pass {
         let at = checkpoints.partition_point(|c| c.plaintext <= offset).saturating_sub(1);
         let begins = checkpoints[at].plaintext;
         // Continuing is never dearer than restarting where the kept decode
-        // stands between the checkpoint and the offset.
+        // stands between the checkpoint and the offset, and is the same check
+        // where the unit it stands in is what it was begun as.
+        let closed = index.unit(at).is_some();
         if self.behind.as_ref().is_some_and(|decode| {
             let position = decode.decode.position();
-            position <= offset && position >= begins
+            position <= offset && position >= begins && decode.decode.serves_in(closed)
         }) {
             return Ok(Route::Behind);
         }
@@ -372,6 +368,13 @@ impl Pass {
     fn behind_input(&mut self) -> &mut Inflating<Behind> {
         self.behind.as_mut().expect("a read behind has its decode")
     }
+
+    /// Whether the decode kept behind the frontier, if there is one, is a
+    /// closed unit's.
+    #[cfg(test)]
+    pub(super) fn behind_is_closed(&self) -> Option<bool> {
+        self.behind.as_ref().map(|decode| matches!(decode.decode, Behind::Closed(_)))
+    }
 }
 
 /// What a run over the pass does: answer a read, or leave the decode behind
@@ -416,6 +419,13 @@ impl Job {
 }
 
 impl Behind {
+    /// Whether this may go on serving inside a unit `closed` says the
+    /// frontier has or has not closed: a closed unit's decode always, a
+    /// forward decode only inside the open unit.
+    fn serves_in(&self, closed: bool) -> bool {
+        matches!(self, Behind::Closed(_)) || !closed
+    }
+
     /// Whether this sits inside a closed unit not yet decoded to its end:
     /// bytes may have gone out that its check has not compared.
     fn owes_check(&self) -> bool {

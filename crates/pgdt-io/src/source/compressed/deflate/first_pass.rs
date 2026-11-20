@@ -115,7 +115,8 @@ const PASS_BYTES: u64 = 2 * DECODE_BYTES + SKIP_SCRATCH as u64;
 /// recorded CRC-32** as the decode leaves the unit, or as the run's reads
 /// complete ([`ByteRangeSource::complete_reads`]); one inside the open unit
 /// decodes the frontier's own bytes and is the frontier's to check, and is
-/// not compared once the frontier closes that unit (`KD137`).
+/// left once the frontier closes that unit, the next read there decoding the
+/// closed unit.
 pub(crate) struct FirstPass {
     feed: Feed,
     /// What the pass's status lines name the file by: its origin as a message
@@ -922,8 +923,7 @@ impl ByteRangeSource for FirstPass {
     }
 
     /// Leave the decode behind the frontier, comparing the check of a closed
-    /// unit it sits inside (`KD137` is the exception), and then the indexed
-    /// source's, once there is one.
+    /// unit it sits inside, and then the indexed source's, once there is one.
     /// Nothing else: a single member's only check is its trailer, which a
     /// pass stopped short of it has not reached, and reaching it would mean
     /// decoding the rest of the file.

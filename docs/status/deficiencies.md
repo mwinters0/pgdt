@@ -422,12 +422,6 @@ than reading as a phase nobody has sliced.
   promoted by a remote `parse` whose second download a user minds. Detail:
   `crates/pgdt-dump/src/map/tiling.rs`.
 
-- **KD137** — a read behind a gzip first pass's frontier, continuing a decode
-  begun in the unit that was open, hands out that unit's bytes after the
-  frontier has closed it, and those of every closed unit after it, unchecked
-  against the CRC-32 each recorded. **(b) owned by `M296`**. Detail:
-  `crates/pgdt-io/src/source/compressed/deflate/first_pass/pass.rs`.
-
 - **KD138** — a fetched gzip first pass's download room falls to two pieces
   at each `complete_reads` until the next read, so a task ahead handed out
   under the wider room is refused its pieces and its work is lost.

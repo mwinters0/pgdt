@@ -284,6 +284,51 @@ async fn a_read_behind_the_frontier_reads_from_its_checkpoint() {
     }
 }
 
+/// **A forward decode kept behind the frontier serves only while its unit is
+/// the open one**: a read inside the open unit keeps a forward decode, and
+/// once the frontier has closed that unit, the next read there, past where
+/// the kept decode stands, is served by a decode of the closed unit begun at
+/// its checkpoint, which compares the unit's CRC-32 as the reads complete. On
+/// both feeds.
+#[tokio::test]
+async fn a_kept_forward_decode_is_left_once_its_unit_closes() {
+    let payload = gzip_test_payload();
+    let (compressed, _) = gzip_indexed(&payload, SPACING.get());
+    let stored = std::fs::metadata(compressed.path()).unwrap().len();
+    for feed_name in FEEDS {
+        let pass = FirstPass::spaced(
+            named(compressed.path()),
+            feed(feed_name, compressed.path()),
+            stored,
+            SPACING,
+            &std::env::temp_dir(),
+        )
+        .unwrap();
+        let ahead = payload.len() * 2 / 3;
+        pass.read_range(0, ahead).await.unwrap();
+        let open = gzip_index_of(&pass).unit_ranges().last().unwrap().end;
+        assert!(open + 300 <= ahead as u64, "{feed_name}: {open} against {ahead}");
+
+        let read = pass.read_range(open + 7, 100).await.unwrap();
+        assert_eq!(&read[..], &payload[open as usize + 7..][..100], "{feed_name}");
+        assert_eq!(
+            pass.lock().behind_is_closed(),
+            Some(false),
+            "{feed_name}: inside the open unit"
+        );
+
+        let mut frontier = ahead as u64;
+        while !gzip_index_of(&pass).unit_ranges().any(|unit| unit.start == open) {
+            frontier += pass.read_range(frontier, 4096).await.unwrap().len() as u64;
+        }
+
+        let read = pass.read_range(open + 200, 100).await.unwrap();
+        assert_eq!(&read[..], &payload[open as usize + 200..][..100], "{feed_name}");
+        assert_eq!(pass.lock().behind_is_closed(), Some(true), "{feed_name}: once it has closed");
+        pass.complete_reads().await.unwrap();
+    }
+}
+
 /// A unit decode's refusal of a unit whose plaintext does not match the
 /// CRC-32 its index recorded.
 fn is_unit_check(error: &Error) -> bool {
