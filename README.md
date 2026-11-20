@@ -15,21 +15,31 @@ Available as:
 <details>
 
 <summary>
-🧐🤖 <i>Human author, LLM bicycle.</i>
+🧐🤖 <i>Human author, LLM collaborator.</i>
 </summary>
 
-I'm experimenting in this repo to see whether I can negotiate a middle ground between traditional
-dev and vibe coding, aiming to keep the quality high.  I'm keeping a tight grip on the architecture
-while letting the agent perform the implementation, and I'm letting the agent "have" things in the
-repo which makes it noisier than a human repo but which seems to help the agent achieve the quality
-that I wanted.
+I'm experimenting in this repo to ask -- what would it look like to _collaborate_ with AI? This is a
+third option to the apparent dichotomy that others are taking of A) trying to make it behave like a
+human, using only the tools that humans use (e.g. human-only documentation), or B) "vibe coding"
+everything, providing nothing but the goal (resulting in an inhumane and usually error-prone code
+base).
+
+I'm keeping a tight grip on the architecture while letting the agent perform all of the
+implementation, and I'm letting the agent "have" things it benefits from in the repo, which makes it
+noisier than a human repo but which helps the agent achieve the quality that I wanted with virtually
+no churn.
+
+My goal is a code base where the code quality is high and the code is navigable / approachable by
+humans, and I'm willing to sacrifice some noisy AI commentary and git burden (carrying extensive
+context) to get there.
 
 Keep in mind, this repo is still young and I'm intentionally leaving some messes around to come back
-to, just as I would when coding by hand.  Though admittedly, AI messes _are_ messier.
+to and clean up later, just as I would when coding by hand.  (Though admittedly, AI messes _are_
+messier.)
 
-I claim authorship because I've made literally thousands of architectural decisions via `/grilling`,
-and I frequently review the code with a "purely human" eye.  But not all of it, and only at
-checkpoints.
+I claim authorship because I've made literally thousands of architectural decisions via `/grilling`
+and other steers, and I frequently review the code with a "purely human" eye.  But admittedly, not
+all of it (until the dust settles), and only at major checkpoints.
 
 Anyone is welcome to open human- or AI-generated PRs and Issues.
 
