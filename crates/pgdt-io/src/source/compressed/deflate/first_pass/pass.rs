@@ -161,9 +161,7 @@ impl Pass {
     /// that unit, `Inflating::fill`
     /// skipping only forward — bytes that pass the unit's CRC-32. A stale
     /// `Leaving::Done` likewise answers the next read `Served::Full` with
-    /// nothing filled. **(c) unowned**; promoted now, being wrong data with no
-    /// error. The fix is the continuing arm clearing the mark, or the fetched
-    /// arm restoring it on every exit.
+    /// nothing filled. The fix is the continuing arm clearing the mark.
     pub(super) fn route(&mut self, offset: u64) -> Result<Route> {
         if offset >= self.frontier_position()? {
             return Ok(Route::Frontier);
