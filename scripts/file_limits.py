@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Every Rust file against the size limits; red means a seams round.
+"""Every Rust file and every `scripts/*.py` against the size limits; red
+means a seams round.
 
 The rule is `docs/process.md`, "Seams"; this is its check, and the one place
-the numbers are stated. A file is read three ways:
+the numbers are stated. The harness is code as the workspace is, so a script
+is held to the same limits as a `.rs` file. A file is read three ways:
 
 * **code lines** -- lines of its production code holding something that is
   neither a comment nor whitespace, every `#[cfg(test)] mod` block excluded;
+  in a script, a bare string statement -- a docstring -- is a comment;
 * **functions** -- `fn` items in that same production code, methods included,
   closures, `fn` pointer types and test functions not: counted, test
-  functions named files no reader would;
+  functions named files no reader would; in a script, every `def`, nested
+  and methods included, lambdas not;
 * **total lines** -- the file as it is, tests and comments included.
 
 The first two carry a soft limit, past which a split is due when someone is
@@ -16,7 +20,8 @@ next in the file, and a hard one, past which it is due now; the third carries
 a hard limit alone, the one that says a file has become arduous by sheer
 length. A **test file** -- one under a `tests/` directory, or one a
 `#[cfg(test)] mod name;` in its parent declares -- is measured against the
-total-lines limit only, having no production code.
+total-lines limit only, having no production code; so is a script named
+`test_*.py`.
 
 **An exemption names a file allowed past a hard limit and says why**
 (`EXEMPT`). An exemption for a file under every hard limit, or for a file that
@@ -32,7 +37,9 @@ Comments and string literals are masked before anything is counted, so a `fn`
 or a brace inside either is not seen (`masked`); the masking keeps every
 newline, so line numbers survive it. It is a scanner, not a parser: it knows
 line and block comments, ordinary, raw and byte strings, char literals and
-lifetimes, and nothing else, which is all the counting needs.
+lifetimes, and nothing else, which is all the counting needs. A script is
+read by Python's own `tokenize` and `ast` (`read_script`), so it needs no
+masking.
 
 Usage:
 
@@ -43,8 +50,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ast
+import io
 import re
 import sys
+import tokenize
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -233,6 +243,61 @@ def read(path: Path, rel: str, is_test: bool) -> Reading:
     )
 
 
+#: Tokens that hold no code: a comment, layout, and the stream's ends.
+_LAYOUT_TOKENS = frozenset(
+    {
+        tokenize.COMMENT,
+        tokenize.NL,
+        tokenize.NEWLINE,
+        tokenize.INDENT,
+        tokenize.DEDENT,
+        tokenize.ENCODING,
+        tokenize.ENDMARKER,
+    }
+)
+_STRING_TOKENS = frozenset(
+    {tokenize.STRING, tokenize.FSTRING_START, tokenize.FSTRING_MIDDLE, tokenize.FSTRING_END}
+)
+
+
+def read_script(path: Path, rel: str, is_test: bool) -> Reading:
+    """A Python file's reading: its code lines are the rows a token other than
+    a comment, layout or a docstring's string touches, and its functions every
+    `def` and `async def`."""
+    text = path.read_text(encoding="utf-8")
+    total = len(text.splitlines())
+    if is_test:
+        return Reading(path=rel, total=total, code=0, fns=0, test_lines=total, is_test=True)
+    tree = ast.parse(text, filename=rel)
+    doc_rows: set[int] = set()
+    fns = 0
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            fns += 1
+        elif (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            doc_rows.update(range(node.lineno, (node.end_lineno or node.lineno) + 1))
+    rows: set[int] = set()
+    for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+        if tok.type in _LAYOUT_TOKENS:
+            continue
+        if tok.type in _STRING_TOKENS and tok.start[0] in doc_rows and tok.end[0] in doc_rows:
+            continue
+        rows.update(range(tok.start[0], tok.end[0] + 1))
+    return Reading(path=rel, total=total, code=len(rows), fns=fns, test_lines=0, is_test=False)
+
+
+def script_readings(repo: Path) -> list[Reading]:
+    """Every `scripts/*.py`, a `test_*.py` as a test file."""
+    return [
+        read_script(path, path.relative_to(repo).as_posix(), path.name.startswith("test_"))
+        for path in sorted((repo / "scripts").glob("*.py"))
+    ]
+
+
 def members(repo: Path) -> list[Path]:
     manifest = tomllib.loads((repo / "Cargo.toml").read_text(encoding="utf-8"))
     found: list[Path] = []
@@ -284,12 +349,12 @@ def problems(found: list[Reading]) -> tuple[list[str], list[str], list[str], lis
         elif over:
             soft.append(f".. {r.path}: {texts}")
     for path in sorted(set(EXEMPT) - seen):
-        stale.append(f"!! stale exemption: {path} is not in the workspace")
+        stale.append(f"!! stale exemption: {path} is not a metered file")
     return hard, soft, exempt, stale
 
 
 def check(repo: Path, out: TextIO, show_all: bool = False) -> int:
-    found = readings(repo)
+    found = readings(repo) + script_readings(repo)
     if show_all:
         print(f"{'code':>6} {'fns':>5} {'tests':>6} {'total':>6}  path", file=out)
         for r in sorted(found, key=lambda r: (-r.code, -r.total)):

@@ -109,6 +109,50 @@ class Readings(unittest.TestCase):
         self.assertEqual((r.code, r.fns, r.test_lines), (0, 0, 2))
 
 
+class Scripts(unittest.TestCase):
+    def reading(self, src: str, is_test: bool = False) -> fl.Reading:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "m.py"
+            path.write_text(textwrap.dedent(src), encoding="utf-8")
+            return fl.read_script(path, "m.py", is_test)
+
+    def test_code_lines_exclude_comments_blanks_and_docstrings(self):
+        r = self.reading(
+            '''\
+            """Module doc,
+            two lines."""
+            # a comment
+            import x
+
+            def a():
+                """Doc."""
+                return """one
+            two"""  # a string that is not a docstring counts every row
+            #: an attribute doc
+            Y = 1
+            "a bare string statement is a docstring too"
+            '''
+        )
+        self.assertEqual((r.total, r.code, r.fns, r.test_lines), (12, 5, 1, 0))
+
+    def test_functions_are_every_def_and_no_lambda(self):
+        r = self.reading(
+            """\
+            def a():
+                def inner(): "doc"
+                return lambda v: v
+            class C:
+                def m(self): pass
+                async def n(self): pass
+            """
+        )
+        self.assertEqual((r.code, r.fns), (6, 4))
+
+    def test_a_test_script_has_no_production_code(self):
+        r = self.reading("def test_a(): pass\ndef test_b(): pass\n", is_test=True)
+        self.assertEqual((r.code, r.fns, r.test_lines, r.is_test), (0, 0, 2, True))
+
+
 def reading(path: str, code: int = 0, fns: int = 0, total: int = 0, is_test: bool = False):
     return fl.Reading(path, total or code, code, fns, 0, is_test)
 
@@ -157,7 +201,7 @@ class Problems(unittest.TestCase):
                 stale,
                 [
                     "!! stale exemption: y.rs is under every hard limit",
-                    "!! stale exemption: z.rs is not in the workspace",
+                    "!! stale exemption: z.rs is not a metered file",
                 ],
             )
 
@@ -178,6 +222,10 @@ class Workspace(unittest.TestCase):
         (repo / "crates/b/src/lib.rs").write_text("fn g() {}\n")
         (repo / "crates/b/target").mkdir()
         (repo / "crates/b/target/x.rs").write_text("fn h() {}\n")
+        (repo / "scripts/sub").mkdir(parents=True)
+        (repo / "scripts/tool.py").write_text("def f():\n    pass\n")
+        (repo / "scripts/test_tool.py").write_text("def test_f():\n    pass\n")
+        (repo / "scripts/sub/deep.py").write_text("def g():\n    pass\n")
         return repo
 
     def test_members_globs_and_test_files(self):
@@ -191,6 +239,14 @@ class Workspace(unittest.TestCase):
             self.assertTrue(found["a/tests/it.rs"].is_test)
             self.assertFalse(found["a/src/m.rs"].is_test)
             self.assertEqual(found["a/src/m.rs"].fns, 1)
+
+    def test_scripts_are_the_top_level_py_files_and_test_ones_are_test_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self.make(tmp)
+            found = {r.path: r for r in fl.script_readings(repo)}
+            self.assertEqual(sorted(found), ["scripts/test_tool.py", "scripts/tool.py"])
+            self.assertTrue(found["scripts/test_tool.py"].is_test)
+            self.assertEqual((found["scripts/tool.py"].code, found["scripts/tool.py"].fns), (2, 1))
 
     def test_a_green_tree_exits_zero_and_prints_the_verdict(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -210,6 +266,14 @@ class Workspace(unittest.TestCase):
                 self.assertEqual(fl.check(repo, out), 1)
             self.assertTrue(out.getvalue().startswith("!! a/src/big.rs: "))
             self.assertTrue(out.getvalue().endswith("; seams\n"))
+            (repo / "a/src/big.rs").unlink()
+            (repo / "scripts/big.py").write_text("def f(): pass\n" * (fl.FNS_HARD + 1))
+            out = io.StringIO()
+            with unittest.mock.patch.dict(fl.EXEMPT, {}, clear=True):
+                self.assertEqual(fl.check(repo, out), 1)
+            self.assertTrue(out.getvalue().startswith("!! scripts/big.py: "))
+            (repo / "scripts/big.py").unlink()
+            (repo / "a/src/big.rs").write_text("fn f() {}\n" * (fl.FNS_HARD + 1))
             out = io.StringIO()
             with unittest.mock.patch.dict(fl.EXEMPT, {"a/src/big.rs": "why", "nope.rs": "gone"}, clear=True):
                 self.assertEqual(fl.check(repo, out), 2)
