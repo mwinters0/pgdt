@@ -1,12 +1,41 @@
-"""What a figure declares (`Figure`), and the library paths its `depends` names."""
+"""What a figure declares (`Figure`), what a dry run of its legs reports (`StandIn`), the cache its
+legs read built ahead of them (`Prebuilt`), and the library paths its `depends` names."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Callable, Mapping
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from measurement.runspec import Shared, Subtraction
+    from measurement.runspec import RunSpec, Shared, Subtraction
+
+
+@dataclass(frozen=True)
+class StandIn:
+    """What one dry-run leg reports in place of a run (`Figure.stand_in`)."""
+
+    #: The key-value lines the leg's own streams would carry, which the
+    #: session keeps as `Session.reported`.
+    reported: Mapping[str, str]
+    #: The keys an instrument leg's report carries beyond the session's
+    #: generic stand-in report; read only where the spec declares the
+    #: instrument.
+    instrument: Mapping[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Prebuilt:
+    """A cache some of a figure's legs read, built by `Session.prebuild` in a
+    container of its own, untimed, once a sitting for each input and regime
+    those legs read, and mounted read-only beside the dump in their timed
+    containers (`Figure.prebuilt`)."""
+
+    #: The command-shape prefix of the legs that read it.
+    reads: str
+    #: The builder's whole script, writing the cache to `{cache}`, which the
+    #: session fills with a path in the directory it mounts writable.
+    builder: str
 
 
 @dataclass
@@ -82,6 +111,14 @@ class Figure:
     #: `COUNT_INSTRUCTIONS_CAPS`; `emit` refuses it before the first reading
     #: where the counter does not count (`counter_preflight`).
     counts_instructions: bool = False
+    #: What a dry run of a leg reports in place of the run's own report, given
+    #: the spec and the rep's pseudo-random bytes (`figures.stand_ins`): a
+    #: renderer refusing a leg whose report it cannot read, a dry run must
+    #: reach every division it performs. `None` reports nothing.
+    stand_in: Callable[[RunSpec, bytes], StandIn] | None = None
+    #: The cache this figure's legs read built ahead of the sweep, where a
+    #: cold leg cannot build it in its own timed container.
+    prebuilt: Prebuilt | None = None
 
     @property
     def requires(self) -> tuple[str, ...]:

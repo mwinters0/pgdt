@@ -16,6 +16,7 @@ from measurement import inputs
 from measurement import runspec
 from measurement import shapes
 from measurement.figures import declaration
+from measurement.figures import stand_ins
 
 
 def subtraction_sweep(source: str, a: str, b: str) -> int:
@@ -560,6 +561,7 @@ FIGURES: list[declaration.Figure] = [
     # every leg runs under.
     declaration.Figure(
         id="release-profile",
+        stand_in=stand_ins.parallel_scan,
         section="What link-time optimization buys the shipped build",
         stage="warm",
         depends=declaration._declare(
@@ -584,6 +586,7 @@ FIGURES: list[declaration.Figure] = [
     ),
     declaration.Figure(
         id="xz-decode-scaling",
+        stand_in=stand_ins.decode,
         section="What a second decode worker buys, and what the twenty-fourth does not",
         stage="warm-parallel",
         # Not the library's read path: no `pgdt` runs here at all. What can move
@@ -653,6 +656,7 @@ FIGURES: list[declaration.Figure] = [
     # rows, and the generators behind the file.
     declaration.Figure(
         id="gzseek-spacing",
+        stand_in=stand_ins.gzip_spacing,
         section="What a checkpoint's spacing costs gzip",
         stage="warm",
         depends=declaration._declare(
@@ -675,6 +679,10 @@ FIGURES: list[declaration.Figure] = [
     # quietly wrong if any of them changed.
     declaration.Figure(
         id="parallel-scan-throughput",
+        stand_in=stand_ins.parallel_scan,
+        prebuilt=declaration.Prebuilt(
+            f"{shapes.PARALLEL_SCAN_PREBUILT}-jobs-", shapes.PREBUILT_BUILDER
+        ),
         section="What a second scan worker buys, and where the plain path stops",
         stage="warm-parallel+cold-nvme-parallel",
         depends=declaration._declare(
@@ -805,6 +813,7 @@ FIGURES: list[declaration.Figure] = [
     # rather than an edge any one of them declares.
     declaration.Figure(
         id="reserve",
+        stand_in=stand_ins.reserve,
         # The manual's `--memory` guidance and its claim that a
         # flagless scan stays inside its allocation are read off this table
         # without naming it, so they are declared rather than computed.
@@ -888,6 +897,7 @@ FIGURES: list[declaration.Figure] = [
     # builder leaves for the query to prune with.
     declaration.Figure(
         id="statistics-pruning",
+        stand_in=stand_ins.pruning,
         section="What row-group statistics buy a query",
         stage="warm",
         depends=(
@@ -911,6 +921,7 @@ FIGURES: list[declaration.Figure] = [
     # leaves the scan to prune with.
     declaration.Figure(
         id="dynamic-filter-join",
+        stand_in=stand_ins.dynamic_filter,
         section="What DataFusion's dynamic filters buy a query",
         table_label="A join's filter, over its probe table",
         stage="warm",
@@ -932,6 +943,7 @@ FIGURES: list[declaration.Figure] = [
     ),
     declaration.Figure(
         id="dynamic-filter-topk",
+        stand_in=stand_ins.dynamic_filter,
         section="What DataFusion's dynamic filters buy a query",
         table_label="A TopK's filter, over the table it sorts",
         stage="warm",
@@ -985,6 +997,7 @@ FIGURES: list[declaration.Figure] = [
     # leg's feature, declared in both manifests.
     declaration.Figure(
         id="gzip-first-pass",
+        stand_in=stand_ins.gzip_first_pass,
         section="What a parallel gzip first pass buys",
         stage="warm-parallel",
         depends=declaration._declare(
@@ -1019,6 +1032,7 @@ FIGURES: list[declaration.Figure] = [
     # `pgdt query`'s ordering filter, each query's factor read off its plan.
     declaration.Figure(
         id="long-line-resident",
+        stand_in=stand_ins.long_line,
         section="What a held line holds resident",
         stage="warm-parallel",
         depends=declaration._declare(
@@ -1073,6 +1087,7 @@ FIGURES: list[declaration.Figure] = [
     # version is the lock file's.
     declaration.Figure(
         id="purge-delay",
+        stand_in=stand_ins.parallel_scan,
         section="What mimalloc's purge delay costs, and what it leaves resident",
         stage="warm+warm-parallel",
         table_label="Wall clock",
@@ -1098,6 +1113,7 @@ FIGURES: list[declaration.Figure] = [
     # that figure's paths, and the allocator's as above.
     declaration.Figure(
         id="purge-delay-resident",
+        stand_in=stand_ins.long_line,
         section="What mimalloc's purge delay costs, and what it leaves resident",
         stage="warm-parallel",
         table_label="Peak resident over `long-line-resident`'s legs",

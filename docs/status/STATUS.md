@@ -129,3 +129,15 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+- **`KILL_TOLERANT` and `parse-cache-out`'s mount stay in the session
+  (`M310`).** M310's row said `timing.py` would name no figure family once the
+  dry-run stand-ins and the prebuilt cache moved onto declarations. Two family
+  facts remain: `KILL_TOLERANT`, the prefix licence that makes an OOM kill a
+  censored reading rather than a failure, naming `RESERVE_FLAGLESS`; and
+  `time_run` mounting the warm directory for `parse-cache-out`. M307's review
+  did not name either, and `docs/design/measurements.md`, "The apparatus" cites
+  the licence as `measurement.timing.KILL_TOLERANT`, so moving it would retarget
+  that standing doc and the comments and tests citing it. So M310 moved only
+  what its row named. Reconsidering would add `Figure.kill_tolerant` (prefixes,
+  `reserve`'s alone) and a shape-level mount for `parse-cache-out`, both
+  behaviour-neutral, the first moving the apparatus rule's citation.

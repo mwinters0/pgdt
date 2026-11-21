@@ -396,7 +396,9 @@ class ParallelScanThroughputColdNvme(unittest.TestCase):
 
     def test_the_builder_is_the_warm_legs_but_for_where_it_writes(self):
         warm = shapes._script(f"{shapes.PARALLEL_SCAN}-jobs-1").partition(" && ")[0]
-        built = timing.PREBUILT_BUILDER.format(name="dump.sql.pgdt")
+        prebuilt = register.FIGURES_BY_ID[self.FIGURE].prebuilt
+        self.assertEqual(prebuilt.reads, self.PREFIX)
+        built = prebuilt.builder.format(cache=f"{timing.PREBUILT_MOUNT}/dump.sql.pgdt")
         self.assertEqual(
             built.replace(f"{timing.PREBUILT_MOUNT}/dump.sql.pgdt", "/dump.sql.pgdt"),
             warm,

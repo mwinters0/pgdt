@@ -890,6 +890,16 @@ PROVIDER_BUILDER = (
     f"{GATHER_STATISTICS} >/dev/null && "
 )
 
+#: `PARALLEL_SCAN_PREBUILT`'s builder (`Prebuilt`): `PROVIDER_BUILDER`'s
+#: flags, writing to `{cache}` in a directory the session mounts writable
+#: rather than beside the read-only dump. Untimed and run once a sitting, so
+#: it is not a command shape; `figures/test_parallel.py` holds it to the warm
+#: builder's flags.
+PREBUILT_BUILDER = (
+    f"/pgdt parse --source /dump.sql --cache {{cache}} "
+    f"--jobs {SWEEP_JOBS} {GATHER_STATISTICS} >/dev/null"
+)
+
 #: `long-line-resident`'s query: every value of the table built, one row out.
 #: **The provider's scan, not `pgdt query`'s**, whose printing
 #: renders each value back into a buffer of its own — a CLI's term, which a
@@ -1558,8 +1568,8 @@ def _script(command: str) -> str:
             )
         if shape == PARALLEL_SCAN_PREBUILT:
             # The same query with no builder: `Session.prebuild` wrote the
-            # cache in its own container and `time_run` mounts it read-only
-            # beside the dump (`PARALLEL_SCAN_PREBUILT`).
+            # cache in its own container (`PREBUILT_BUILDER`) and `time_run`
+            # mounts it read-only beside the dump (`PARALLEL_SCAN_PREBUILT`).
             env, argv = parallel_scan_invocation(int(jobs), "/dump.sql")
             return (
                 f"time {dfcli_shell(env, SQL_SHELL, argv)} "

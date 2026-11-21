@@ -33,6 +33,7 @@ from measurement.figures import register
 
 if TYPE_CHECKING:
     from measurement.config import Config
+    from measurement.figures.declaration import Prebuilt
     from measurement.runspec import RunSpec, Shared
     from measurement.staging import Stager
 
@@ -54,15 +55,6 @@ def with_allowance(script: str, spec: RunSpec) -> str:
 #: Where `Session.prebuild`'s container sees the directory its cache is
 #: written to.
 PREBUILT_MOUNT = "/out"
-
-#: `Session.prebuild`'s whole script: `PARALLEL_SCAN`'s builder, stating what
-#: it states, writing to the mounted directory under `{name}` rather than
-#: beside the read-only dump. Untimed and run once a sitting, so it is not a
-#: command shape; `figures/test_parallel.py` holds it to the warm builder's flags.
-PREBUILT_BUILDER = (
-    f"/pgdt parse --source /dump.sql --cache {PREBUILT_MOUNT}/{{name}} "
-    f"--jobs {shapes.SWEEP_JOBS} {shapes.GATHER_STATISTICS} >/dev/null"
-)
 
 #: The command-shape prefixes whose legs may be OOM-killed without the sitting
 #: dying: a kill there is a **censored reading**, recorded and reported, and the
@@ -384,17 +376,20 @@ class Session:
                 self.binary_path(which)
 
     def prebuild(self, specs: Sequence[RunSpec]) -> None:
-        """Build the cache every `PARALLEL_SCAN_PREBUILT` spec among `specs`
-        reads, once for each input and regime, in a container of its own and
-        outside any timer.
+        """Build the cache the figure in hand declares its legs read
+        (`Figure.prebuilt`) for each such leg among `specs`, once for each
+        input and regime, in a container of its own and outside any timer.
 
         **Removed and built again every sitting**, beside the input on the
         device the regime reads, because a cache is its build's: one an earlier
         binary wrote is refused or, worse, read. The container is the figure's,
         the builder discovering its statistics allowance from it (D85), so the
-        cache is the one `PARALLEL_SCAN`'s in-container builder writes."""
+        cache is the one the figure's in-container builder writes."""
+        prebuilt = self._prebuilt_reads()
+        if prebuilt is None:
+            return
         for spec in specs:
-            if not spec.command.startswith(f"{shapes.PARALLEL_SCAN_PREBUILT}-jobs-"):
+            if not spec.command.startswith(prebuilt.reads):
                 continue
             dump = self.input_path(spec.input, spec.regime)
             if dump in self._prebuilt:
@@ -407,7 +402,7 @@ class Session:
                 "-v", f"{self.binary_path(spec.binary)}:/pgdt:ro",
                 "-v", f"{dump}:/dump.sql:ro",
                 "-v", f"{cache.parent}:{PREBUILT_MOUNT}",
-                self.cfg.image, "bash", "-c", PREBUILT_BUILDER.format(name=cache.name),
+                self.cfg.image, "bash", "-c", prebuilt.builder.format(cache=f"{PREBUILT_MOUNT}/{cache.name}"),
             ]
             if self.cfg.dry_run:
                 self.log("  [dry-run] " + " ".join(shlex.quote(a) for a in argv))
@@ -421,6 +416,11 @@ class Session:
                         f"\n{proc.stderr[-2000:]}"
                     )
             self._prebuilt[dump] = cache
+
+    def _prebuilt_reads(self) -> Prebuilt | None:
+        """The cache the figure in hand declares its legs read, if any."""
+        fig = register.EVERY_BY_ID.get(self.figure_id)
+        return fig.prebuilt if fig else None
 
     def _gate_twin_of_kill(self, spec: RunSpec) -> str:
         """The gate's reading of a kill outside `KILL_TOLERANT`: the same leg
@@ -478,7 +478,8 @@ class Session:
             for path, at in bins
         ]
         mounts.append(f"{dump}:/dump.sql:ro")
-        if spec.command.startswith(f"{shapes.PARALLEL_SCAN_PREBUILT}-jobs-"):
+        prebuilt = self._prebuilt_reads()
+        if prebuilt is not None and spec.command.startswith(prebuilt.reads):
             # Where `--source` looks for it, and only one this sitting built.
             if dump not in self._prebuilt:
                 raise RuntimeError(
@@ -567,113 +568,12 @@ class Session:
             digest = hashlib.sha256(f"{key}/{rep}".encode()).digest()
             self._last_rss = 6000 + digest[1] / 255 * 500 if "rss" in spec.command else None
             self._last_instructions = 3_000_000_000 + digest[3] * 1_000_000 if counted else None
-            # A plausible instrument report, for the same reason the reading is
+            # The figure's stand-in report, for the same reason the reading is
             # plausible: a dry run must exercise every division a table performs
             # rather than stopping at the first missing key.
-            self._last_stdout = (
-                {
-                    "plaintext": str(3 * config.GIB),
-                    "delivered": str(3 * config.GIB),
-                    "workers": spec.command.rpartition("-")[2],
-                    "blocks": str(shapes.DECODE_WORKERS[-1] * 8),
-                }
-                if spec.command.startswith("decode-")
-                else {}
-            )
-            if spec.command.startswith(shapes.DYNFILTER_FAMILY):
-                # A stand-in answer, one per query and alike in both legs,
-                # which the table refuses to render otherwise.
-                query = spec.command.rpartition("-")[0]
-                self._last_stdout = {
-                    "result_rows": "1",
-                    "result_first": "100",
-                    "result_digest": hashlib.sha256(query.encode()).hexdigest(),
-                }
-                if spec.command == shapes.DYNFILTER_STARTUP:
-                    self._last_stdout = {"startup_answer": "1"}
-            if spec.command.startswith(shapes.PARALLEL_SCAN):
-                # One answer for every provider leg of the figure, which it
-                # refuses to render otherwise; the prebuilt family's prefix
-                # is this one's too.
-                self._last_stdout = {
-                    "result_rows": "1",
-                    "result_first": "100",
-                    "result_digest": hashlib.sha256(shapes.PARALLEL_SCAN_SQL.encode()).hexdigest(),
-                }
-            if spec.command.startswith(shapes.PRUNING_FAMILY):
-                # A stand-in of what the query's own notes say, for the same
-                # reason: the pruning table divides by them and refuses a
-                # pruned leg that skipped nothing — or, for the filter its
-                # statistics cannot narrow, one that skipped anything, and a
-                # leg over a cache without statistics that consulted any.
-                pruned = spec.command.endswith("-all")
-                skipped = (
-                    0
-                    if spec.command.startswith(f"{shapes.PRUNING_FAMILY}{shapes.PRUNING_UNNARROWED}-")
-                    else 3060
-                )
-                self._last_stdout = {
-                    "rows_returned": "3000",
-                    **(
-                        {
-                            "skipped_groups": str(skipped),
-                            "groups": "3072",
-                            "skipped_bytes": str(skipped * config.MIB),
-                            "bytes": str(3072 * config.MIB),
-                        }
-                        if pruned
-                        else {}
-                    ),
-                }
-            if spec.command.startswith(shapes.GZPASS_FAMILY):
-                # A stand-in resolution, for the same reason: the first-pass
-                # table refuses a leg whose run resolved another count, or a
-                # gzip leg that opened no first pass and a plain one that did.
-                jobs = spec.command.removeprefix(shapes.GZPASS_FAMILY)
-                self._last_stdout = {
-                    "resolved_jobs": jobs,
-                    **({} if spec.input == "control" else {"first_pass_workers": jobs}),
-                }
-            if spec.command.startswith((shapes.LONG_RSS_FAMILY, shapes.LONG_FACTOR_FAMILY)):
-                # A stand-in answer or resolution, for the same reason: the
-                # figure refuses a query or filter leg answering other than its
-                # input's rows, and a parse leg resolving another count.
-                rest = spec.command.removeprefix(shapes.LONG_RSS_FAMILY).removeprefix(shapes.LONG_FACTOR_FAMILY)
-                name, _, jobs = rest.rpartition("-") if "-" in rest else (rest, "", "")
-                answer = str(inputs.long_line_answer(spec.input))
-                self._last_stdout = (
-                    {"result_rows": "1", "result_first": answer}
-                    if name == "query"
-                    else {"rows_returned": answer}
-                    if name == "filter"
-                    else {"resolved_jobs": jobs}
-                )
-            if spec.command.startswith(shapes.GZSPACING_FAMILY):
-                # A stand-in index, for the same reason: the spacing table
-                # divides by the unit count, and refuses stages that disagree
-                # on it or a `starts` leg that began fewer units than it holds.
-                stage, _, mib = spec.command.removeprefix(shapes.GZSPACING_FAMILY).partition("-")
-                units = -(-3 * config.GIB // (int(mib) * config.MIB))
-                self._last_stdout = {
-                    "units": str(units),
-                    "windows": str((units - 1) * 32 * 1024),
-                    **({"started": str(units)} if stage == "starts" else {}),
-                }
-            if spec.memory in (token for token, _ in shapes.RESERVE_LIMITS):
-                # The reserve figure's flagless legs, whose limit is their axis.
-                # A stand-in resolution, for the same reason the reading above
-                # is a stand-in: a dry run must exercise every division the
-                # flagless table performs, and the count it fits over exists
-                # only in what a real run reports. Monotone in the limit so the
-                # fit is well conditioned, and deliberately **not** the
-                # library's own arithmetic — nothing here may grow into a second
-                # authority on what an allocation resolves to.
-                rank = 1 + [token for token, _ in shapes.RESERVE_LIMITS].index(spec.memory)
-                self._last_stdout = {
-                    **self._last_stdout,
-                    "resolved_jobs": str(3 * rank),
-                    "resolved_budget": str(3 * rank * (65 << 20)),
-                }
+            fig = register.EVERY_BY_ID.get(self.figure_id)
+            stand_in = fig.stand_in(spec, digest) if fig and fig.stand_in else None
+            self._last_stdout = dict(stand_in.reported) if stand_in else {}
             if spec.instrument:
                 # A stand-in report, so a dry run reaches whatever an
                 # attribution computes from these rather than stopping at the
@@ -698,11 +598,8 @@ class Session:
                     "malloc_heaps": "6",
                     "malloc_system_current": str(130 * config.MIB),
                     "malloc_system_max": str(350 * config.MIB),
+                    **(stand_in.instrument if stand_in else {}),
                 }
-                if spec.command.startswith(shapes.LONG_FACTOR_FAMILY):
-                    # A stand-in plan's factor, varied by input so the figure's
-                    # largest is one kind's; never the library's arithmetic.
-                    self._last_instrument["planned_factor"] = f"{1 + digest[4] % 9}/{2}"
             return 0.4 + digest[0] / 255 * 5.0
         # The counters bracket the run as tightly as possible: two procfile
         # reads, outside the timer, either side of the subprocess. Their

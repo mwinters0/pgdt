@@ -635,13 +635,8 @@ apparatus").
   run order; and a module a family, bound to its id in `figures.runners`.
   A family spans the package's layering — its shapes below the session, its
   declaration below the session and the stager, which read it by id, its
-  taking and rendering above both.
-
-**Not in one place.** A family's dry-run stand-in answers are branches of
-`Session.time_run` on seven families' command prefixes, and the prebuilt
-parallel scan's cache is `Session.prebuild`'s, with its mount in the run
-(`measurement/timing.py`): the session is generic, and a family's declaration,
-below it, could carry both.
+  dry-run stand-in and the cache its legs read built ahead of them declared
+  there, its taking and rendering above both.
 
 ## The session
 

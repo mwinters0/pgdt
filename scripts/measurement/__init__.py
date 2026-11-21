@@ -90,9 +90,9 @@ it holds (`module_graph.py` holds the first, `test_layout` the second):
 * `formatting`, `parsing` -- the numbers a table prints, and what a run printed;
 * `inputs`, `runspec`, `shapes`, `memory_model`, `gzip_charge` -- what is run,
   over what, and what the library is modelled to hold while it runs;
-* `builds`, `gating`, `figures.declaration`, `figures.register`, `staging`,
-  `preflight` -- the binaries, the register's declarations, and the inputs
-  staged for them;
+* `builds`, `gating`, `figures.declaration`, `figures.stand_ins`,
+  `figures.register`, `staging`, `preflight` -- the binaries, the register's
+  declarations, and the inputs staged for them;
 * `timing` -- the session that runs a sitting;
 * `borrowing`, `figures.prose`, `figures.gate_table`, and a module per figure
   family -- how each figure is taken and rendered, `figures.runners` binding
@@ -103,7 +103,8 @@ it holds (`module_graph.py` holds the first, `test_layout` the second):
 
 A figure family spans that order rather than one module: its command shapes in
 `shapes`, below the session that runs them; its declaration in
-`figures.register`, below the session and the stager that read it by id; its
-taking and rendering in its own module above both, bound to its id in
+`figures.register`, below the session and the stager that read it by id, with
+what a dry run of its legs reports and the cache they read built ahead of them;
+its taking and rendering in its own module above both, bound to its id in
 `figures.runners`.
 """
