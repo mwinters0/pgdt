@@ -545,8 +545,9 @@ crate graph ([`../process.md`](../process.md), "Seams";
 [`decisions.md`](decisions.md), "D27", "D68", "D106").
 
 - **scripts** — `file_limits.py`, `concepts.py`, `module_graph.py`,
-  `layering.py`: the limits, stated once; this map held to the tree; every
-  module edge one way, off rust-analyzer; each crate's dependencies, what an
+  `script_references.py`, `layering.py`: the limits, stated once; this map
+  held to the tree; every module edge one way, off rust-analyzer and, for the
+  scripts, off Python's `ast`; each crate's dependencies, what an
   embedder may name, and each root's stance on `unsafe`.
 
 ## The round's check

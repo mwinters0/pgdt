@@ -82,7 +82,7 @@ stdlib-only at import, everything executable behind its `__main__` guard,
 zlib-ng imported only where a file is written through it.
 
 **The package**, one-way from the bottom up, each module's own doc saying what
-it holds (`test_layout` holds both):
+it holds (`module_graph.py` holds the first, `test_layout` the second):
 
 * `host` -- running a command;
 * `contention`, `machine_state` -- the machine a reading is taken on;

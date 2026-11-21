@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The module graph: which module's code reads which, taken from
-rust-analyzer's index of the workspace and held one-way, with a design's
-moves applied to it before any code moves.
+rust-analyzer's index of the workspace and Python's reading of the scripts,
+and held one-way, with a design's moves applied to it before any code moves.
 
 The rule is `docs/process.md`, "Seams": every edge between modules runs one
 way, inside a crate as Cargo makes them run between crates. A module's name
@@ -23,7 +23,13 @@ never assumed:
   child included. Each one is a problem unless `ACCEPTED` lists its modules
   with the reason it is kept, or `OWED` lists them with the work that
   removes it. An entry matching no cycle exactly is stale, which is a
-  problem too, so a cut that shrinks a cycle rewrites its entry.
+  problem too, so a cut that shrinks a cycle rewrites its entry;
+* a **script** is a module too: every production `.py` under `scripts/`,
+  named `scripts::<path>` as one crate's, its edges the names its code
+  loads, an import counting where its name is used, as
+  `script_references.py` reads them. A cycle among the scripts fails as one
+  among a crate's modules, and `test_module_graph` holds it too, needing no
+  index, so a round whose `--affected` check runs no graph still meets it.
 
 **A design is checked before it is cut** (`--design <doc>`). The moves in
 the doc's ```` ```moves ```` blocks are applied to the current references,
@@ -53,9 +59,10 @@ explained against. But a doc link that runs against the code's edges, one
 module's doc naming a module that reads it, says the concept does not yet
 stand on its own. `--docs` lists those links, and they never fail the check.
 A doc link here is a `crate::`, `super::`, `self::` or `pgdt_*::` path in a
-comment, since rust-analyzer's index carries none. Nothing runs `cargo doc`'s
-link check, and a doc link into a higher crate or into another module's
-private child does not resolve, so such a reference is a code span instead.
+comment, since rust-analyzer's index carries none, and a script's are not
+read. Nothing runs `cargo doc`'s link check, and a doc link into a higher
+crate or into another module's private child does not resolve, so such a
+reference is a code span instead.
 
 rust-analyzer is the `rust-toolchain.toml` component that `rustup which
 rust-analyzer` names. Its `scip` index covers the whole workspace, so a
@@ -65,7 +72,7 @@ written by `--save-index`).
 Usage:
 
     cd scripts && uv run module_graph.py [--docs] [--design <doc>] [--edges <module>]...
-    cd scripts && uv run python -m unittest test_module_graph
+    cd scripts && uv run python -m unittest test_module_graph test_script_references
 """
 
 from __future__ import annotations
@@ -76,11 +83,12 @@ import subprocess
 import sys
 import tempfile
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import astuple, dataclass, field
 from pathlib import Path
 from typing import Iterator, TextIO
 
 import layering
+import script_references
 from file_limits import _close_brace, masked, test_blocks
 
 REPO = Path(__file__).resolve().parent.parent
@@ -485,7 +493,13 @@ class Graph:
     members: dict[tuple[str, str], set[str]] = field(default_factory=dict)  # an item's methods
 
 
-def read_graph(sources: dict[str, Source], docs: list[Document]) -> Graph:
+def read_graph(
+    sources: dict[str, Source],
+    docs: list[Document],
+    scripts: script_references.Scripts | None = None,
+) -> Graph:
+    """The workspace's graph, off its sources and their index, and the
+    scripts' beside it where they are given, their top level `TOP`."""
     defs: dict[str, tuple[str, str, str | None]] = {}
     items: dict[str, set[str]] = {s.module: set() for s in sources.values()}
     members: dict[tuple[str, str], set[str]] = defaultdict(set)
@@ -523,7 +537,16 @@ def read_graph(sources: dict[str, Source], docs: list[Document]) -> Graph:
             if (module, name, member) != (src.module, here, method):
                 refs.append(Ref(src.module, here, module, name, path, o.start[0] + 1, method, member))
     modules = {s.module for s in sources.values()}
-    return Graph(refs, items, modules, doc_links(sources, modules), dict(members))
+    links = doc_links(sources, modules)
+    if scripts is not None:
+        refs += [
+            Ref(r.src_module, r.src_item or TOP, r.dst_module, r.dst_item or TOP, *astuple(r)[4:])
+            for r in scripts.refs
+        ]
+        items.update(scripts.items)
+        members.update(scripts.members)
+        modules |= set(scripts.paths)
+    return Graph(refs, items, modules, links, dict(members))
 
 
 def doc_links(sources: dict[str, Source], modules: set[str]) -> list[Ref]:
@@ -803,8 +826,11 @@ def report(
         else f"{len(found)} cycles, {kept['accepted']} accepted, {kept['owed']} owed"
     )
     what = "the moved tree" if moves else "the tree"
+    scripts = sum(1 for n in nodes if _crate(n) == script_references.ROOT)
     print(
-        f"module-graph: {what}: {len(nodes)} modules, {len(arcs)} edges, {verdict}; "
+        f"module-graph: {what}: {len(nodes)} modules"
+        + (f" ({scripts} scripts)" if scripts else "")
+        + f", {len(arcs)} edges, {verdict}; "
         f"{len(against)} doc links against the edges"
         + ("" if show_docs else " (--docs lists them)"),
         file=out,
@@ -842,7 +868,7 @@ def main(argv: list[str] | None = None) -> int:
             data = path.read_bytes()
     if args.save_index:
         args.save_index.write_bytes(data)
-    graph = read_graph(sources, read_index(data))
+    graph = read_graph(sources, read_index(data), script_references.read(REPO))
     moves = None
     if args.design:
         moves, problems = read_moves(args.design.read_text(encoding="utf-8"), graph)

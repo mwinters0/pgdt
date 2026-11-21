@@ -322,11 +322,12 @@ whether a crate should split or two merge.
 
 **Every edge between modules runs one way**, as Cargo makes edges between
 crates run, and **edges are computed, never inferred from names**:
-`scripts/module_graph.py` reads them off rust-analyzer's index and fails on a
-cycle neither kept with a reason nor owed by named work. **A design is checked
-before it is cut**: its notes doc states its moves, the script projects them,
-and each cycle it reports is redesigned or put to the maintainer. A doc link is
-no edge; one against the edges marks a concept not yet standing on its own.
+`scripts/module_graph.py` reads them off rust-analyzer's index, and a script's
+off Python's `ast`, and fails on a cycle neither kept with a reason nor owed by
+named work. **A design is checked before it is cut**: its notes doc states its
+moves, the script projects them, and each cycle it reports is redesigned or put
+to the maintainer. A doc link is no edge; one against the edges marks a concept
+not yet standing on its own.
 
 **The concept map**, `design/concepts.md`, is the design stated: each concept,
 the modules holding it in every crate, and why each crate holds its part. **A

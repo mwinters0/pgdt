@@ -13,6 +13,7 @@ import unittest
 
 import layering
 import module_graph as mg
+import script_references as sr
 
 
 def sym(package: str, descriptors: str) -> str:
@@ -361,14 +362,60 @@ class Index(unittest.TestCase):
         self.assertTrue(mg.is_module(sym("c", "a/b/")))
 
 
+def scripts(**sources: str) -> mg.Graph:
+    """A graph of top-level scripts alone, by module name."""
+    paths = {f"scripts::{name}": f"scripts/{name}.py" for name in sources}
+    texts = {f"scripts::{name}": text for name, text in sources.items()}
+    return mg.read_graph({}, [], sr.read_sources(paths, texts))
+
+
+class Scripts(unittest.TestCase):
+    def mutual(self) -> mg.Graph:
+        # `a` reads `b.X`; `b`'s `helper` reads `a.Y`, so they cycle until
+        # `helper` moves.
+        return scripts(
+            a="import b\n\nY = b.X\n",
+            b="X = 1\n\ndef helper():\n    from a import Y\n    return Y\n",
+        )
+
+    def test_two_scripts_reading_each_other_are_a_cycle(self):
+        code, out = run(self.mutual())
+        self.assertEqual(code, 1)
+        self.assertIn("!! cycle: scripts::a, scripts::b", out)
+        self.assertIn("scripts/b.py:5 helper -> Y", out)
+        self.assertIn("module-graph: the tree: 2 modules (2 scripts), 2 edges, 1 cycles", out)
+
+    def test_a_scripts_top_level_is_named_as_a_crates(self):
+        graph = scripts(a="import b\n", b="X = 1\n")
+        self.assertEqual(
+            [(r.src_module, r.src_item, r.dst_module, r.dst_item) for r in graph.refs],
+            [("scripts::a", mg.TOP, "scripts::b", mg.TOP)],
+        )
+
+    def test_a_design_moves_a_scripts_item(self):
+        moves, problems = mg.read_moves("```moves\nscripts::b::helper -> scripts::a\n```\n", self.mutual())
+        self.assertEqual(problems, [])
+        code, out = run(self.mutual(), moves=moves)
+        self.assertEqual(code, 0, out)
+        self.assertIn("no cycle", out)
+
+
 class ThisRepo(unittest.TestCase):
     def test_every_kept_cycle_names_modules_of_the_tree_and_a_reason(self):
         sources = mg.workspace_sources(mg.REPO, layering.metadata(mg.REPO))
-        modules = {s.module for s in sources.values()}
+        modules = {s.module for s in sources.values()} | set(sr.module_paths(mg.REPO))
         for key, reason in {**mg.ACCEPTED, **mg.OWED}.items():
             self.assertLessEqual(set(key), modules, sorted(key))
             self.assertTrue(reason.strip(), sorted(key))
         self.assertFalse(set(mg.ACCEPTED) & set(mg.OWED))
+
+    def test_every_script_edge_runs_one_way(self):
+        # The scripts' half of `mise run check`'s graph, needing no index: an
+        # `--affected` run reaching no crate runs no graph, and runs this.
+        graph = mg.read_graph({}, [], sr.read(mg.REPO))
+        kept = {k for k in {**mg.ACCEPTED, **mg.OWED} if all(m in graph.modules for m in k)}
+        found = mg.cycles(graph.modules, set(mg.edges(graph.refs)))
+        self.assertEqual([c for c in found if frozenset(c) not in kept], [])
 
 
 if __name__ == "__main__":
