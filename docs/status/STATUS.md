@@ -129,15 +129,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The harness's tree (`M307`), drawn unattended.** `scripts/measurement/` layers configuration, the
-  apparatus, parsing, the command shapes, the memory charge, the builds, the register's declarations, the
-  session, then a module per figure family, staleness and the recipes; `test_layout.py` and the package doc
-  stand in for `module_graph.py` and the concept map, which read the workspace alone. Two calls changed more
-  than paths: `file_limits.py` reads every `.py` under `scripts/` (M304 read the top level, which a package
-  escapes), and a figure's run binds by id in `figures/runners.py` rather than on `Figure`, since the session
-  reads declarations below every run function. **Left, unfiled:** *one concept, several files* — a family's
-  shapes sit in `shapes.py` under `_script`'s one dispatch, its answer checks in `Session.time_run`, its
-  declaration in `register.py`, its taking in `figures/<family>.py`; gathering them means per-family shape and
-  answer hooks, a reshaping rather than a cut. Reconsidering: redraw the layers, file the finding as a
-  `KD`/`S` (the seam register's markers are `.rs`-only), or extend `concepts.py` and `module_graph.py` to the
-  scripts.

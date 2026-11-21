@@ -1,4 +1,8 @@
-"""Every selectable figure's run function, by id: the top of the figures layer."""
+"""Every selectable figure's run function, by id: the top of the figures layer.
+
+Bound here rather than on `Figure`: the session and the stager read a
+declaration by id, so `figures.register` sits below them, and every run
+function reads the session, so it sits above."""
 
 from __future__ import annotations
 

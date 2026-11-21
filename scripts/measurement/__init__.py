@@ -100,4 +100,10 @@ it holds (`test_layout` holds both):
 * `consumers`, `staleness`, `drift`, `emit`, `replay`, `check`,
   `verify_additive`, `count_pair`, `recipes` -- what the command line does
   with them (`scripts/measure.py`).
+
+A figure family spans that order rather than one module: its command shapes in
+`shapes`, below the session that runs them; its declaration in
+`figures.register`, below the session and the stager that read it by id; its
+taking and rendering in its own module above both, bound to its id in
+`figures.runners`.
 """
