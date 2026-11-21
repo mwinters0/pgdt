@@ -14,7 +14,7 @@ use pgdt_dump::internal::{announce_read_loop, scan_preamble};
 use pgdt_dump::{ReadOptions, ScanOptions, attach_text};
 use pgdt_io::{Arrangement, ByteRangeSource, Ledger};
 use pgdt_mapping::internal::{
-    MapStop, Pass, PassContext, ReadContext, Target, map_forward, reread_rows, splice,
+    MapStop, Pass, PassContext, ReadContext, Reread, Target, map_forward, reread_rows, splice,
 };
 use pgdt_model::timescaledb::TimescaleDb;
 use pgdt_model::{CopyBlock, DumpIndex, DumpMetadata, TableName};
@@ -247,7 +247,8 @@ impl ColdPass<'_> {
         for at in lacking {
             let path = self.mode.path();
             let reported = &mut shortfall_reported;
-            let record = reread_rows(read, path, metadata, database, &blocks[at], None, reported);
+            let census = Reread::Censuses;
+            let record = reread_rows(read, path, metadata, database, &blocks[at], census, reported);
             let Some(record) = record.await? else {
                 return Err(Error::ScanCancelled {
                     scanned_through: blocks[at].address.header_offset,

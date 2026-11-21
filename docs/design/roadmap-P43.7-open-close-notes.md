@@ -13,8 +13,9 @@ format change. The shape is D170.
   - `Maps(Pass)` is a forward pass. `Pass::Parse` censuses by the request's
     level and attaches `observer_for`. `Pass::Query` censuses and gathers
     nothing. Both record TimescaleDB's catalog's rows.
-  - `Rereads(Option<Box<dyn BlockObserver>>)` is a block read again. It
-    censuses, takes the observer it is handed and records no rows.
+  - `Rereads(Reread)` is a block read again. It censuses, builds the
+    observer the `Reread` names and records no rows
+    ([43.7.1's notes](roadmap-P43.7.1-reread-policy-notes.md)).
   - 43.8's eager pass needs a third arm: census, no observer, rows recorded,
     and no interior offered. It reaches the open through
     `pgdt_mapping::internal`, as the spec places it.
@@ -42,9 +43,6 @@ format change. The shape is D170.
 - **The open takes no `PassContext`** (D170). It reads none of the
   context's fields, and `reread_rows`, which opens through it, takes the
   `ReadContext` alone, `backfill_block` holding nothing more.
-- **A re-read's observer is built by its caller and handed to the policy**,
-  short of the spec, whose back-fill policy attaches `observer_tracking` or
-  `checker`. 43.7.1 moves the choice into the open.
 - **`reread_rows` does not branch on `offers_interior`.** It is always true
   for a re-read, so the function asserts it instead.
 - **The data-level parse over `long_bytea_32` rises by layout, accepted.**

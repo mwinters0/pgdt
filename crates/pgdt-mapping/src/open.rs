@@ -4,11 +4,12 @@
 
 use pgdt_codec::internal::counter_for;
 use pgdt_core::CopyHeader;
-use pgdt_model::internal::{BlockObserver, Recorder};
+use pgdt_model::internal::Recorder;
 use pgdt_model::{DumpMetadata, timescaledb};
 
 use crate::context::Gathering;
 use crate::statistics::gather;
+use crate::statistics::request::StatisticsBackfill;
 
 /// What a mapping pass records of each block it maps
 /// (`docs/design/decisions.md`, "D77").
@@ -25,6 +26,23 @@ pub enum Pass<'a> {
     Query,
 }
 
+/// What a read of a block the map already holds observes: the read its
+/// caller decided to make, which the open turns into the block's observer.
+#[derive(Clone, Copy)]
+pub enum Reread<'a> {
+    /// A back-fill's read gathering the plan's columns at its size
+    /// (`StatisticsRequest::backfill`), charging the gathering's account,
+    /// a field its type's `*_in` refuses met as the gathering says.
+    Gathers(&'a StatisticsBackfill, Gathering<'a>),
+    /// A back-fill's read gathering nothing and checking every field, as a
+    /// strict parse does, for a block no strict parse checked
+    /// (`docs/design/decisions.md`, "D103").
+    Checks(Gathering<'a>),
+    /// A query's census of a block mapped at the metadata level, observing
+    /// nothing (`docs/design/decisions.md`, "D35").
+    Censuses,
+}
+
 /// **What a pass records of each block it opens**, and so how it reads one:
 /// the passes' differences as data, each the pass's own business.
 pub(crate) enum Policy<'a> {
@@ -35,11 +53,11 @@ pub(crate) enum Policy<'a> {
     /// pass's own loop, never offering it to the interior
     /// (`docs/design/decisions.md`, "D133").
     Maps(Pass<'a>),
-    /// A block the map holds, read again: censused, observed by the observer
-    /// given where there is one — a back-fill's gatherer or checker — its
-    /// rows recorded by the passes that map it and never here (D133), and
-    /// offered to the interior first.
-    Rereads(Option<Box<dyn BlockObserver>>),
+    /// A block the map holds, read again: censused, observed as the read
+    /// says — a back-fill's gatherer or checker, or nothing — its rows
+    /// recorded by the passes that map it and never here (D133), and offered
+    /// to the interior first.
+    Rereads(Reread<'a>),
 }
 
 /// A block as [`open`] answers it: its recorder, and how the pass reads it.
@@ -83,7 +101,16 @@ pub(crate) fn open(
             ),
             timescaledb::records_rows(header),
         ),
-        Policy::Rereads(observer) => (true, observer, false),
+        Policy::Rereads(Reread::Gathers(plan, gathering)) => {
+            let (account, invalid) = (gathering.account, gathering.invalid);
+            let observer =
+                gather::observer_tracking(plan, header, metadata, database, account, invalid);
+            (true, Some(observer), false)
+        }
+        Policy::Rereads(Reread::Checks(gathering)) => {
+            (true, Some(gather::checker(header, metadata, database, gathering.account)), false)
+        }
+        Policy::Rereads(Reread::Censuses) => (true, None, false),
     };
     let mut recorder = Recorder::new(data_offset);
     if census {

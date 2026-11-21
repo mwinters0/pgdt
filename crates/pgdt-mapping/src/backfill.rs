@@ -12,17 +12,16 @@ use pgdt_io::{Arrangement, ByteRangeSource};
 use pgdt_model::{
     BlockId, BlockRecord, BlockStatistics, CopyBlock, DataBlock, DumpIndex, DumpMetadata,
     PostgresInvalidValues, Span, SpanBody,
-    internal::{BlockObserver, BlockRecordExt, Recorder},
+    internal::{BlockRecordExt, Recorder},
 };
 use tokio_util::sync::CancellationToken;
 
 use crate::context::{Gathering, PassContext, ReadContext};
 use crate::forward::{SaveThrottle, cancelled_read};
 use crate::interior::{Region, RegionScan, report_shortfall, scan_region};
-use crate::open::{OpenBlock, Policy, open};
+use crate::open::{OpenBlock, Policy, Reread, open};
 use crate::statistics::account::{StatisticsAccount, Term};
 use crate::statistics::density::BlockStatisticsExt;
-use crate::statistics::gather;
 use crate::statistics::request::{StatisticsBackfill, StatisticsRequest};
 
 /// What [`backfill_statistics`] did.
@@ -363,9 +362,10 @@ impl Rereads<'_> {
         Ok(true)
     }
 
-    /// One read of `block`, gathering what `plan` names, or with `None`
-    /// gathering nothing and checking every field ([`gather::checker`]); a
-    /// refused field read as `invalid` says. `None` is the token stopping it.
+    /// One read of `block`, gathering what `plan` names
+    /// ([`Reread::Gathers`]), or with `None` gathering nothing and checking
+    /// every field ([`Reread::Checks`]); a refused field read as the
+    /// gathering says. `None` is the token stopping it.
     async fn reread(
         &mut self,
         metadata: Option<&DumpMetadata>,
@@ -373,24 +373,12 @@ impl Rereads<'_> {
         block: &CopyBlock,
         plan: Option<&StatisticsBackfill>,
     ) -> Result<Option<BlockRecord>> {
-        let (header, account, invalid) =
-            (&block.header, self.gathering.account, self.gathering.invalid);
-        let observer = match plan {
-            Some(plan) => {
-                gather::observer_tracking(plan, header, metadata, database, account, invalid)
-            }
-            None => gather::checker(header, metadata, database, account),
+        let reread = match plan {
+            Some(plan) => Reread::Gathers(plan, self.gathering),
+            None => Reread::Checks(self.gathering),
         };
-        reread_rows(
-            &self.read,
-            self.cache_path,
-            metadata,
-            database,
-            block,
-            Some(observer),
-            &mut self.shortfall_reported,
-        )
-        .await
+        let reported = &mut self.shortfall_reported;
+        reread_rows(&self.read, self.cache_path, metadata, database, block, reread, reported).await
     }
 
     /// Record in `block` what one read of it found, `read` being the record
@@ -419,11 +407,13 @@ impl Rereads<'_> {
 /// Read every row of `block` again, as a mapping pass reads them — offered
 /// to the leader, and serially where it declines — recording them as a
 /// mapping pass records them ([`Recorder`]): censused and counted against the
-/// DDL `metadata` states for the block in `database`, each handed to
-/// `observer` where there is one, and answer the record the read finished:
-/// what a back-fill's read (`Rereads::reread`) and a query's census of a block mapped
-/// at the metadata level (`pgdt_query::Table::settle`) both read, a field the
-/// observer refuses failing it. `None` is
+/// DDL `metadata` states for the block in `database`, and observed as
+/// `reread` says — the open building its observer
+/// (`docs/design/decisions.md`, "D170") — and answer the record the read
+/// finished: what a back-fill's read (`Rereads::reread`) and a query's census
+/// of a block mapped at the metadata level (`pgdt_query::Table::settle`,
+/// [`Reread::Censuses`]) both read, a field the observer refuses failing it.
+/// `None` is
 /// `ctx`'s token stopping it first, by its flag or by a read it dropped, whichever
 /// reader made that read, and nothing else answers it; a block no
 /// longer ending where the map says is [`Error::CachedBlockChanged`], naming
@@ -435,7 +425,7 @@ pub async fn reread_rows(
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
     block: &CopyBlock,
-    observer: Option<Box<dyn BlockObserver>>,
+    reread: Reread<'_>,
     shortfall_reported: &mut bool,
 ) -> Result<Option<BlockRecord>> {
     let moved = || Error::CachedBlockChanged {
@@ -448,13 +438,8 @@ pub async fn reread_rows(
     if ctx.extent.exact().is_some_and(|size| block.address.end_offset > size) {
         return Err(moved());
     }
-    let OpenBlock { mut recorder, streams, offers_interior } = open(
-        &block.header,
-        block.address.data_offset,
-        metadata,
-        database,
-        Policy::Rereads(observer),
-    );
+    let OpenBlock { mut recorder, streams, offers_interior } =
+        open(&block.header, block.address.data_offset, metadata, database, Policy::Rereads(reread));
     // A re-read records no rows as text, so is always offered.
     debug_assert!(offers_interior);
     let region = Region {

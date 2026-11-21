@@ -38,12 +38,11 @@ format change. The shape is D169.
   one, as it absorbed observers before. `RegionScan::Closed` holds the
   `CopyEnd`, and `Interior`, `CensusPlan`, `PieceObserver`, `empty_census`
   and `PieceScan::census` are gone.
-- **`reread_rows` takes `Option<Box<dyn BlockObserver>>` and answers the
-  finished `BlockRecord`.** `settle.rs` takes its census from it. The
-  back-fill's `Rereads::record` reads the declined, gathered or checked
-  outcome off that record. This is the record 43.7's merge through
-  `BlockRecord` starts from: the field-by-field writes are still in
-  `record`.
+- **`reread_rows` answers the finished `BlockRecord`.** `settle.rs` takes
+  its census from it. The back-fill's `Rereads::record` reads the declined,
+  gathered or checked outcome off that record. This is the record 43.7's
+  merge through `BlockRecord` starts from: the field-by-field writes are
+  still in `record`.
 - **The observer contract is two traits.** `RowObserver` has `holds`,
   `begin_row`, `fold`, `end_row` and `into_any`. `BlockObserver:
   RowObserver` adds `close`, `piece` (answering `Box<dyn RowObserver>`) and

@@ -323,7 +323,7 @@ impl StatisticsRequest {
 /// well as everything asked for**, so a back-fill never loses a statistic an
 /// earlier pass gathered.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct StatisticsBackfill {
+pub struct StatisticsBackfill {
     /// The columns gathered, positionally to the block's header.
     pub(crate) columns: Vec<bool>,
     /// Those of `columns` the request tracks. A field its type's `*_in`
