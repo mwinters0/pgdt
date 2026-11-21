@@ -96,6 +96,7 @@ Spec: [`../design/roadmap-P43-block-model.md`](../design/roadmap-P43-block-model
 - [x] **43.5** `BlockObserver`'s one-call close; the `Gatherer` as a block's gatherer, a piece's and the strict checker; `--count-pair` on a data-level parse — [notes](../design/roadmap-P43.5-observer-close-notes.md)
 - [x] **43.6** The `Recorder` in `pgdt-model`: a held row split once, `RowFold` replaced, the three hosts fed through it, the observer contract split into its row and block traits, `Builder` recording nothing and `on_copy_end` taking the record; `--count-pair` on a data-level parse — [notes](../design/roadmap-P43.6-recorder-notes.md)
 - [x] **43.7** One open under per-pass policies, `map_forward`'s `CopyStart` arm becoming it; one close, the back-fill merging through `BlockRecord`; `--count-pair` on a data-level parse — [notes](../design/roadmap-P43.7-open-close-notes.md)
+- [ ] **43.7.1** A re-read's policy as data: `Policy::Rereads` carrying the back-fill's plan, or a check alone, with its gathering, or nothing for a query's census, and the open building `observer_tracking` or `checker` from it, as the spec's back-fill policy states
 - [ ] **43.8** `build_index`, `build_map` and `backfill_block` in `pgdt-fixtures` behind `mapping`, the eager pass opening through the open under its policy
 
 ## Not started
@@ -127,14 +128,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **43.7's open takes no pass context, and builds no re-read's observer.** The
-  spec has the open take the pass context, and the back-fill's policy attach
-  `observer_tracking` or `checker` (`../design/roadmap-P43-block-model.md`, "One
-  open, one close, the passes differing by policy"). The open reads none of the
-  context's fields, and `reread_rows`, which opens through it, is called by
-  `backfill_block` and `settle.rs`, which hold none; a query's census re-read
-  has no account an observer could charge. So `open` takes header, data offset,
-  DDL and a `Policy`, and `Policy::Rereads` carries the observer its caller
-  built (D170). Reconsidering means threading a context and a gathering through
-  `reread_rows` that the open would ignore or branch on.

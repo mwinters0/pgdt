@@ -39,12 +39,12 @@ format change. The shape is D170.
 
 ## Negative results
 
-- **The open takes no `PassContext`.** The spec and 43.2's notes say it
-  does. It reads none of the context's fields, and `reread_rows` is called
-  from `backfill_block` and `settle.rs`, which hold no pass context.
-- **A re-read's observer is built by its caller and handed to the policy.**
-  The open does not choose between `observer_tracking` and `checker`. A
-  query's census re-read (`settle.rs`) has no account to charge.
+- **The open takes no `PassContext`** (D170). It reads none of the
+  context's fields, and `reread_rows`, which opens through it, takes the
+  `ReadContext` alone, `backfill_block` holding nothing more.
+- **A re-read's observer is built by its caller and handed to the policy**,
+  short of the spec, whose back-fill policy attaches `observer_tracking` or
+  `checker`. 43.7.1 moves the choice into the open.
 - **`reread_rows` does not branch on `offers_interior`.** It is always true
   for a re-read, so the function asserts it instead.
 - **The data-level parse over `long_bytea_32` rises by layout, accepted.**

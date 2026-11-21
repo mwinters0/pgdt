@@ -126,6 +126,6 @@ observer, a query censuses alone, both record the catalog's rows (D133); a re-re
 gatherer or checker, or none for a query's census. A re-read's record merges into the block's by
 `BlockRecordExt::merge`, the credit for what it replaced staying the back-fill's account's. Rejected: each pass opening
 its own, the mechanism written three times; the open taking the pass context, which it reads none of, a re-read
-outside a pass holding none; the open choosing a re-read's observer, a query's census having no account; the merge in
-the back-fill, a rule of the record any pass writing one for a block it re-reads shares. Code: `pgdt-mapping`'s
-`open::open`, `pgdt_model::internal::BlockRecordExt`. Evidence: `span/tests.rs`.
+outside a pass holding none and `reread_rows` the read half alone; the merge in the back-fill, a rule of the record any
+pass writing one for a block it re-reads shares. Code: `pgdt-mapping`'s `open::open`,
+`pgdt_model::internal::BlockRecordExt`. Evidence: `span/tests.rs`.

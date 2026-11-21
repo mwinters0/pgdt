@@ -16,7 +16,7 @@ the row path: no behaviour moved, so no `--count-pair`.
   `backfill_block` reads with no cache and no watch. So `scan_region`,
   `run_region`, `scan_partition`, `reread_rows` and `observe_rows` take
   `ReadContext`, and `map_forward`, `close_copy_block`, `backfill_statistics`
-  and `map_file_watched` take `PassContext`. 43.7's open takes `PassContext`.
+  and `map_file_watched` take `PassContext`. 43.7's open takes none (D170).
 - **`Pass::Parse` carries a `Gathering`**. `Rereads` holds a `ReadContext`,
   the cache path and a `Gathering`, in place of the twelve fields it had.
 - **`interior::Region` is a block as the leader is offered it**: table,

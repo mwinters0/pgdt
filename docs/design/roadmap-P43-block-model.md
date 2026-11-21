@@ -130,7 +130,7 @@ contract and its implementations are reshaped once.
 **The mapping pass takes one context.** Every function `pgdt-mapping` holds under
 `clippy::too_many_arguments` that takes a pass field takes one pass context —
 source, scan options, ledger, cancel, cache, watch, extent, statistics request,
-allowance, account — which the open takes too; one taking none keeps its
+allowance, account; one taking none, the open among them, keeps its
 parameters, and a later slice's reshape drops its allow only where it removes the
 need. And `forward.rs`'s cancel-save-return and `whole_file.rs`'s
 interrupted exit are each written once. Absorbed from `M302`, withdrawn unlanded,
