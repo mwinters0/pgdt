@@ -362,8 +362,10 @@ front end's spelling of it ([`decisions.md`](decisions.md), "Predicates").
 Every field of a block checked against its type's `*_in` and its column's
 typmod ([`decisions.md`](decisions.md), "D103").
 
-- **pgdt-mapping** — `statistics/gather/strict.rs`: an arm of the block
-  observer, built where a block's gatherer is.
+- **pgdt-mapping** — `statistics/gather/strict.rs`,
+  `statistics/gather/checking.rs`: an arm of the block observer, and the
+  observer of a block whose columns nothing gathers, built where a block's
+  gatherer is.
 - **pgdt-codec** — `grammar/`, the namespace declaring the types a strict
   parse's listing and the register's plans carry: what a column's fields are
   read by, and whether PostgreSQL refuses one, dispatching to the readers a
@@ -382,6 +384,8 @@ a table's summary, DataFusion's statistics, `pgdt info --detail`
 - **pgdt-mapping** — `statistics.rs`, `statistics/request.rs`,
   `statistics/density.rs`, `statistics/account.rs`, `statistics/stored.rs`,
   `statistics/gather.rs`, `statistics/gather/gatherer.rs`,
+  `statistics/gather/block.rs`, `statistics/gather/piece.rs`,
+  `statistics/gather/read.rs`,
   `statistics/gather/column.rs`, `statistics/gather/bounds.rs`,
   `statistics/gather/order.rs`, `statistics/gather/clip.rs`,
   `statistics/gather/charge.rs`: what a pass gathers and what holding it

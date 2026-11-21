@@ -59,7 +59,7 @@ pub(super) struct ColumnGatherer {
     dictionary: Option<DictionaryGatherer>,
     /// The column over the open group.
     group: GroupState,
-    /// The column over a piece's held first group ([`Gatherer::head`](super::gatherer::Gatherer::head)).
+    /// The column over a piece's held first group ([`PieceGatherer::head`](super::piece::PieceGatherer::head)).
     head: Option<GroupState>,
     /// Whether a field its type's `*_in` refuses stops the block, or is kept
     /// out of every statistic a read could contradict ([`Self::observe`]).
@@ -184,7 +184,7 @@ impl ColumnGatherer {
     }
 
     /// Join `later`'s first group, which a piece's rows began, onto this
-    /// column's open group ([`Gatherer::join`](super::gatherer::Gatherer::join)):
+    /// column's open group ([`BlockGatherer::join`](super::block::BlockGatherer::join)):
     /// `later`'s held head where the piece moved past that group
     /// (`past_first`), else its open group, folded into this column's where
     /// it `continues` it and taken as this column's open group otherwise; and
@@ -386,7 +386,7 @@ impl ColumnGatherer {
     }
 
     /// Merge every closed group with the one after it
-    /// ([`Gatherer::merge_pairs`](super::gatherer::Gatherer::merge_pairs)), moving `charge` by what the column frees
+    /// ([`Groups::merge_pairs`](super::gatherer::Groups::merge_pairs)), moving `charge` by what the column frees
     /// before its dictionary renumbers, and again after.
     pub(super) fn merge_pairs(&mut self, charge: &mut Charge) {
         let (before, base) = (self.held(), charge.charged());
@@ -419,7 +419,7 @@ impl ColumnGatherer {
     }
 
     /// Take the last closed group back into the open group, which follows it
-    /// ([`Gatherer::reopen_last`](super::gatherer::Gatherer::reopen_last)), moving `charge` by the difference.
+    /// ([`Groups::reopen_last`](super::gatherer::Groups::reopen_last)), moving `charge` by the difference.
     pub(super) fn reopen_last(&mut self, charge: &mut Charge) {
         let (before, base) = (self.held(), charge.charged());
         let nulls = self.null_counts.pop().expect("a closed group counts its NULLs");

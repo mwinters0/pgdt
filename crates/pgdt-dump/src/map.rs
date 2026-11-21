@@ -980,24 +980,25 @@ impl Builder {
         // records the allowance instead (`docs/design/decisions.md`, "D85").
         // The `Arc` is sealed inside the scope too, its allocation being part
         // of what the account retains (`pgdt_core::instrument`).
-        let mut ignored_refusals = None;
-        let mut checked_in_full = false;
-        let (statistics, statistics_declined) = {
+        let mut record = BlockRecord::default();
+        if let Some(observer) = self.pending_observer.take() {
             let _attributed = StatisticsScope::enter();
-            let gathered = self.pending_observer.take().map(|mut observer| {
-                ignored_refusals = observer.take_ignored().map(Box::new);
-                checked_in_full = observer.checks_every_field();
-                observer.finish(end.terminator_offset - copy_start.data_offset)
-            });
-            match gathered {
-                Some(BlockGathered::Gathered(statistics)) => (Some(Arc::new(statistics)), None),
-                Some(BlockGathered::Declined { allowance }) => (None, Some(allowance)),
-                Some(BlockGathered::Refused(refusal)) => {
+            let observed = observer.close(end.terminator_offset - copy_start.data_offset);
+            match observed.gathered {
+                BlockGathered::Gathered(statistics) => {
+                    record.statistics = Some(Arc::new(statistics));
+                }
+                BlockGathered::Declined { allowance } => {
+                    record.statistics_declined = Some(allowance);
+                }
+                BlockGathered::Refused(refusal) => {
                     return Err(refusal.into_error(&copy_start.header, copy_start.data_offset));
                 }
-                Some(BlockGathered::Checked) | None => (None, None),
+                BlockGathered::Checked => {}
             }
-        };
+            record.ignored_refusals = observed.ignored_refusals.map(Box::new);
+            record.checked_in_full = observed.checked_in_full;
+        }
         let block = CopyBlock {
             header: copy_start.header,
             partition_root,
@@ -1009,10 +1010,6 @@ impl Builder {
             },
             record: Arc::new(BlockRecord {
                 row_count: end.row_count,
-                statistics,
-                statistics_declined,
-                ignored_refusals,
-                checked_in_full,
                 census: self.pending_census.take().map(|mut census| {
                     if let Some(mut fold) = self.pending_fold.take() {
                         census.merge(&fold.take());
@@ -1021,6 +1018,7 @@ impl Builder {
                 }),
                 recorded_rows: self.pending_rows.take().map(Box::new),
                 longest_line: end.longest_line.map(|line| line.in_block(copy_start.data_offset)),
+                ..record
             }),
         };
         debug_assert!(

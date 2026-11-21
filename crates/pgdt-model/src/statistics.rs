@@ -333,16 +333,16 @@ pub trait BlockObserver: Send {
         self.end_row(fields);
     }
 
-    /// The block's statistics, or [`BlockGathered::Declined`] where the
-    /// allowance could not hold them before this call; the close it makes is
-    /// kept even past the allowance (`docs/design/decisions.md`, "D85"). `end`
-    /// is the terminator line's offset relative to the block's first data byte
-    /// — where the last row's line ends.
-    fn finish(self: Box<Self>, end: u64) -> BlockGathered;
+    /// **Close the block**, `end` being the terminator line's offset relative
+    /// to the block's first data byte — where the last row's line ends — and
+    /// answer what its record takes of this observer
+    /// ([`BlockObserved`]). The close it makes is kept even past the
+    /// allowance (`docs/design/decisions.md`, "D85").
+    fn close(self: Box<Self>, end: u64) -> BlockObserved;
 
     /// An observer for a piece of this block: rows starting anywhere after the
     /// ones this observer has been handed, to be given back to
-    /// [`Self::absorb`] rather than finished.
+    /// [`Self::absorb`] rather than closed.
     fn piece(&self) -> Box<dyn BlockObserver>;
 
     /// Fold `later`, made by [`Self::piece`] and handed rows that all follow
@@ -352,19 +352,25 @@ pub trait BlockObserver: Send {
     /// This observer as [`Any`](std::any::Any), which is how [`Self::absorb`]
     /// recovers the concrete piece it made.
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
+}
 
-    /// The fields PostgreSQL refuses, by type or `NOT NULL`, that this
+/// What a block's observer answers as it closes ([`BlockObserver::close`]):
+/// what the block's record takes of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockObserved {
+    /// The block's statistics, or [`BlockGathered::Declined`] where the
+    /// allowance could not hold them.
+    pub gathered: BlockGathered,
+    /// The fields PostgreSQL refuses, by type or `NOT NULL`, that the
     /// observer keyed and went past, being told to ignore them
-    /// ([`crate::PostgresInvalidValues::Ignore`]), taken before
-    /// [`Self::finish`]: what the block records
-    /// ([`crate::BlockRecord::ignored_refusals`]).
-    fn take_ignored(&mut self) -> Option<IgnoredRefusals>;
-
-    /// Whether this observer checks every field of every row it is handed as
-    /// a strict parse does ([`crate::PostgresInvalidValues::Strict`]), so a
-    /// block it finishes unrefused is checked in full
-    /// ([`crate::BlockRecord::checked_in_full`]).
-    fn checks_every_field(&self) -> bool;
+    /// ([`crate::PostgresInvalidValues::Ignore`]):
+    /// [`crate::BlockRecord::ignored_refusals`].
+    pub ignored_refusals: Option<IgnoredRefusals>,
+    /// Whether the observer checked every field of every row it was handed
+    /// as a strict parse does ([`crate::PostgresInvalidValues::Strict`]), so
+    /// a block it closed unrefused is checked in full:
+    /// [`crate::BlockRecord::checked_in_full`].
+    pub checked_in_full: bool,
 }
 
 /// A [`ColumnStatistics`]' every field, as it stores them: what a gatherer

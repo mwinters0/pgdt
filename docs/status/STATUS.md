@@ -93,7 +93,7 @@ Spec: [`../design/roadmap-P43-block-model.md`](../design/roadmap-P43-block-model
 - [x] **43.2** The mapping pass context for every function under `too_many_arguments`; `forward.rs`'s cancel-save-return and `whole_file.rs`'s interrupted exit each written once — [notes](../design/roadmap-P43.2-pass-context-notes.md)
 - [x] **43.3** `BlockId`, derived from the header offset, at every identity site; display sites print the address; no format change — [notes](../design/roadmap-P43.3-block-id-notes.md)
 - [x] **43.4** `CopyBlock` as header, partition root, `BlockAddress` and `Arc<BlockRecord>`; `LongestLine` block-relative; `InsertRun` holding a record; copy-on-write in the back-fill and `settle.rs`; `Segment` holding header and address, no whole block cloned; the cache-format bump; `--count-pair` on the typed query — [notes](../design/roadmap-P43.4-block-record-notes.md)
-- [ ] **43.5** `BlockObserver`'s one-call close; the `Gatherer` as a block's gatherer, a piece's and the strict checker; `--count-pair` on a data-level parse
+- [x] **43.5** `BlockObserver`'s one-call close; the `Gatherer` as a block's gatherer, a piece's and the strict checker; `--count-pair` on a data-level parse — [notes](../design/roadmap-P43.5-observer-close-notes.md)
 - [ ] **43.6** The `Recorder` in `pgdt-model`: a held row split once, `RowFold` replaced, the three hosts fed through it, `Builder` recording nothing and `on_copy_end` taking the record; `--count-pair` on a data-level parse
 - [ ] **43.7** One open under per-pass policies, `map_forward`'s `CopyStart` arm becoming it; one close, the back-fill merging through `BlockRecord`; `--count-pair` on a data-level parse
 - [ ] **43.8** `build_index`, `build_map` and `backfill_block` in `pgdt-fixtures` behind `mapping`, the eager pass opening through the open under its policy
@@ -127,3 +127,13 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **43.5: a piece answers the observer contract's block-level methods with a
+  panic.** `PieceGatherer`'s `close`, `piece` and `absorb` are
+  `unreachable!`, `BlockObserver` staying one trait. A row-level trait a piece
+  implements, under a block-level one whose `piece` answers it and whose
+  `absorb` takes it, would say so in the types. It was not taken because
+  43.6's `Recorder` is one concrete type holding a block's observer or a
+  piece's (`roadmap-P43-block-model.md`, "One recorder, a held row split
+  once"), which two traits would make generic or split in two. Reconsidering
+  splits the trait in 43.6, beside the recorder it shapes.

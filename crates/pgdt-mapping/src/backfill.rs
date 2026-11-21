@@ -14,7 +14,8 @@ use pgdt_io::{Arrangement, ByteRangeSource};
 use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
 use pgdt_model::{
     BlockCensus, BlockGathered, BlockId, BlockStatistics, CopyBlock, DataBlock, DumpIndex,
-    DumpMetadata, IgnoredRefusals, PostgresInvalidValues, Span, SpanBody, internal::BlockObserver,
+    DumpMetadata, IgnoredRefusals, PostgresInvalidValues, Span, SpanBody,
+    internal::{BlockObserved, BlockObserver},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -393,19 +394,14 @@ impl Rereads<'_> {
         )
         .await?;
         let Some(census) = read else { return Ok(None) };
-        // The observer's own allocation is freed as `finish` returns, attributed
+        // The observer's own allocation is freed as `close` returns, attributed
         // as it was allocated (`pgdt_core::instrument`).
         let _attributed = StatisticsScope::enter();
-        let ignored = observer.take_ignored();
-        let checked = observer.checks_every_field();
-        let gathered =
-            match observer.finish(block.address.terminator_offset - block.address.data_offset) {
-                BlockGathered::Refused(refusal) => {
-                    return Err(refusal.into_error(&block.header, block.address.data_offset));
-                }
-                gathered => gathered,
-            };
-        Ok(Some(BlockReread { gathered, census, ignored, checked }))
+        let observed = observer.close(block.address.terminator_offset - block.address.data_offset);
+        if let BlockGathered::Refused(refusal) = observed.gathered {
+            return Err(refusal.into_error(&block.header, block.address.data_offset));
+        }
+        Ok(Some(BlockReread { observed, census }))
     }
 
     /// Record in `block` what one read of it found: its census where the read
@@ -414,14 +410,16 @@ impl Rereads<'_> {
     /// that it checked, as a strict mapping pass records nothing more of a
     /// block it was not asked to — and what it gathered, or declined.
     fn record(&mut self, block: &mut CopyBlock, reread: BlockReread, gathered: bool) {
-        let BlockReread { gathered: outcome, census, ignored, checked } = reread;
+        let BlockReread { observed, census } = reread;
+        let BlockObserved { gathered: outcome, ignored_refusals: ignored, checked_in_full } =
+            observed;
         let id = block.address.id();
         // Copied on write where another holder shares it (`docs/design/decisions.md`, "D168").
         let record = Arc::make_mut(&mut block.record);
         if gathered {
             record.census = Some(census);
         }
-        record.checked_in_full |= checked;
+        record.checked_in_full |= checked_in_full;
         let _attributed = StatisticsScope::enter();
         match outcome {
             // **A re-read that declined keeps what the block already
@@ -457,19 +455,17 @@ impl Rereads<'_> {
 
 /// What one read of a block the map already holds found.
 struct BlockReread {
-    /// What the block gathered, or the allowance it declined under.
-    gathered: BlockGathered,
+    /// What its observer answered: what the block gathered, or the allowance
+    /// it declined under; the fields its type's `*_in` refuses that the
+    /// re-read keyed and went past, per column — under
+    /// [`PostgresInvalidValues::Ignore`], or in a column gathered only because
+    /// the block held it ([`StatisticsBackfill::requested`]); and whether it
+    /// checked every field of the block, as it does under
+    /// [`PostgresInvalidValues::Strict`], finding none refused.
+    observed: BlockObserved,
     /// The block's census and count, which every re-read takes, having read
     /// every row — a declined one included.
     census: BlockCensus,
-    /// The fields its type's `*_in` refuses that the re-read keyed and went
-    /// past, per column — under [`PostgresInvalidValues::Ignore`], or in a
-    /// column gathered only because the block held it
-    /// ([`StatisticsBackfill::requested`]).
-    ignored: Option<IgnoredRefusals>,
-    /// Whether the re-read checked every field of the block and found none
-    /// refused, as it does under [`PostgresInvalidValues::Strict`].
-    checked: bool,
 }
 
 /// Read every row of `block` again, as a mapping pass reads them — offered

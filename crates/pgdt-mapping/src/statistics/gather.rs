@@ -19,10 +19,10 @@
 //!
 //! **A leader piece gathers into an observer of its own, and the pieces join
 //! in file order into exactly what one observer handed every row gathers**
-//! ([`Gatherer::join`](self::gatherer::Gatherer::join)), unless the block declines, which a stated allowance
+//! ([`BlockGatherer::join`](self::block::BlockGatherer::join)), unless the block declines, which a stated allowance
 //! decides over every piece charging at once (`docs/design/decisions.md`,
 //! "D85"). Two things cross a join: the group a cut falls
-//! inside, which a piece holds open rather than closing ([`Gatherer::head`](self::gatherer::Gatherer::head)),
+//! inside, which a piece holds open rather than closing ([`PieceGatherer::head`](self::piece::PieceGatherer::head)),
 //! and each ordered column's first value, which the rows before the piece
 //! place their last value against ([`RowOrder`](self::order::RowOrder)).
 //!
@@ -38,16 +38,16 @@
 //! gathering at twice the size gathers** (`docs/design/decisions.md`, "D82"),
 //! never mid-scan while a piece it made is alive; at the block's end it merges
 //! whatever is outstanding, a piece alive there joining nothing more
-//! ([`Gatherer::fit_cap`](self::gatherer::Gatherer::fit_cap)). **A finished
+//! ([`BlockGatherer::fit_cap`](self::block::BlockGatherer::fit_cap)). **A finished
 //! block short of its density minimum merges the same way**
-//! (`docs/design/decisions.md`, "D82"; [`Gatherer::fit_density`](self::gatherer::Gatherer::fit_density)).
+//! (`docs/design/decisions.md`, "D82"; [`BlockGatherer::fit_density`](self::block::BlockGatherer::fit_density)).
 //!
 //! **A block whose gathering passes the pass's statistics allowance declines**
-//! ([`Gatherer::decline`](self::gatherer::Gatherer::decline)): it frees what it holds, reads its remaining rows
+//! ([`Groups::decline`](self::gatherer::Groups::decline)): it frees what it holds, reads its remaining rows
 //! for the census alone — and a strict parse's check ([`checker`]) — and
 //! answers [`BlockGathered::Declined`](pgdt_model::BlockGathered::Declined) with the
 //! allowance, which the map records (`docs/design/decisions.md`, "D85"). The
-//! close `Gatherer::finish` makes is kept even where it passes the
+//! close a block's gatherer makes is kept even where it passes the
 //! allowance; the next block declines at its first charge.
 
 use std::sync::Arc;
@@ -55,21 +55,27 @@ use std::sync::Arc;
 use pgdt_codec::internal::column_tiers;
 use pgdt_core::CopyHeader;
 use pgdt_core::internal::StatisticsScope;
-use pgdt_model::{DumpMetadata, GroupSizing, PostgresInvalidValues, internal::BlockObserver};
+use pgdt_model::{DumpMetadata, PostgresInvalidValues, internal::BlockObserver};
 
+use self::block::BlockGatherer;
+use self::checking::Checker;
 use self::column::ColumnGatherer;
-use self::gatherer::{Gatherer, Sizing};
+use self::gatherer::Sizing;
 use self::strict::field_checks;
 use super::account::{Charge, StatisticsAccount, Term};
-use super::request::{ROW_GROUP_DEFAULT_SIZE_BYTES, StatisticsBackfill, StatisticsRequest};
+use super::request::{StatisticsBackfill, StatisticsRequest};
 use super::stored::{declared_column, stored_resolution};
 
+mod block;
 mod bounds;
 mod charge;
+mod checking;
 mod clip;
 mod column;
 mod gatherer;
 mod order;
+mod piece;
+mod read;
 pub(crate) mod strict;
 
 #[cfg(feature = "test-support")]
@@ -155,10 +161,7 @@ pub(crate) fn observer_tracking(
         })
         .collect();
     drop((resolved, tiers, qualified));
-    let mut gatherer = Gatherer::block(Sizing::of(plan), columns, charge);
-    gatherer.checks = checks;
-    gatherer.fix_holds();
-    gatherer.charge_held();
+    let mut gatherer = BlockGatherer::new(Sizing::of(plan), columns, checks, charge);
     // An account already full declines this block before its first row, so a
     // pass past its allowance gathers no row of any block after it
     // (`docs/design/decisions.md`, "D85").
@@ -187,20 +190,7 @@ pub(crate) fn checker(
     let resolved = stored_resolution(header, metadata, database);
     let checks = field_checks(header, metadata, database, &resolved);
     drop(resolved);
-    // No group is ever opened, so the size is never read.
-    let sizing = Sizing {
-        group_size: ROW_GROUP_DEFAULT_SIZE_BYTES,
-        cap: None,
-        min_rows: None,
-        max_rows: None,
-        record: GroupSizing::Stated,
-    };
-    let mut gatherer = Gatherer::block(sizing, Vec::new(), charge);
-    gatherer.gathers = false;
-    gatherer.checks = Some(checks);
-    gatherer.fix_holds();
-    gatherer.charge_held();
-    Box::new(gatherer)
+    Box::new(Checker::new(checks, charge))
 }
 
 #[cfg(test)]

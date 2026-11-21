@@ -1,33 +1,25 @@
-//! The block's observer: its groups, its pieces and their join, the cap and
-//! density merges, and the decline (`docs/design/decisions.md`, "D81",
-//! "D82", "D85").
+//! What a block's gatherer and a piece's share: the groups and the columns
+//! over them, their charge, the pairwise merge and the decline
+//! (`docs/design/decisions.md`, "D81", "D82", "D85").
 
-use std::any::Any;
-use std::mem::{self};
-use std::sync::{Arc, OnceLock};
+use std::mem;
 
-use pgdt_codec::internal::FieldWalk;
-use pgdt_core::internal::{PRINTOUT_ESCAPED_BYTES, StatisticsScope, printout_head};
-use pgdt_model::internal::IgnoredRefusalsExt;
-use pgdt_model::{
-    BlockGathered, BlockStatistics, FieldRefusal, GroupSizing, IgnoredRefusals, RowGroup,
-    internal::{BlockObserver, vec_heap},
-};
+use pgdt_core::internal::StatisticsScope;
+use pgdt_model::{GroupSizing, RowGroup, internal::vec_heap};
 
 use super::bounds::{Refused, merge_adjacent};
-use super::charge::{push_charged, reserve_charged};
-use super::clip::{LONG_FIELD_HEAD, LongRead};
+use super::charge::push_charged;
+use super::clip::LongRead;
 use super::column::{ColumnGatherer, Observed};
-use super::strict::FieldCheck;
-use crate::statistics::account::{Charge, STATISTICS_ACCOUNT_CHARGE_STEP, Term};
-use crate::statistics::density::density_merges;
+use super::read::Gather;
+use crate::statistics::account::{Charge, STATISTICS_ACCOUNT_CHARGE_STEP};
 use crate::statistics::request::StatisticsBackfill;
 
 /// The group a row is being added to.
-struct OpenGroup {
-    index: u64,
-    first_start: u64,
-    rows: u64,
+pub(super) struct OpenGroup {
+    pub(super) index: u64,
+    pub(super) first_start: u64,
+    pub(super) rows: u64,
 }
 
 /// How a block observer sizes its groups: a [`StatisticsBackfill`] less its
@@ -49,73 +41,27 @@ impl Sizing {
     }
 }
 
-pub(super) struct Gatherer {
-    group_size: u64,
-    /// The most groups a block holds, `None` under a stated size or maximum,
-    /// for a block re-read at the size it holds, and for a piece, which never
-    /// merges.
-    cap: Option<usize>,
-    /// The fewest rows the finished block's median group is merged *towards*,
-    /// `None` for an exact size, for a block re-read at the size it holds, and
-    /// for a piece, which is never finished. Not
-    /// a floor: the merging stops at one group, or where the next size would
-    /// break `max_rows`, whichever comes first ([`density_merges`]).
-    min_rows: Option<u64>,
-    /// The most rows a merge here may put in the finished block's
-    /// 90th-percentile group; `None` for an exact size, where none is stated,
-    /// for a block re-read at the size it holds, and for a piece. Not a
-    /// ceiling: a block already past it at the size it gathered from merges
-    /// nothing ([`density_merges`]) and finishes over it, the re-read at the
-    /// finer size [`crate::statistics::StatisticsRequest::backfill`] predicts
-    /// being what aims it back within one, which a block whose rows cluster
-    /// can still miss.
-    max_rows: Option<u64>,
-    /// What the finished block records it was sized under.
-    record: GroupSizing,
-    /// Shared with every piece this block has made, once it has made one:
-    /// mid-scan a block merges only while no piece holds a clone, so each
-    /// piece joins at the size it gathered at. At the block's end the check
-    /// is dropped, a piece still alive being past joining
-    /// ([`Gatherer::fit_cap`]).
-    pieces: OnceLock<Arc<()>>,
-    /// Whether this observes a piece of its block rather than the whole of it:
-    /// a piece lists no group ahead of its first row's, holds that group open
-    /// once a row moves past it, and is joined rather than finished.
-    piece: bool,
+/// How [`Groups::close_through`] closes a group: a block's, merging past the
+/// cap it merges past now ([`BlockGatherer::merging_cap`](super::block::BlockGatherer::merging_cap)),
+/// or a piece's, holding its first group open in its head
+/// ([`PieceGatherer::head`](super::piece::PieceGatherer::head)) and merging
+/// nothing.
+pub(super) enum Closing<'a> {
+    Block(Option<usize>),
+    Piece(&'a mut Option<(OpenGroup, u64)>),
+}
+
+/// **A block's or a piece's groups and the columns gathered over them**,
+/// charged to the pass's account as they grow
+/// (`docs/design/decisions.md`, "D81"). Empty once it has stopped: a decline
+/// or a refusal frees everything it holds, so no column answers a field.
+pub(super) struct Groups {
+    pub(super) group_size: u64,
     /// Every closed group in order, from the block's first — or, in a piece,
-    /// from the one after [`Self::head`].
-    groups: Vec<RowGroup>,
-    /// A piece's first group once a later row has moved past it, with where
-    /// its last row ends. **Held open, not closed**: the rows before the piece
-    /// may have begun it, and only [`Gatherer::join`] knows. Each column's
-    /// state over it is [`ColumnGatherer::head`].
-    head: Option<(OpenGroup, u64)>,
-    open: Option<OpenGroup>,
-    /// Whether any column is tracked, so a row is worth splitting.
-    splits: bool,
-    /// Whether this observer gathers statistics at all, which a [`checker`](super::checker)
-    /// does not: it opens no group, never declines, and answers
-    /// [`BlockGathered::Checked`].
-    pub(super) gathers: bool,
-    columns: Vec<Option<ColumnGatherer>>,
-    /// What a strict parse checks every field by, one per column, where this
-    /// observer checks them ([`PostgresInvalidValues::Strict`](pgdt_model::PostgresInvalidValues::Strict)): each field is
-    /// checked before it is gathered, and after a decline too.
-    pub(super) checks: Option<Arc<[Option<FieldCheck>]>>,
-    /// Each walking column's walk ([`FieldCheck::walk`]), built at its first
-    /// field and readied as each ends — outside every statistics scope, a
-    /// check being no statistic, so built and freed alike unattributed.
-    walks: Vec<Option<FieldWalk>>,
-    /// Whether each column's field is handed over whole
-    /// ([`BlockObserver::holds`]), fixed for the block whatever it stops,
-    /// and shared with its pieces.
-    holds: Arc<[bool]>,
-    /// Where the row being folded starts, relative to the block's first data
-    /// byte.
-    row_offset: u64,
-    /// The field being handed over a run at a time, between its first run
-    /// and its last.
-    run: Option<RunField>,
+    /// from the one after its head.
+    pub(super) groups: Vec<RowGroup>,
+    pub(super) open: Option<OpenGroup>,
+    pub(super) columns: Vec<Option<ColumnGatherer>>,
     /// What the open groups have grown by since [`Self::charge_held`] last
     /// ran, which it runs again once this passes [`STATISTICS_ACCOUNT_CHARGE_STEP`].
     uncharged: i64,
@@ -123,103 +69,60 @@ pub(super) struct Gatherer {
     /// — read at a row's end and at a fold's, never mid-merge, so an observer
     /// declines only where its structures are whole.
     over: bool,
-    /// What a piece [`Self::join`] is folding in still holds, which this
-    /// observer's charge carries until the fold ends.
+    /// What a piece a block is folding in still holds, which the block's
+    /// charge carries until the fold ends ([`Self::carry`]).
     carried: (u64, u64),
-    /// The allowance this observer **declined** under, once the account passed
-    /// it: everything gathered is freed, no further row is gathered, and a block
-    /// answers [`BlockGathered::Declined`]
+    /// The allowance this declined under, once the account passed it:
+    /// everything gathered is freed, no further row is gathered, and a block
+    /// answers [`BlockGathered::Declined`](pgdt_model::BlockGathered::Declined)
     /// (`docs/design/decisions.md`, "D85"). A piece carries it into the block
     /// it folds into, the block having lost that piece's rows.
-    declined: Option<u64>,
-    /// The first field this observer met that PostgreSQL refuses, by its
-    /// type's `*_in` or its column's `NOT NULL`: it
-    /// frees what it holds and reads no further row, as a declined observer
-    /// does, and a block answers [`BlockGathered::Refused`]. A piece carries
-    /// it into the block it folds into.
-    refused: Option<FieldRefusal>,
-    /// The fields PostgreSQL refuses, by type or `NOT NULL`, that this
-    /// observer keyed and went past, told to ignore them. A piece's is folded into its block's, its
-    /// first numbered past the block's rows, as a refusal is.
-    ignored: Option<IgnoredRefusals>,
-    /// The rows this observer has been handed, and, in a block, those of
-    /// every piece it has folded in, **counted whether or not it has
-    /// stopped**: a piece made before a decline can still refuse, and its
-    /// line is numbered past every row before it ([`FieldRefusal::line`]).
-    rows: u64,
-    /// What this observer holds, in the pass's account. **Last**, so it is
-    /// released after everything above is freed ([`Charge`]).
-    charge: Charge,
+    pub(super) declined: Option<u64>,
+    /// What these hold, in the pass's account. **Last**, so it is released
+    /// after everything above is freed ([`Charge`]).
+    pub(super) charge: Charge,
 }
 
-impl Gatherer {
-    pub(super) fn block(
-        sizing: Sizing,
+impl Groups {
+    /// `columns` gathered at `group_size`, `declined` under an allowance
+    /// already where the block they gather for has, and charged to `charge`
+    /// as they are made.
+    pub(super) fn new(
+        group_size: u64,
         columns: Vec<Option<ColumnGatherer>>,
+        declined: Option<u64>,
         charge: Charge,
     ) -> Self {
-        let mut block = Self {
-            group_size: sizing.group_size,
-            cap: sizing.cap.map(|cap| cap.max(1)),
-            min_rows: sizing.min_rows,
-            max_rows: sizing.max_rows,
-            record: sizing.record,
-            pieces: OnceLock::new(),
-            piece: false,
+        let mut groups = Self {
+            group_size,
             groups: Vec::new(),
-            head: None,
             open: None,
-            splits: columns.iter().any(Option::is_some),
-            gathers: true,
             columns,
-            checks: None,
-            walks: Vec::new(),
-            holds: Arc::default(),
-            row_offset: 0,
-            run: None,
             uncharged: 0,
             over: false,
             carried: (0, 0),
-            declined: None,
-            refused: None,
-            ignored: None,
-            rows: 0,
+            declined,
             charge,
         };
-        block.fix_holds();
-        block
+        groups.charge_held();
+        groups
     }
 
-    /// Whether this observer has stopped gathering rows, having declined or
-    /// refused; one that declined still checks them where it checks any.
-    fn stopped(&self) -> bool {
-        self.declined.is_some() || self.refused.is_some()
-    }
-
-    /// Free everything this observer holds, its charge going to nothing in
-    /// the same update: what [`Self::decline`] and [`Self::refuse`] share.
-    fn free(&mut self) {
+    /// Free everything these hold, the charge going to nothing in the same
+    /// update: what a decline and a refusal share.
+    fn release(&mut self) {
         debug_assert_eq!(self.carried, (0, 0), "a fold is not a place to stop");
         drop(mem::take(&mut self.columns));
         drop(mem::take(&mut self.groups));
-        (self.head, self.open, self.splits) = (None, None, false);
+        self.open = None;
         self.uncharged = 0;
         self.charge.set(0, 0);
     }
 
-    /// **Stop at a field PostgreSQL refuses**: the pass fails on it, so what
-    /// was gathered is freed rather than finished, and no later row is read
-    /// for statistics (`roadmap.md`, "A literal is guaranteed in `*_out`'s
-    /// form and never read past `*_in`'s").
-    fn refuse(&mut self, refusal: FieldRefusal) {
-        self.refused = Some(refusal);
-        self.free();
-    }
-
-    /// **Drop everything this observer holds and gather no more**, the account
-    /// having passed its allowance: the block's groups and columns are freed,
-    /// its charge goes to nothing in the same update, and the allowance it
-    /// declined under is what the map records
+    /// **Drop everything these hold and gather no more**, the account
+    /// having passed its allowance: the groups and columns are freed, the
+    /// charge goes to nothing in the same update, and the allowance declined
+    /// under is what the map records
     /// (`pgdt_model::BlockRecord::statistics_declined`). Called with the
     /// caller's [`StatisticsScope`] open, so what it frees is attributed as
     /// what allocated it was.
@@ -240,180 +143,23 @@ impl Gatherer {
     /// would depend on its container — so the remedy owned by P23 is a
     /// granularity derived from the dump's length, which is known up front and
     /// is the same on every machine.
-    fn decline(&mut self, allowance: u64) {
+    pub(super) fn decline(&mut self, allowance: u64) {
         self.declined = Some(allowance);
-        self.free();
+        self.release();
     }
 
     /// Decline where the last charge update found the account over its
-    /// allowance, which [`Self::charge_held`] records.
+    /// allowance, which [`Self::charge_held`] records. Called only of
+    /// gathering that has not refused.
     pub(super) fn decline_if_over(&mut self) {
-        if self.over && !self.stopped() && self.gathers {
+        if self.over && self.declined.is_none() {
             let allowance = self.charge.allowance().expect("only an allowance can be passed");
             self.decline(allowance);
         }
     }
 
-    /// Fix which columns' fields are handed over whole, once its columns and
-    /// checks are set: a column whose statistics or check read a field whole
-    /// ([`ColumnGatherer::reads_whole`], [`FieldCheck::holds`]).
-    pub(super) fn fix_holds(&mut self) {
-        let checks = self.checks.as_deref().unwrap_or_default();
-        let width = self.columns.len().max(checks.len());
-        self.holds = (0..width)
-            .map(|at| {
-                let gathered = self.columns.get(at).and_then(Option::as_ref);
-                let checked = checks.get(at).and_then(Option::as_ref);
-                gathered.is_some_and(ColumnGatherer::reads_whole)
-                    || checked.is_some_and(FieldCheck::holds)
-            })
-            .collect();
-    }
-
-    /// One field of the row begun, held whole: checked, then gathered.
-    fn field(&mut self, column: usize, field: &[u8]) {
-        let check = self.checks.as_deref().and_then(|checks| checks.get(column)?.as_ref());
-        if let Some(check) = check {
-            let walk = walk_of(&mut self.walks, check, column);
-            if let Some(value) = check.refused(walk, field) {
-                let refusal = check.refusal(self.row_offset, self.rows, column, value);
-                let _attributed = StatisticsScope::enter();
-                return self.refuse(refusal);
-            }
-        }
-        if self.stopped() || !self.gathers {
-            return;
-        }
-        let _attributed = StatisticsScope::enter();
-        let Some(gatherer) = self.columns.get_mut(column).and_then(Option::as_mut) else { return };
-        let observed = gatherer.observe(field);
-        self.observed(column, observed, || printout_head(field));
-    }
-
-    /// The next `bytes` of a field handed over a run at a time, `ends` where
-    /// they are its last: held while they fit its head, and past it read
-    /// as they go by — by its column's statistics and its check — and never
-    /// held (`docs/design/decisions.md`, "D138").
-    fn field_run(&mut self, column: usize, bytes: &[u8], ends: bool) {
-        let mut run = self.run.take().unwrap_or_else(|| RunField::new(column));
-        debug_assert_eq!(run.column, column, "a field's runs are handed over in turn");
-        run.escaped += bytes.len();
-        if !run.outgrown {
-            if run.head.len() + bytes.len() <= RUN_HEAD {
-                run.head.extend_from_slice(bytes);
-                if ends {
-                    self.field(column, &run.head);
-                } else {
-                    self.run = Some(run);
-                }
-                return;
-            }
-            // Outgrown: what it held is read first, and kept as its head.
-            run.outgrown = true;
-            if !self.stopped()
-                && self.gathers
-                && let Some(gatherer) = self.columns.get(column).and_then(Option::as_ref)
-            {
-                let _attributed = StatisticsScope::enter();
-                run.long = Some(gatherer.long());
-            }
-            self.read_run(&mut run, None);
-            let kept = RUN_HEAD - run.head.len();
-            run.head.extend_from_slice(&bytes[..kept]);
-        }
-        self.read_run(&mut run, Some(bytes));
-        if ends {
-            self.end_run(run);
-        } else {
-            self.run = Some(run);
-        }
-    }
-
-    /// Feed `bytes` — or, where `None`, `run`'s head — to what reads a field
-    /// past its head: its column's statistics and its check.
-    fn read_run(&mut self, run: &mut RunField, bytes: Option<&[u8]>) {
-        let bytes = bytes.unwrap_or(&run.head);
-        if let Some(long) = &mut run.long {
-            let _attributed = StatisticsScope::enter();
-            long.run(bytes);
-        }
-        let check = self.checks.as_deref().and_then(|checks| checks.get(run.column)?.as_ref());
-        if let Some(check) = check
-            && let Some(walk) = walk_of(&mut self.walks, check, run.column)
-        {
-            walk.run(bytes);
-        }
-    }
-
-    /// A field read past its head has ended: checked, then gathered, as a
-    /// field held whole is.
-    fn end_run(&mut self, mut run: RunField) {
-        let column = run.column;
-        let check = self.checks.as_deref().and_then(|checks| checks.get(column)?.as_ref());
-        if let Some(check) = check {
-            let walk = walk_of(&mut self.walks, check, column);
-            if let Some(value) = check.refused_read(walk, run.escaped, &run.head) {
-                let refusal = check.refusal(self.row_offset, self.rows, column, value);
-                let _attributed = StatisticsScope::enter();
-                drop(run.long.take());
-                return self.refuse(refusal);
-            }
-        }
-        let _attributed = StatisticsScope::enter();
-        let Some(long) = run.long.take() else { return };
-        let Some(gatherer) = self.columns.get_mut(column).and_then(Option::as_mut) else { return };
-        let observed = gatherer.observe_long(long.finish(), run.escaped);
-        self.observed(column, observed, || printout_head(&run.head));
-    }
-
-    /// Drop a field a row the file's end cut short left being handed over,
-    /// its walk readied for the next.
-    fn abandon_run(&mut self) {
-        let Some(mut run) = self.run.take() else { return };
-        if let Some(Some(walk)) = self.walks.get_mut(run.column) {
-            walk.start();
-        }
-        let _attributed = StatisticsScope::enter();
-        drop(run.long.take());
-    }
-
-    /// What gathering column `column`'s field answered: its growth, and a
-    /// value PostgreSQL refuses, by type or `NOT NULL`, gone past or refused, quoted as
-    /// `value` quotes the field.
-    fn observed(
-        &mut self,
-        column: usize,
-        observed: Result<Observed, Refused>,
-        value: impl FnOnce() -> Option<String>,
-    ) {
-        let declared = |gatherer: &Self| {
-            let column = gatherer.columns.get(column).and_then(Option::as_ref);
-            column.and_then(|column| column.declared_type.clone()).unwrap_or_default()
-        };
-        let refusal = |gatherer: &Self, value| FieldRefusal {
-            offset: gatherer.row_offset,
-            line: gatherer.rows,
-            column,
-            declared_type: declared(gatherer),
-            value,
-        };
-        match observed {
-            Ok(Observed { grew, ignored }) => {
-                self.uncharged += grew;
-                if ignored {
-                    let refusal = refusal(self, value());
-                    IgnoredRefusals::add(&mut self.ignored, refusal);
-                }
-            }
-            Err(Refused) => {
-                let refusal = refusal(self, value());
-                self.refuse(refusal);
-            }
-        }
-    }
-
-    /// The heap this observer holds, as its structure and its interning maps.
-    fn held(&self) -> (u64, u64) {
+    /// The heap these hold, as their structure and their interning maps.
+    pub(super) fn held(&self) -> (u64, u64) {
         let own = vec_heap(&self.groups) + vec_heap(&self.columns);
         self.columns
             .iter()
@@ -422,12 +168,76 @@ impl Gatherer {
             .fold((own, 0), |(structure, interned), (s, i)| (structure + s, interned + i))
     }
 
-    /// Charge what this observer holds now to the account, with what a piece
-    /// being folded in still holds.
+    /// Charge what these hold now to the account, with what a piece being
+    /// folded in still holds.
     pub(super) fn charge_held(&mut self) {
         let (structure, interned) = self.held();
         self.over = self.charge.set(structure + self.carried.0, interned + self.carried.1);
         self.uncharged = 0;
+    }
+
+    /// Charge the open groups' growth, where they have grown since the last
+    /// charge.
+    pub(super) fn charge_growth(&mut self) {
+        if self.uncharged != 0 {
+            self.charge_held();
+        }
+    }
+
+    /// **What a piece being folded in still holds is `held`**, charged here
+    /// in the same step.
+    pub(super) fn carry(&mut self, held: (u64, u64)) {
+        self.carried = held;
+        self.charge_held();
+    }
+
+    /// **Take `later`'s charge onto this one in one update**, from where
+    /// this charges what `later` still holds beside what it holds itself
+    /// ([`Self::carry`]) until [`Self::hand_back`].
+    pub(super) fn take_over(&mut self, later: &mut Groups) {
+        later.charge_held();
+        self.charge.take_over(&mut later.charge);
+        self.carry(later.held());
+    }
+
+    /// Hand what is left of `later` back to its own charge in one update,
+    /// released as it is freed.
+    pub(super) fn hand_back(&mut self, later: &mut Groups) {
+        self.charge.hand_back(&mut later.charge, mem::take(&mut self.carried));
+    }
+
+    /// A row begins at `offset`: counted into the open group where it
+    /// starts in it, or else the groups before it are closed
+    /// ([`Self::close_through`]) and one opened for it, answering `true`.
+    /// Called inside a [`StatisticsScope`].
+    pub(super) fn open_row(&mut self, offset: u64, closing: Closing<'_>) -> bool {
+        let index = offset / self.group_size;
+        match &mut self.open {
+            Some(group) if group.index == index => {
+                group.rows += 1;
+                false
+            }
+            _ => {
+                self.close_through(offset, index, closing);
+                // Closing may have merged the groups, coarsening the index.
+                let index = offset / self.group_size;
+                self.open = Some(OpenGroup { index, first_start: offset, rows: 1 });
+                true
+            }
+        }
+    }
+
+    /// A row has ended: its growth charged once it passes the step, and the
+    /// gathering declined where the account is over its allowance.
+    pub(super) fn end_row(&mut self) {
+        let _attributed = StatisticsScope::enter();
+        if self.uncharged >= STATISTICS_ACCOUNT_CHARGE_STEP as i64 {
+            self.charge_held();
+        }
+        // **The row is whole before the decline**, so nothing is freed
+        // half-observed; every path above that charges leaves `over` set for
+        // it (`docs/design/decisions.md`, "D85").
+        self.decline_if_over();
     }
 
     /// Close the open group, its last row's line ending at `end`, and list an
@@ -439,28 +249,35 @@ impl Gatherer {
     /// count is past the cap and even and so every pair is whole, `next`
     /// halving with them — so a long row lists at most one group past the
     /// cap, except while a piece this block made is alive, when nothing merges
-    /// before [`Gatherer::fit_cap`].
-    fn close_through(&mut self, end: u64, next: u64) {
-        if self.uncharged != 0 {
-            self.charge_held();
-        }
+    /// before [`BlockGatherer::fit_cap`](super::block::BlockGatherer::fit_cap).
+    /// A piece's first group is held open in its head rather than closed,
+    /// and a piece lists nothing ahead of its first row.
+    pub(super) fn close_through(&mut self, end: u64, next: u64, closing: Closing<'_>) {
+        self.charge_growth();
         let mut next = next;
+        let (cap, mut head) = match closing {
+            Closing::Block(cap) => (cap, None),
+            Closing::Piece(head) => (None, Some(head)),
+        };
         let mut at = match self.open.take() {
             Some(group) => {
                 let mut after = group.index + 1;
-                if self.piece && self.head.is_none() {
-                    for column in self.columns.iter_mut().flatten() {
-                        column.hold_head();
+                match head.as_mut() {
+                    Some(head) if head.is_none() => {
+                        for column in self.columns.iter_mut().flatten() {
+                            column.hold_head();
+                        }
+                        **head = Some((group, end));
                     }
-                    self.head = Some((group, end));
-                } else {
-                    self.push_closed(group, end);
-                    self.merge_whole_pairs(&mut after, &mut next);
+                    _ => {
+                        self.push_closed(group, end);
+                        self.merge_whole_pairs(&mut after, &mut next, cap);
+                    }
                 }
                 after
             }
             // A piece before its first row lists nothing ahead of it.
-            None if self.piece => next,
+            None if head.is_some() => next,
             None => 0,
         };
         while at < next {
@@ -469,23 +286,15 @@ impl Gatherer {
                 column.close_group(&mut self.charge);
             }
             at += 1;
-            self.merge_whole_pairs(&mut at, &mut next);
+            self.merge_whole_pairs(&mut at, &mut next, cap);
         }
         self.charge_held();
     }
 
-    /// The cap this block merges past now: none for a piece, under a stated
-    /// size or maximum and for a block re-read at the size it holds, and none
-    /// while a piece it made is alive.
-    fn merging_cap(&self) -> Option<usize> {
-        let alive = self.pieces.get().is_some_and(|pieces| Arc::strong_count(pieces) > 1);
-        self.cap.filter(|_| !alive)
-    }
-
-    /// Merge the closed groups pairwise if they are past the cap and even in
+    /// Merge the closed groups pairwise if they are past `cap` and even in
     /// number, halving `at` and `next` — group indices — with them.
-    fn merge_whole_pairs(&mut self, at: &mut u64, next: &mut u64) {
-        let Some(cap) = self.merging_cap() else { return };
+    fn merge_whole_pairs(&mut self, at: &mut u64, next: &mut u64, cap: Option<usize>) {
+        let Some(cap) = cap else { return };
         let closed = self.groups.len();
         if closed > cap && closed.is_multiple_of(2) {
             self.merge_pairs();
@@ -493,50 +302,9 @@ impl Gatherer {
         }
     }
 
-    /// **Merge this block's groups pairwise until they are within its cap.**
-    /// Mid-block, a last closed group left without a pair is taken back into
-    /// the open group that follows it, which is its pair ([`Self::reopen_last`]);
-    /// `finishing`, no row follows, so it stands alone, and a piece still
-    /// alive — past the block's end — joins nothing more. A block folding a
-    /// window of pieces can pass its cap by the window's groups, which those
-    /// pieces held already, until the last of them is folded.
-    fn fit_cap(&mut self, finishing: bool) {
-        let cap = if finishing { self.cap } else { self.merging_cap() };
-        let Some(cap) = cap else { return };
-        if self.groups.len() <= cap {
-            return;
-        }
-        if self.uncharged != 0 {
-            self.charge_held();
-        }
-        while self.groups.len() > cap {
-            if !self.groups.len().is_multiple_of(2) && !finishing {
-                self.reopen_last();
-            }
-            self.merge_pairs();
-        }
-    }
-
-    /// **Merge a finished block's groups pairwise until its median group holds
-    /// its minimum**, or it is one group, or the next merge would put more
-    /// than its maximum in its 90th-percentile group — the smallest size, no
-    /// finer than the one it holds, at which the upper middle group reaches
-    /// the minimum, and never past the coarsest at which the maximum holds
-    /// ([`density_merges`]). Run after [`Self::fit_cap`], from the size the
-    /// cap left: the finer sizes' rows are summed as the cap merges, and the
-    /// predicate is monotone in size, so the size the cap left is never
-    /// coarsened past one the minimum would have chosen for itself.
-    fn fit_density(&mut self) {
-        let Some(min_rows) = self.min_rows else { return };
-        let rows: Vec<u64> = self.groups.iter().map(|group| group.rows).collect();
-        for _ in 0..density_merges(rows, min_rows, self.max_rows) {
-            self.merge_pairs();
-        }
-    }
-
     /// Take the last closed group back into the open group following it, as
     /// though both groups' rows had been observed into one.
-    fn reopen_last(&mut self) {
+    pub(super) fn reopen_last(&mut self) {
         let closed = self.groups.pop().expect("a block past its cap holds closed groups");
         let open = self.open.as_mut().expect("a block mid-scan holds an open group");
         debug_assert_eq!(open.index, self.groups.len() as u64 + 1, "the open group follows");
@@ -551,7 +319,7 @@ impl Gatherer {
 
     /// Merge every closed group with the one after it, a last one alone, and
     /// double the group size: what gathering at twice the size would hold.
-    fn merge_pairs(&mut self) {
+    pub(super) fn merge_pairs(&mut self) {
         merge_adjacent(&mut self.groups, |a, b| RowGroup {
             rows: a.rows + b.rows,
             bytes: a.bytes + b.bytes,
@@ -567,7 +335,7 @@ impl Gatherer {
         self.charge_held();
     }
 
-    fn push_closed(&mut self, group: OpenGroup, end: u64) {
+    pub(super) fn push_closed(&mut self, group: OpenGroup, end: u64) {
         let closed = RowGroup { rows: group.rows, bytes: end - group.first_start };
         push_charged(&mut self.groups, closed, &mut self.charge);
         for column in self.columns.iter_mut().flatten() {
@@ -575,314 +343,54 @@ impl Gatherer {
         }
     }
 
-    /// Fold `later`, a piece whose rows all follow this observer's in file
-    /// order, into it — leaving it as it would be had it observed those rows
-    /// itself. Its first group continues this one's open group where both hold
-    /// the same index, and each ordered column steps from this observer's last
-    /// value to the piece's first.
-    ///
-    /// **The piece's charge moves onto this observer's in one update**, and
-    /// from there this observer charges what the piece still holds beside
-    /// what it holds itself, as each part moves across or is freed: the
-    /// account never reads the moved groups as held by neither or by both.
-    /// What is left of the piece goes back to its own charge in one update,
-    /// released as the piece is freed.
-    /// Pieces are folded with none of them gathering (`crate::interior`), so no
-    /// other observer updates the account while one is half moved.
-    fn join(&mut self, mut later: Gatherer) {
-        debug_assert!(!self.piece && later.piece, "a block observer joins its pieces");
-        later.charge_held();
-        self.charge.take_over(&mut later.charge);
-        self.carried = later.held();
-        self.charge_held();
-        self.join_rows(&mut later);
-        self.charge.hand_back(&mut later.charge, mem::take(&mut self.carried));
-        drop(later);
-        self.charge_held();
+    /// The growth `observed` answered, counted towards the next charge.
+    fn grown(&mut self, observed: Result<Observed, Refused>) -> Result<bool, Refused> {
+        let Observed { grew, ignored } = observed?;
+        self.uncharged += grew;
+        Ok(ignored)
     }
 
-    /// [`Self::join`] but for moving the charge, draining `later` in place so
-    /// that what it has left is what [`Self::held`] reads of it.
-    fn join_rows(&mut self, later: &mut Gatherer) {
-        let (first, first_end) = match (later.head.take(), later.open.take()) {
-            (Some((group, end)), open) => {
-                later.open = open;
-                (group, Some(end))
-            }
-            (None, Some(group)) => (group, None),
-            // The piece held no row.
-            (None, None) => return,
-        };
-        let continues = self.open.as_ref().is_some_and(|open| open.index == first.index);
-        match &mut self.open {
-            Some(open) if continues => open.rows += first.rows,
-            _ => {
-                self.close_through(first.first_start, first.index);
-                self.open = Some(first);
-            }
-        }
-        for (mine, theirs) in self.columns.iter_mut().zip(&mut later.columns) {
-            let (Some(mine), Some(theirs)) = (mine, theirs) else { continue };
-            mine.join_first(theirs, first_end.is_some(), continues);
-        }
-        self.carried = later.held();
-        self.charge_held();
-        // The piece moved past its first group, so the group closes where the
-        // piece's next row starts and the piece's own closed groups follow.
-        let Some(end) = first_end else { return };
-        let open = self.open.take().expect("the joined group is open");
-        self.push_closed(open, end);
-        reserve_charged(&mut self.groups, later.groups.len(), &mut self.charge);
-        self.groups.extend_from_slice(&later.groups);
-        later.groups = Vec::new();
-        self.open = later.open.take();
-        self.carried = later.held();
-        self.charge_held();
-        for at in 0..self.columns.len() {
-            let theirs = later.columns.get_mut(at).and_then(Option::as_mut);
-            if let (Some(mine), Some(theirs)) = (self.columns[at].as_mut(), theirs) {
-                mine.append(theirs, &mut self.charge);
-            }
-        }
-        self.carried = later.held();
-        self.charge_held();
-    }
-}
-
-/// The most of a field handed over in runs that is held: all of it while it
-/// is no longer, read then as a field handed over whole is, and past it its
-/// head — as much as a long text's reading keeps, and as a refusal is quoted
-/// by.
-const RUN_HEAD: usize =
-    if LONG_FIELD_HEAD > PRINTOUT_ESCAPED_BYTES { LONG_FIELD_HEAD } else { PRINTOUT_ESCAPED_BYTES };
-
-/// **A field handed over a run at a time** ([`BlockObserver::fold`]): its
-/// head as `COPY` wrote it, and once it outgrows that, what its column's
-/// statistics read of it as its runs go by, its check's walk being the
-/// column's own.
-struct RunField {
-    column: usize,
-    /// Its first [`RUN_HEAD`] bytes: all of it while it is no longer.
-    head: Vec<u8>,
-    /// Its bytes so far.
-    escaped: usize,
-    /// Whether it outgrew its head, read from there as it goes by.
-    outgrown: bool,
-    /// Its text past its head, as its column's statistics read it — `None`
-    /// for a column gathering nothing. Made, fed and freed in a statistics
-    /// scope, as everything gathering holds is.
-    long: Option<LongRead>,
-}
-
-impl RunField {
-    fn new(column: usize) -> Self {
-        Self { column, head: Vec::new(), escaped: 0, outgrown: false, long: None }
-    }
-}
-
-/// Column `column`'s walk where `check` walks, built at its first field.
-fn walk_of<'w>(
-    walks: &'w mut Vec<Option<FieldWalk>>,
-    check: &FieldCheck,
-    column: usize,
-) -> Option<&'w mut FieldWalk> {
-    if walks.len() <= column {
-        walks.resize_with(column + 1, || None);
-    }
-    let slot = &mut walks[column];
-    if slot.is_none() {
-        *slot = check.walk();
-    }
-    slot.as_mut()
-}
-
-/// Under the instrument, an observer's fields are dropped inside a statistics
-/// scope, so what it frees is attributed as what it allocated was
-/// (`pgdt_core::instrument`); its charge, declared last, is released after.
-#[cfg(feature = "introspect")]
-impl Drop for Gatherer {
-    fn drop(&mut self) {
+    /// Under the instrument, what these allocated in a statistics scope is
+    /// freed in one, as it was allocated (`pgdt_core::instrument`); the
+    /// charge, declared last, is released after.
+    #[cfg(feature = "introspect")]
+    pub(super) fn free_attributed(&mut self) {
         let _attributed = StatisticsScope::enter();
         drop(mem::take(&mut self.columns));
         drop(mem::take(&mut self.groups));
-        drop(self.pieces.take());
-        drop(mem::take(&mut self.holds));
-        if let Some(mut run) = self.run.take() {
-            drop(run.long.take());
-        }
-        (self.head, self.open) = (None, None);
+        self.open = None;
     }
 }
 
-impl BlockObserver for Gatherer {
-    fn holds(&self, column: usize) -> bool {
-        self.holds.get(column).copied().unwrap_or(false)
+impl Gather for Groups {
+    fn long(&self, column: usize) -> Option<LongRead> {
+        self.columns.get(column)?.as_ref().map(ColumnGatherer::long)
     }
 
-    fn begin_row(&mut self, offset: u64) {
-        self.abandon_run();
-        self.rows += 1;
-        self.row_offset = offset;
-        // **Each field is checked before it is gathered, and whether or not
-        // gathering has declined**: a strict parse reads every field of
-        // every row.
-        if self.stopped() || !self.gathers {
-            return;
-        }
-        let _attributed = StatisticsScope::enter();
-        let index = offset / self.group_size;
-        match &mut self.open {
-            Some(group) if group.index == index => group.rows += 1,
-            _ => {
-                self.close_through(offset, index);
-                // Closing may have merged the groups, coarsening the index.
-                let index = offset / self.group_size;
-                self.open = Some(OpenGroup { index, first_start: offset, rows: 1 });
-                self.fit_cap(false);
-            }
-        }
+    fn observe(&mut self, column: usize, field: &[u8]) -> Option<Result<bool, Refused>> {
+        let observed = self.columns.get_mut(column)?.as_mut()?.observe(field);
+        Some(self.grown(observed))
     }
 
-    fn fold(&mut self, column: usize, bytes: &[u8], ends: bool) {
-        if self.refused.is_some() {
-            return;
-        }
-        if ends && self.run.is_none() {
-            self.field(column, bytes);
-        } else {
-            self.field_run(column, bytes, ends);
-        }
+    fn observe_long(
+        &mut self,
+        column: usize,
+        long: LongRead,
+        escaped: usize,
+    ) -> Option<Result<bool, Refused>> {
+        let gatherer = self.columns.get_mut(column)?.as_mut()?;
+        let observed = gatherer.observe_long(long.finish(), escaped);
+        Some(self.grown(observed))
     }
 
-    fn end_row(&mut self, _fields: usize) {
-        debug_assert!(self.run.is_none(), "a row ends with its last field");
-        if self.stopped() || !self.gathers {
-            return;
-        }
-        let _attributed = StatisticsScope::enter();
-        if self.uncharged >= STATISTICS_ACCOUNT_CHARGE_STEP as i64 {
-            self.charge_held();
-        }
-        // **The row is whole before the decline**, so nothing is freed
-        // half-observed; every path above that charges leaves `over` set for
-        // it (`docs/design/decisions.md`, "D85").
-        self.decline_if_over();
+    fn declared_type(&self, column: usize) -> String {
+        let column = self.columns.get(column).and_then(Option::as_ref);
+        column.and_then(|column| column.declared_type.clone()).unwrap_or_default()
     }
 
-    /// **The observer's charge becomes the block's retained bytes** once the
-    /// interning maps are freed, in one update of the account — and a block
-    /// that declined answers the allowance it declined under, holding nothing
-    /// to retain.
-    fn finish(mut self: Box<Self>, end: u64) -> BlockGathered {
-        let _attributed = StatisticsScope::enter();
-        debug_assert!(!self.piece, "a piece is joined, never finished");
-        if let Some(refusal) = self.refused.take() {
-            return BlockGathered::Refused(refusal);
-        }
-        if !self.gathers {
-            return BlockGathered::Checked;
-        }
-        if let Some(allowance) = self.declined {
-            return BlockGathered::Declined { allowance };
-        }
-        if let Some(group) = &self.open {
-            let next = group.index + 1;
-            self.close_through(end, next);
-        }
-        self.fit_cap(true);
-        self.fit_density();
-        let columns = mem::take(&mut self.columns);
-        let statistics = BlockStatistics {
-            group_size: self.group_size,
-            sizing: self.record,
-            groups: mem::take(&mut self.groups),
-            columns: columns.into_iter().map(|c| c.map(ColumnGatherer::finish)).collect(),
-        };
-        self.charge.retain(statistics.heap_bytes());
-        BlockGathered::Gathered(statistics)
-    }
-
-    fn piece(&self) -> Box<dyn BlockObserver> {
-        let _attributed = StatisticsScope::enter();
-        let columns = self.columns.iter().map(|c| c.as_ref().map(ColumnGatherer::fresh)).collect();
-        let charge = Charge::new(Arc::clone(self.charge.account()), Term::Pieces);
-        let sizing = Sizing {
-            group_size: self.group_size,
-            cap: None,
-            min_rows: None,
-            max_rows: None,
-            record: self.record,
-        };
-        let mut piece = Gatherer::block(sizing, columns, charge);
-        piece.piece = true;
-        piece.gathers = self.gathers;
-        piece.checks = self.checks.clone();
-        piece.holds = Arc::clone(&self.holds);
-        // A piece of a block that has already stopped gathers nothing: it
-        // still reads its rows for the census and the block's extent, and
-        // holds no statistic while it does.
-        piece.declined = self.declined;
-        piece.refused = self.refused.clone();
-        let pieces = self.pieces.get_or_init(Arc::default);
-        piece.pieces = OnceLock::from(Arc::clone(pieces));
-        piece.charge_held();
-        Box::new(piece)
-    }
-
-    /// **A declined piece declines its block**, the block having lost that
-    /// piece's rows and being unable to state statistics over the rest
-    /// (`docs/design/decisions.md`, "D85"); a block that declined while the
-    /// window ran drops every piece it is handed instead of folding it.
-    ///
-    /// **A refusal outranks a decline, and the earlier row's outranks a later
-    /// one's**: a block that refused drops every piece, its rows all
-    /// following the one it refused, and one that has not takes a piece's,
-    /// its line numbered past this block's rows. Every other piece's rows are
-    /// counted, folded or dropped.
-    fn absorb(&mut self, later: Box<dyn BlockObserver>) {
-        let _attributed = StatisticsScope::enter();
-        let mut later = later.into_any().downcast::<Gatherer>().expect("a piece of this observer");
-        if self.refused.is_some() {
-            drop(later);
-            return;
-        }
-        if let Some(mut refusal) = later.refused.take() {
-            drop(later);
-            refusal.line += self.rows;
-            return self.refuse(refusal);
-        }
-        let mut ignored = later.ignored.take();
-        for column in ignored.iter_mut().flat_map(|ignored| &mut ignored.columns) {
-            column.first.line += self.rows;
-        }
-        IgnoredRefusals::fold(&mut self.ignored, ignored);
-        self.rows += later.rows;
-        if !self.gathers {
-            return drop(later);
-        }
-        match (self.declined, later.declined) {
-            (Some(_), _) => drop(later),
-            (None, Some(allowance)) => {
-                drop(later);
-                self.decline(allowance);
-            }
-            (None, None) => {
-                self.join(*later);
-                self.fit_cap(false);
-                self.decline_if_over();
-            }
-        }
-    }
-
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
-
-    fn take_ignored(&mut self) -> Option<IgnoredRefusals> {
-        self.ignored.take()
-    }
-
-    fn checks_every_field(&self) -> bool {
-        self.checks.is_some()
+    /// **Stop at a field PostgreSQL refuses**: the pass fails on it, so what
+    /// was gathered is freed rather than finished.
+    fn free(&mut self) {
+        self.release();
     }
 }

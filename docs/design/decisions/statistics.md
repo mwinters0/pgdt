@@ -70,7 +70,7 @@ multiple of ten groups, so each is monotone in size. Rejected: merging stored bo
 waiting, as closing does, for an even count, which a window's join can leave odd and the block past its cap; the
 nearest-rank median and 90th percentile, which an odd tail breaks; the cap yielding to a stated maximum block by block,
 which the leader's split would decide; a floor under the coarsening, a constant nothing prices. Code:
-`Gatherer::fit_cap`, `density.rs`.
+`BlockGatherer::fit_cap`, `density.rs`.
 
 ### D85 Statistics are billed against the margin, and a block that cannot fit declines
 `statistics_allowance` is what the arrangement leaves under `margin_allowance`, carved after the workers, whose count is
@@ -79,7 +79,7 @@ carve as `held`, `pgdt query` carving its replay after the pass around the table
 limit, else half of `MemAvailable` (RT8); none stated declines nothing (D1). A piece's decline takes its block, dense
 group indices expressing no gap, and the account sees a window's pieces, so serial and parallel differ, as meant.
 Rejected: a constant bound, an OOM on a wide table; coarsening to fit, a cache depending on its container; retrying
-every run. Reopens: the check's cost, or declining's saving. Code: `Gatherer::decline`.
+every run. Reopens: the check's cost, or declining's saving. Code: `Groups::decline`.
 
 ### D89 Statistics reach DataFusion on a leaf plan node, and `Exact` means the bound is the value
 `TableProvider::statistics` is read by nothing in DataFusion 55 and `StreamingTableExec` answers unknown, so

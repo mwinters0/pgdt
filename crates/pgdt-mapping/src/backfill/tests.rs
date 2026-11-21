@@ -61,6 +61,7 @@ async fn gathered_at(
     let reread = reader.reread(metadata, database, block, Some(plan)).await.unwrap();
     reread
         .expect("nothing fires the token")
+        .observed
         .gathered
         .gathered()
         .expect("an unbounded allowance declines nothing")

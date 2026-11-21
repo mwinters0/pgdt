@@ -1,6 +1,7 @@
+use super::block::BlockGatherer;
 use super::charge::{grown_map_heap, map_heap, push_charged, reserve_charged};
 use super::column::ColumnGatherer;
-use super::gatherer::{Gatherer, Sizing};
+use super::gatherer::Sizing;
 use crate::statistics::account::{Charge, StatisticsAccount, StatisticsTerms, Term};
 use crate::statistics::test_support::{
     Rng, chosen_merges, chosen_merges_between, copy_escaped, join_type, long_value, value,
@@ -190,12 +191,13 @@ fn bounded(
 fn gathered_serially(block: &RandomBlock, sizing: Sizing) -> BlockStatistics {
     let account = Arc::new(StatisticsAccount::default());
     let charge = Charge::new(Arc::clone(&account), Term::Gathering);
-    let mut serial = Gatherer::block(sizing, join_columns(), charge);
+    let mut serial = BlockGatherer::new(sizing, join_columns(), None, charge);
     for (line, &offset) in block.lines.iter().zip(&block.offsets) {
         serial.observe_row(offset, line);
     }
     let statistics = Box::new(serial)
-        .finish(block.end)
+        .close(block.end)
+        .gathered
         .gathered()
         .expect("an unbounded account declines nothing");
     assert_only_retained(&account, &statistics, "serial");
@@ -216,7 +218,7 @@ fn gathered_in_pieces(
     let account = Arc::new(StatisticsAccount::default());
     let charge = Charge::new(Arc::clone(&account), Term::Gathering);
     let mut observer: Box<dyn BlockObserver> =
-        Box::new(Gatherer::block(sizing, join_columns(), charge));
+        Box::new(BlockGatherer::new(sizing, join_columns(), None, charge));
     let cut_odds = 1 + rng.below(30);
     let window_pieces = 1 + rng.below(4) as usize;
     let mut window = vec![observer.piece()];
@@ -245,8 +247,11 @@ fn gathered_in_pieces(
         observer.absorb(piece);
     }
     let past_the_end = (rng.below(2) == 0).then(|| observer.piece());
-    let statistics =
-        observer.finish(block.end).gathered().expect("an unbounded account declines nothing");
+    let statistics = observer
+        .close(block.end)
+        .gathered
+        .gathered()
+        .expect("an unbounded account declines nothing");
     drop(past_the_end);
     assert_only_retained(&account, &statistics, "pieces");
     (statistics, straddles)
@@ -445,11 +450,11 @@ fn gathered_within(
 ) -> (BlockGathered, Arc<StatisticsAccount>) {
     let account = Arc::new(StatisticsAccount::bounded_by(allowance));
     let charge = Charge::new(Arc::clone(&account), Term::Gathering);
-    let mut serial = Gatherer::block(sizing, join_columns(), charge);
+    let mut serial = BlockGatherer::new(sizing, join_columns(), None, charge);
     for (line, &offset) in block.lines.iter().zip(&block.offsets) {
         serial.observe_row(offset, line);
     }
-    (Box::new(serial).finish(block.end), account)
+    (Box::new(serial).close(block.end).gathered, account)
 }
 
 /// **A block whose statistics pass the pass's allowance declines**: it
@@ -518,7 +523,7 @@ fn a_declined_piece_declines_its_block_and_a_declined_block_its_pieces() {
     let account = Arc::new(StatisticsAccount::bounded_by(Some(allowance)));
     let charge = Charge::new(Arc::clone(&account), Term::Gathering);
     let mut observer: Box<dyn BlockObserver> =
-        Box::new(Gatherer::block(sizing, join_columns(), charge));
+        Box::new(BlockGatherer::new(sizing, join_columns(), None, charge));
     // One piece a row, folded a window of four at a time, as the leader
     // folds them.
     let mut window: Vec<Box<dyn BlockObserver>> = Vec::new();
@@ -544,7 +549,7 @@ fn a_declined_piece_declines_its_block_and_a_declined_block_its_pieces() {
     drop(late);
     assert_eq!(account.held().now, before, "a piece of a declined block holds nothing");
 
-    assert_eq!(observer.finish(block.end), BlockGathered::Declined { allowance });
+    assert_eq!(observer.close(block.end).gathered, BlockGathered::Declined { allowance });
     assert_eq!(account.held().now, StatisticsTerms::default());
 }
 
@@ -601,7 +606,7 @@ fn a_refusal_is_numbered_by_its_row_in_the_block_however_it_was_cut() {
         let charge = Charge::new(Arc::clone(&account), Term::Gathering);
         let columns = join_columns_under(invalid);
         let mut observer: Box<dyn BlockObserver> =
-            Box::new(Gatherer::block(sized(64, None, None), columns, charge));
+            Box::new(BlockGatherer::new(sized(64, None, None), columns, None, charge));
         let prefix = rng.below(rows as u64 + 1) as usize;
         for (line, &offset) in lines.iter().zip(&offsets).take(prefix) {
             observer.observe_row(offset, line);
@@ -625,19 +630,20 @@ fn a_refusal_is_numbered_by_its_row_in_the_block_however_it_was_cut() {
         }
         let end = offsets[rows - 1] + lines[rows - 1].len() as u64 + 1;
         let expected = (first as u64 + 1, offsets[first], 4, "2020-02-30".to_string());
+        let closed = observer.close(end);
         if invalid == PostgresInvalidValues::Default {
-            assert_eq!(observer.take_ignored(), None, "round {round}");
-            assert_eq!(refusal(observer.finish(end)), expected, "round {round}");
+            assert_eq!(closed.ignored_refusals, None, "round {round}");
+            assert_eq!(refusal(closed.gathered), expected, "round {round}");
             continue;
         }
-        let ignored = observer.take_ignored().expect("the block went past one");
+        let ignored = closed.ignored_refusals.expect("the block went past one");
         let [recorded] = &ignored.columns[..] else {
             panic!("round {round}: one column refuses, recorded {ignored:?}");
         };
         let FieldRefusal { line, offset, column, value, .. } = recorded.first.clone();
         assert_eq!((line, offset, column, value.unwrap()), expected, "round {round}");
         assert_eq!(recorded.count, 1 + u64::from(second != first), "round {round}");
-        assert!(observer.finish(end).gathered().is_some(), "round {round}");
+        assert!(closed.gathered.gathered().is_some(), "round {round}");
     }
 }
 
@@ -650,7 +656,7 @@ fn a_refusal_past_a_decline_counts_the_declined_rows() {
     let account = Arc::new(StatisticsAccount::bounded_by(Some(0)));
     let charge = Charge::new(Arc::clone(&account), Term::Gathering);
     let mut observer: Box<dyn BlockObserver> =
-        Box::new(Gatherer::block(sized(64, None, None), join_columns(), charge));
+        Box::new(BlockGatherer::new(sized(64, None, None), join_columns(), None, charge));
     // Three pieces made before any is handed a row, as the leader makes a
     // window's: three rows, five, then the refused row and one after it.
     let mut window: Vec<Box<dyn BlockObserver>> = (0..3).map(|_| observer.piece()).collect();
@@ -671,7 +677,7 @@ fn a_refusal_past_a_decline_counts_the_declined_rows() {
         observer.absorb(piece);
     }
     let end = offsets[9] + lines[9].len() as u64 + 1;
-    assert_eq!(refusal(observer.finish(end)), (9, offsets[8], 4, "2020-02-30".to_string()));
+    assert_eq!(refusal(observer.close(end).gathered), (9, offsets[8], 4, "2020-02-30".to_string()));
     assert_eq!(account.held().now, StatisticsTerms::default());
 }
 
@@ -787,11 +793,16 @@ fn long_escaped_fields_gather_what_they_gather_written_plain() {
     };
     let gathered = |lines: &[Vec<u8>], offsets: &[u64], end: u64, group_size: u64| {
         let charge = Charge::new(Arc::default(), Term::Gathering);
-        let mut gatherer = Gatherer::block(sized(group_size, None, None), columns(), charge);
+        let mut gatherer =
+            BlockGatherer::new(sized(group_size, None, None), columns(), None, charge);
         for (line, &offset) in lines.iter().zip(offsets) {
             gatherer.observe_row(offset, line);
         }
-        Box::new(gatherer).finish(end).gathered().expect("an unbounded account declines nothing")
+        Box::new(gatherer)
+            .close(end)
+            .gathered
+            .gathered()
+            .expect("an unbounded account declines nothing")
     };
     let mut rng = Rng(0x10f7);
     let mut dictionaries = 0;
