@@ -17,10 +17,10 @@ too (a `$$` in a name or comment hid every block).
 
 ### D138 A row its reader holds no byte of is streamed once a whole chunk passes inside it
 A block whose rows nothing reads whole streams them: a row a whole chunk passes inside is handed out as a `StreamedRow`.
-A census and a block's observer fold each field's runs, a held row fed once (`observe_row`): the shape census exactly, a
+A census and a block's observer fold each field's runs, a held row's each fed once (D169): the shape census exactly, a
 counted scalar from its head (`Kept::Head`), a held one's test bounded alike, a gathered or checked field past a head as
 it goes by (D142, D144); a field a sum, a count or a keyed scalar's check reads whole is held as a line. Rejected: a
-`Row` with an empty `raw`; streaming in the scanner; a streaming observer beside `observe_row`; a scalar's bound left to
+`Row` with an empty `raw`; streaming in the scanner; a streaming observer beside a held row's; a scalar's bound left to
 its reader (a count hanging on where a chunk ends if one outreads it); the bound kept per column (a walked leaf has
 none). Reopens: P40. Evidence: `streamed_line.rs`, `streamed_replay.rs`, `streamed_census.rs`.
 

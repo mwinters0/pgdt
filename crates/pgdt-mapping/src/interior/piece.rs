@@ -18,19 +18,12 @@
 //! after `limit` — the row the next piece's resync then skips. So a row
 //! straddling a cut belongs to the piece before it, once.
 
-use std::sync::Arc;
-
 use pgdt_core::{Result, RowEndingRefusal};
 use pgdt_dump::internal::{
-    ChunkCarry, ChunkPass, CopyScannerExt, FieldFold, PieceEndings, RowEnding, RowFold,
-    StreamedLine,
+    ChunkCarry, ChunkPass, CopyScannerExt, FieldFold, PieceEndings, RowEnding, StreamedLine,
 };
 use pgdt_dump::{CopyEnd, CopyScanner, Event, ScannedLine};
-use pgdt_model::internal::BlockCensusExt;
-use pgdt_model::{
-    BlockCensus,
-    internal::{BlockObserver, CensusFold, FieldCount},
-};
+use pgdt_model::internal::{Recorder, RowObserver};
 
 /// Where a piece's first byte sits relative to the rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,34 +43,12 @@ pub(super) enum PieceEntry {
     Resync,
 }
 
-/// **How a data-level block is censused and counted**: its header's width,
-/// which sizes both, and what its values are counted against
-/// (`docs/design/decisions.md`, "D35", "D96"). `None` wherever one is taken
-/// is a block at the metadata level, whose rows are counted and split into
-/// fields by a strict parse alone.
-#[derive(Clone)]
-pub(crate) struct CensusPlan {
-    pub width: usize,
-    pub counter: Arc<dyn FieldCount>,
-}
-
-impl CensusPlan {
-    /// The census a worker folds the rows it streams into.
-    pub(crate) fn fold(&self) -> CensusFold {
-        CensusFold::new(self.width, Arc::clone(&self.counter))
-    }
-}
-
 /// What one worker found in its piece of a `COPY` block's interior.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PieceScan {
     /// Data rows this piece owns: every line it consumed before the
     /// terminator, or every line it consumed at all.
     pub rows: u64,
-    /// This piece's own census and count, merged with its siblings' by
-    /// [`merge`]: nothing may read it before the block closes
-    /// (`docs/design/decisions.md`, "D34").
-    pub census: BlockCensus,
     /// `(terminator_offset, end_offset)` where this piece held the `\.` line.
     ///
     /// **A piece past the block's end can report one too**, having scanned DDL
@@ -105,37 +76,6 @@ pub(super) struct PieceScan {
     pub next: PieceEntry,
 }
 
-/// The block's totals, as the leader states them at `CopyEnd`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Interior {
-    /// The union of the pieces' censuses and counts, through the one that
-    /// held the terminator.
-    pub census: BlockCensus,
-    /// The `CopyEnd` the serial scanner would have emitted, byte for byte
-    /// (`docs/design/decisions.md`, "D52").
-    pub end: CopyEnd,
-}
-
-/// A piece's statistics observer ([`BlockObserver::piece`]), and the block's
-/// first data byte, which the rows it is handed are placed against.
-pub(super) struct PieceObserver {
-    observer: Box<dyn BlockObserver>,
-    data_offset: u64,
-}
-
-impl PieceObserver {
-    /// `observer`, a piece the block's observer made, placing its rows
-    /// against `data_offset`.
-    pub(super) fn new(observer: Box<dyn BlockObserver>, data_offset: u64) -> Self {
-        Self { observer, data_offset }
-    }
-
-    /// The piece's observer, for the block's to absorb.
-    pub(super) fn into_observer(self) -> Box<dyn BlockObserver> {
-        self.observer
-    }
-}
-
 /// Scan one piece of an open `COPY` block's interior.
 ///
 /// `bytes` are the file's bytes starting at absolute offset `base`, and they
@@ -143,11 +83,11 @@ impl PieceObserver {
 /// — the caller's job. A piece handed exactly `[base, limit)` is one whose
 /// last line was cut short and therefore not counted.
 ///
-/// `census` sizes the census the way `map::Builder::on_copy_start` does, from
-/// the header's column list, and a row wider than it grows it
-/// (`BlockCensusExt::observe_row`); `None` is a block at the metadata level, whose
-/// rows are counted and split into fields by a strict parse alone (`docs/design/decisions.md`, "D35"). Every row the piece owns is handed to `observer`, where the block
-/// gathers statistics. **Synchronous and free of I/O**: [`scan_read`], which
+/// Every row the piece owns is handed to `recorder`, the piece's
+/// ([`Recorder::piece`]), which records it as its block records a row: its
+/// census, where the block is at the data level, and its observer, where it
+/// gathers or checks (`docs/design/decisions.md`, "D35", "D169").
+/// **Synchronous and free of I/O**: [`scan_read`], which
 /// a `spawn_blocking` task runs once per read of the piece, calls it on each
 /// span of the read it holds, so it takes a slice
 /// rather than a source (`docs/design/decisions.md`, "D52").
@@ -156,12 +96,10 @@ pub(super) fn scan_piece(
     base: u64,
     entry: PieceEntry,
     limit: u64,
-    census: Option<&CensusPlan>,
-    mut observer: Option<&mut PieceObserver>,
+    recorder: &mut Recorder<dyn RowObserver>,
 ) -> Result<PieceScan> {
     let empty = |through: u64, next: PieceEntry| PieceScan {
         rows: 0,
-        census: empty_census(census),
         terminator: None,
         through,
         endings: PieceEndings::default(),
@@ -194,8 +132,6 @@ pub(super) fn scan_piece(
     // out of bytes reports no terminator rather than an unterminated block.
     // Deciding that is the leader's, the only party that knows.
     let mut scanner = CopyScanner::resume(start, Some((0, 0))).recording_endings();
-    let plan = census;
-    let mut census = empty_census(plan);
     let mut rows = 0u64;
     let mut terminator = None;
 
@@ -203,12 +139,7 @@ pub(super) fn scan_piece(
         match event {
             Event::Row(row) => {
                 rows += 1;
-                if let Some(plan) = plan {
-                    census.observe_row(plan.counter.as_ref(), row.raw);
-                }
-                if let Some(piece) = &mut observer {
-                    piece.observer.observe_row(row.offset - piece.data_offset, row.raw);
-                }
+                recorder.row(row.offset, row.raw);
             }
             Event::CopyEnd(end) => {
                 terminator = Some((end.terminator_offset, end.end_offset));
@@ -237,7 +168,6 @@ pub(super) fn scan_piece(
     // sole exception.
     Ok(PieceScan {
         rows,
-        census,
         terminator,
         through: scanner.position(),
         endings: scanner.piece_endings(),
@@ -248,14 +178,16 @@ pub(super) fn scan_piece(
 
 /// The piece a row streamed from `base` stands for ([`StreamedLine`]), as
 /// [`scan_piece`] answers a span holding that row alone: one row, its ending
-/// recorded, through its LF, and censused as `fold` folded it — or, where the
-/// file's end ended it, nothing consumed, a piece never claiming end of file.
-fn streamed_piece(base: u64, line: StreamedLine, fold: Option<&mut CensusFold>) -> PieceScan {
+/// recorded, through its LF, its fields recorded as they went by — or, where
+/// the file's end ended it, nothing consumed, a piece never claiming end of
+/// file. What the recorder folded of such a row is past any block, a piece
+/// ending in the file's end with no terminator before it being either past
+/// the one an earlier piece holds, and discarded with everything there
+/// ([`super::run_region`]), or the block unterminated.
+fn streamed_piece(base: u64, line: StreamedLine) -> PieceScan {
     let ended = line.terminated();
-    let census = fold.map(CensusFold::take).filter(|_| ended);
     PieceScan {
         rows: u64::from(ended),
-        census: census.unwrap_or_default(),
         terminator: None,
         through: if ended { base + line.bytes() } else { base },
         endings: PieceEndings { first: ended.then_some((line.ending(), base)), mismatch: None },
@@ -275,16 +207,11 @@ pub(super) struct ReadScan {
     pub next: PieceEntry,
 }
 
-/// What a piece's streamed rows fold into: its census's `fold` and its
-/// block's observer `piece`, either where present — what [`scan_read`] hands
-/// its carry, and what a draw for that carry asks which fields it holds.
-pub(super) fn row_fold<'a>(
-    fold: Option<&'a mut CensusFold>,
-    piece: Option<&'a mut PieceObserver>,
-) -> Option<RowFold<'a>> {
-    let data_offset = piece.as_deref().map_or(0, |piece| piece.data_offset);
-    let block = piece.map(|piece| piece.observer.as_mut() as &mut dyn BlockObserver);
-    RowFold::new(fold, block, data_offset)
+/// What a piece's streamed rows fold into: its recorder, where any part of
+/// it folds a field — what [`scan_read`] hands its carry, and what a draw for
+/// that carry asks which fields it holds.
+pub(super) fn folding(recorder: &mut Recorder<dyn RowObserver>) -> Option<&mut dyn FieldFold> {
+    recorder.folds().then_some(recorder as &mut dyn FieldFold)
 }
 
 /// Scan `chunk`, the piece's bytes from absolute offset `offset`, after the
@@ -302,32 +229,25 @@ pub(super) fn row_fold<'a>(
 ///
 /// **A block streams its rows**: a row outgrowing its read is counted
 /// without its bytes being kept ([`ChunkCarry`]), its fields folded into
-/// `fold` where the block is censused — its census, which [`CensusPlan`]
-/// makes — and into `observer` where it is observed, a piece of its own
-/// ([`streamed_piece`]), so the worker holds no line at any length, and a
-/// census and an observer only the fields they read whole.
-#[allow(clippy::too_many_arguments)]
+/// `recorder` as they go by, a piece of its own ([`streamed_piece`]), so the
+/// worker holds no line at any length, and a census and an observer only the
+/// fields they read whole.
 pub(super) fn scan_read(
     carry: &mut ChunkCarry,
-    mut fold: Option<&mut CensusFold>,
     chunk: &[u8],
     offset: u64,
     eof: bool,
     mut entry: PieceEntry,
     limit: u64,
-    census: Option<&CensusPlan>,
-    mut observer: Option<&mut PieceObserver>,
+    recorder: &mut Recorder<dyn RowObserver>,
 ) -> Result<ReadScan> {
     let line_base = offset - carry.carried() as u64;
-    debug_assert_eq!(census.is_some(), fold.is_some(), "a census folds what a piece streams");
-    let mut row_fold = row_fold(fold.as_deref_mut(), observer.as_deref_mut());
-    let row_fold = row_fold.as_mut().map(|fold| fold as &mut dyn FieldFold);
-    let mut passes = carry.absorb(chunk, eof, line_base, row_fold);
+    let mut passes = carry.absorb(chunk, eof, line_base, folding(recorder));
     passes.streams(true);
     let mut scans = Vec::new();
     if let Some(line) = passes.streamed() {
         debug_assert_eq!(entry, PieceEntry::RowStart, "a resync carries no line");
-        let scan = streamed_piece(line_base, line, fold);
+        let scan = streamed_piece(line_base, line);
         let done = scan.through > limit;
         if scan.through > line_base || eof {
             scans.push(scan);
@@ -345,7 +265,7 @@ pub(super) fn scan_read(
             ChunkPass::Carry => line_base,
             ChunkPass::InPlace => offset + (chunk.len() - span.len()) as u64,
         };
-        let scan = scan_piece(span, base, entry, limit, census, observer.as_deref_mut())?;
+        let scan = scan_piece(span, base, entry, limit, recorder)?;
         // A resync that found no line boundary short of the limit has none
         // in the piece at all: whatever row runs through it is an earlier
         // piece's.
@@ -399,36 +319,26 @@ impl BlockEndings {
     }
 }
 
-/// A census for a block as `plan` sizes it, before a row is folded in —
-/// empty for a block at the metadata level, which folds none.
-pub(super) fn empty_census(plan: Option<&CensusPlan>) -> BlockCensus {
-    plan.map_or_else(BlockCensus::default, |plan| BlockCensus::new(plan.width))
-}
-
 /// Fold `pieces` — one open `COPY` block's interior, in file order — into the
-/// block's totals, stopping at the first piece that held the terminator.
-/// `None` where none of them did: the leader's window did not reach the end of
-/// the block and must hand out more of the interior.
+/// `CopyEnd` the serial scanner would have emitted, byte for byte
+/// (`docs/design/decisions.md`, "D52"), stopping at the first piece that held
+/// the terminator. `None` where none of them did: the leader's window did not
+/// reach the end of the block and must hand out more of the interior.
 ///
 /// **The fold is order-dependent in where it stops, and in which of two
-/// lines as long is the longest.** Row counts and unrepresentable counts sum
-/// and censuses union, `ArrayShape`'s merge being a bounded semilattice. What
-/// the order decides is which pieces are *in* the fold, everything past the
-/// terminator not being part of the block at all, and that the earliest of
-/// the longest lines stands ([`ScannedLine::fold`]).
-pub(super) fn merge(pieces: &[PieceScan]) -> Option<Interior> {
-    let mut census = BlockCensus::default();
+/// lines as long is the longest.** Row counts sum. What the order decides is
+/// which pieces are *in* the fold, everything past the terminator not being
+/// part of the block at all, and that the earliest of the longest lines
+/// stands ([`ScannedLine::fold`]). What the pieces recorded folds in the same
+/// order and stops at the same piece ([`super::run_region`]).
+pub(super) fn merge(pieces: &[PieceScan]) -> Option<CopyEnd> {
     let mut row_count = 0u64;
     let mut longest_line = None;
     for piece in pieces {
-        census.merge(&piece.census);
         row_count += piece.rows;
         longest_line = ScannedLine::fold(longest_line, piece.longest_line);
         if let Some((terminator_offset, end_offset)) = piece.terminator {
-            return Some(Interior {
-                census,
-                end: CopyEnd { terminator_offset, end_offset, row_count, longest_line },
-            });
+            return Some(CopyEnd { terminator_offset, end_offset, row_count, longest_line });
         }
     }
     None

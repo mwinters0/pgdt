@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use pgdt_core::CopyHeader;
+use pgdt_core::{CopyHeader, split_fields};
 
 use super::catalog::{Catalog, regclass_name};
 use super::*;
@@ -22,11 +22,9 @@ fn block(table: &str, columns: &str, rows: &[&str]) -> Span {
         columns: columns.split(", ").map(str::to_owned).collect(),
     };
     let recorded_rows = records_rows(&header).then(|| {
-        let mut recorded = RecordedRows::default();
-        for row in rows {
-            recorded.observe_row(row.as_bytes());
-        }
-        Box::new(recorded)
+        let rows =
+            rows.iter().map(|row| split_fields(row.as_bytes()).map(recorded_field).collect());
+        Box::new(RecordedRows { rows: rows.collect() })
     });
     let block = CopyBlock {
         header,
@@ -262,13 +260,6 @@ fn a_stated_release_decides_the_recipe() {
     assert_eq!(stated("2.28.0-dev"), Recipe::SliceChunkId);
     assert_eq!(stated("2.29.0"), Recipe::Relid);
     assert_eq!(stated("3.1"), Recipe::Relid);
-}
-
-#[test]
-fn a_recorded_row_undoes_copy_escapes() {
-    let mut recorded = RecordedRows::default();
-    recorded.observe_row(b"a\\tb\t\\N\tc\\\\d");
-    assert_eq!(recorded.rows, [vec![Some("a\tb".to_owned()), None, Some("c\\d".to_owned())]]);
 }
 
 #[test]

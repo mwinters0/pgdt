@@ -6,7 +6,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use pgdt_core::internal::StatisticsScope;
-use pgdt_model::internal::{BlockObserved, BlockObserver};
+use pgdt_model::internal::RowObserver;
 
 use super::gatherer::{Closing, Groups, OpenGroup};
 use super::read::Reader;
@@ -59,7 +59,7 @@ impl Drop for PieceGatherer {
 
 /// **A piece answers its rows alone**: it is absorbed into the block that
 /// made it, never closed, and makes no piece of its own.
-impl BlockObserver for PieceGatherer {
+impl RowObserver for PieceGatherer {
     fn holds(&self, column: usize) -> bool {
         self.reader.holds(column)
     }
@@ -82,18 +82,6 @@ impl BlockObserver for PieceGatherer {
         if !self.stopped() {
             self.groups.end_row();
         }
-    }
-
-    fn close(self: Box<Self>, _end: u64) -> BlockObserved {
-        unreachable!("a piece is absorbed into its block, never closed")
-    }
-
-    fn piece(&self) -> Box<dyn BlockObserver> {
-        unreachable!("a piece makes no piece")
-    }
-
-    fn absorb(&mut self, _later: Box<dyn BlockObserver>) {
-        unreachable!("a piece absorbs no piece")
     }
 
     fn into_any(self: Box<Self>) -> Box<dyn Any> {

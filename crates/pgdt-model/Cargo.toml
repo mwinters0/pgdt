@@ -14,7 +14,8 @@ introspect = ["pgdt-core/introspect"]
 # recorded by the cache that counted under it (`calendar_end`). No features:
 # only `NaiveDate`'s range is read, and the version is `arrow`'s own.
 chrono = { workspace = true }
-# `observe_row`'s one pass over a row holding no array and counting nothing.
+# `CensusFold::reach`'s one pass over a held row holding no array, and a
+# field's in the census fold.
 memchr = { workspace = true }
 pgdt-core = { path = "../pgdt-core" }
 # `rc` for `CopyBlock::record` and `BlockRecord::statistics`, each held by

@@ -80,7 +80,7 @@ pub(super) struct Reader {
     /// check being no statistic, so built and freed alike unattributed.
     walks: Vec<Option<FieldWalk>>,
     /// Whether each column's field is handed over whole
-    /// ([`BlockObserver::holds`](pgdt_model::internal::BlockObserver::holds)),
+    /// ([`RowObserver::holds`](pgdt_model::internal::RowObserver::holds)),
     /// fixed for the block whatever it stops, and shared with its pieces.
     holds: Arc<[bool]>,
     /// Where the row being folded starts, relative to the block's first data
@@ -388,7 +388,7 @@ const RUN_HEAD: usize =
     if LONG_FIELD_HEAD > PRINTOUT_ESCAPED_BYTES { LONG_FIELD_HEAD } else { PRINTOUT_ESCAPED_BYTES };
 
 /// **A field handed over a run at a time**
-/// ([`BlockObserver::fold`](pgdt_model::internal::BlockObserver::fold)): its
+/// ([`RowObserver::fold`](pgdt_model::internal::RowObserver::fold)): its
 /// head as `COPY` wrote it, and once it outgrows that, what its column's
 /// statistics read of it as its runs go by, its check's walk being the
 /// column's own.

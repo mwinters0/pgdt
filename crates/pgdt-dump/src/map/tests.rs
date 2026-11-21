@@ -2,23 +2,8 @@ use super::*;
 use pgdt_core::CopyHeader;
 use pgdt_model::{
     CompressedContainer, DataBlock, DiagnosticKind, Finding, LabelPlacement, Span, SpanBody,
-    TocHeader, TypeKind, UnrepresentableTier,
-    internal::{FieldCount, Kept},
+    TocHeader, TypeKind,
 };
-
-/// A block's count where no column is tested: what a `COPY` with no DDL
-/// above it is counted against.
-struct NoCount;
-
-impl FieldCount for NoCount {
-    fn tested(&self) -> &[(usize, Kept)] {
-        &[]
-    }
-
-    fn tier(&self, column: usize, _field: &[u8]) -> Option<UnrepresentableTier> {
-        panic!("column {column} is not tested")
-    }
-}
 
 /// Feed `lines` (each with a synthetic offset — `\n`-joined, matching
 /// how a real scan would number them) through a fresh [`Builder`] and
@@ -106,24 +91,19 @@ fn a_data_entry_keeps_its_own_span_when_disable_triggers_intervenes() {
         offset += line.len() as u64 + 1;
     }
     let header_offset = offset;
-    builder.on_copy_start(
-        CopyStart {
-            header: CopyHeader {
-                schema: Some("public".to_string()),
-                table: "t".to_string(),
-                columns: vec!["id".to_string()],
-            },
-            header_offset,
-            data_offset: header_offset + 32,
+    builder.on_copy_start(CopyStart {
+        header: CopyHeader {
+            schema: Some("public".to_string()),
+            table: "t".to_string(),
+            columns: vec!["id".to_string()],
         },
-        true,
-    );
-    builder.count_block(Arc::new(NoCount));
+        header_offset,
+        data_offset: header_offset + 32,
+    });
     let terminator_offset = header_offset + 48;
     let end_offset = terminator_offset + 3;
-    builder
-        .on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1, longest_line: None })
-        .unwrap();
+    let end = CopyEnd { terminator_offset, end_offset, row_count: 1, longest_line: None };
+    builder.on_copy_end(end, BlockRecord { row_count: 1, ..BlockRecord::default() });
     let spans = builder.finish(end_offset);
 
     assert_eq!(spans[0].start, 0);
@@ -324,24 +304,19 @@ fn a_data_span_carries_the_toc_header_its_data_for_name_comment_parsed_to() {
         offset += line.len() as u64 + 1;
     }
     let header_offset = offset;
-    builder.on_copy_start(
-        CopyStart {
-            header: CopyHeader {
-                schema: Some("public".to_string()),
-                table: "t".to_string(),
-                columns: vec!["id".to_string()],
-            },
-            header_offset,
-            data_offset: header_offset + 32,
+    builder.on_copy_start(CopyStart {
+        header: CopyHeader {
+            schema: Some("public".to_string()),
+            table: "t".to_string(),
+            columns: vec!["id".to_string()],
         },
-        true,
-    );
-    builder.count_block(Arc::new(NoCount));
+        header_offset,
+        data_offset: header_offset + 32,
+    });
     let terminator_offset = header_offset + 48;
     let end_offset = terminator_offset + 3;
-    builder
-        .on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1, longest_line: None })
-        .unwrap();
+    let end = CopyEnd { terminator_offset, end_offset, row_count: 1, longest_line: None };
+    builder.on_copy_end(end, BlockRecord { row_count: 1, ..BlockRecord::default() });
 
     let spans = builder.finish(end_offset);
     assert_eq!(spans.len(), 1);
@@ -475,24 +450,19 @@ fn a_copy_block_with_no_comment_of_its_own_resets_inheritance() {
         offset += line.len() as u64 + 1;
     }
     let header_offset = offset;
-    builder.on_copy_start(
-        CopyStart {
-            header: CopyHeader {
-                schema: Some("public".to_string()),
-                table: "t".to_string(),
-                columns: vec!["id".to_string()],
-            },
-            header_offset,
-            data_offset: header_offset + 32,
+    builder.on_copy_start(CopyStart {
+        header: CopyHeader {
+            schema: Some("public".to_string()),
+            table: "t".to_string(),
+            columns: vec!["id".to_string()],
         },
-        true,
-    );
-    builder.count_block(Arc::new(NoCount));
+        header_offset,
+        data_offset: header_offset + 32,
+    });
     let terminator_offset = header_offset + 48;
     let end_offset = terminator_offset + 3;
-    builder
-        .on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1, longest_line: None })
-        .unwrap();
+    let end = CopyEnd { terminator_offset, end_offset, row_count: 1, longest_line: None };
+    builder.on_copy_end(end, BlockRecord { row_count: 1, ..BlockRecord::default() });
     offset = end_offset;
     builder.feed_line(offset, b"CREATE EXTENSION pgcrypto;");
 
@@ -781,24 +751,19 @@ fn snapshot_tiles_the_prefix_seen_so_far_at_every_copy_end() {
     assert!(check_tiling(&builder.snapshot(offset), offset).is_empty());
 
     let header_offset = offset;
-    builder.on_copy_start(
-        CopyStart {
-            header: CopyHeader {
-                schema: Some("public".to_string()),
-                table: "t".to_string(),
-                columns: vec!["id".to_string()],
-            },
-            header_offset,
-            data_offset: header_offset + 32,
+    builder.on_copy_start(CopyStart {
+        header: CopyHeader {
+            schema: Some("public".to_string()),
+            table: "t".to_string(),
+            columns: vec!["id".to_string()],
         },
-        true,
-    );
-    builder.count_block(Arc::new(NoCount));
+        header_offset,
+        data_offset: header_offset + 32,
+    });
     let terminator_offset = header_offset + 48;
     let end_offset = terminator_offset + 3;
-    builder
-        .on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1, longest_line: None })
-        .unwrap();
+    let end = CopyEnd { terminator_offset, end_offset, row_count: 1, longest_line: None };
+    builder.on_copy_end(end, BlockRecord { row_count: 1, ..BlockRecord::default() });
     offset = end_offset;
 
     let snapshot = builder.snapshot(end_offset);

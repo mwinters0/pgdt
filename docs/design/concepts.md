@@ -189,7 +189,7 @@ pieces and folded back, each block closed, the cache saved on a throttle
 
 - **pgdt-mapping** — `context.rs`, `forward/`, `whole_file.rs`, `backfill.rs`,
   `interior/`: the pass whole — what it reads and saves under, a map extended
-  from its frontier with its observers attached, the whole-file map and the
+  from its frontier, each block's rows recorded, the whole-file map and the
   back-fill re-reading what a mapped block lacks, and a block's interior split
   into pieces and folded. Above the codec, since a block it maps is gathered
   as it is read, and below the query layer, since it builds no array (D68).
@@ -267,16 +267,19 @@ format is pgdt-model's, `CACHE_FORMAT_VERSION` at that crate's root.
 ## What a pass records of a block's rows
 
 The array-shape census and the count of values a column's Arrow type cannot
-hold, and the contract over a block's rows that counts them, which a crate
-above implements ([`decisions.md`](decisions.md), "D35", "D74").
+hold, the contract over a block's rows that counts them, which a crate
+above implements, and the one recorder every pass feeds a block's rows to
+([`decisions.md`](decisions.md), "D35", "D74", "D169").
 
 - **pgdt-model** — `persisted/block.rs`: the census and the count as the
   cache persists them; `block.rs`: a contract over the data is model
-  wherever its implementor sits (D74); how a row is folded in is
-  model's too, a held row whole and a streamed one field by field as its
-  bytes go by (`CensusFold`, which pgdt-dump's `RowFold` hands its carry
-  beside the block's observer, D138), read by every pass that records, each
-  above it.
+  wherever its implementor sits (D74), and how a field is folded into the
+  census, its runs as they go by (`CensusFold`, D138); `recorder.rs`: what a
+  pass records of a block's rows in one place — the census, the block's
+  observer and its rows as text, a held row split once for all three, a
+  streamed one's runs handed over by the carry through pgdt-dump's
+  `FieldFold`, implemented beside its builder — and the record finished from
+  them (D169), read by every pass that records, each above it.
 - **pgdt-codec** — `unrepresentable.rs`: told from a field's text against an
   Arrow type, so codec's.
 
@@ -380,7 +383,8 @@ a table's summary, DataFusion's statistics, `pgdt info --detail`
 - **pgdt-model** — `persisted/statistics.rs`: the stored shape;
   `statistics.rs`: the views it is read through, and the contract over a
   block's rows that answers it, a fold over each field's
-  runs as the census's is, model wherever its implementor sits (D74, D138).
+  runs as the census's is, model wherever its implementor sits (D74, D138) —
+  a row's, which a piece answers alone, and a block's (D169).
 - **pgdt-mapping** — `statistics.rs`, `statistics/request.rs`,
   `statistics/density.rs`, `statistics/account.rs`, `statistics/stored.rs`,
   `statistics/gather.rs`, `statistics/gather/gatherer.rs`,

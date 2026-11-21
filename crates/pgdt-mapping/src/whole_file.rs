@@ -8,17 +8,18 @@ use std::sync::Arc;
 use pgdt_codec::internal::counter_for;
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::statistics_loaded;
-use pgdt_core::{Error, Result};
+use pgdt_core::{CopyHeader, Error, Result};
 use pgdt_dump::attach_text;
 use pgdt_dump::cache::{CacheMode, Held, Opened, SourceWatch};
 use pgdt_dump::dump_metadata_from_spans;
 use pgdt_dump::internal::Builder;
-use pgdt_dump::internal::{derived_diagnostics, scan_preamble};
+use pgdt_dump::internal::{derived_diagnostics, finish_block, scan_preamble};
 use pgdt_dump::{Event, ReadOptions, ScanOptions, scan as scan_events};
 use pgdt_io::{Arrangement, ByteRangeSource, Extent};
-use pgdt_model::internal::IgnoredRefusalsExt;
+use pgdt_model::internal::{IgnoredRefusalsExt, Recorder};
 use pgdt_model::{
-    BlockId, Diagnostic, DumpIndex, DumpMetadata, PostgresInvalidValues, Span, timescaledb,
+    BlockId, BlockRecord, Diagnostic, DumpIndex, DumpMetadata, PostgresInvalidValues, Span,
+    timescaledb,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -82,30 +83,47 @@ async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Resu
     let mut failed: Option<Error> = None;
     // The database the metadata in hand was stated for, and that metadata.
     let mut stated: Option<(Option<String>, DumpMetadata)> = None;
+    // The open `COPY` block's header and what records its rows.
+    let mut open: Option<(CopyHeader, Recorder)> = None;
     let reached = scan_events(source, options, |event| {
         match event {
             Event::CopyStart(start) => {
                 let boundary = builder.pending_comment_start().unwrap_or(start.header_offset);
                 let header = start.header.clone();
-                builder.on_copy_start(*start, true);
+                let data_offset = start.data_offset;
+                builder.on_copy_start(*start);
                 let db = builder.database().map(str::to_owned);
                 if stated.as_ref().is_none_or(|(covers, _)| *covers != db) {
                     let metadata = dump_metadata_from_spans(&builder.snapshot(boundary));
                     stated = Some((db.clone(), metadata));
                 }
                 let metadata = stated.as_ref().map(|(_, metadata)| metadata);
-                builder.count_block(counter_for(&header, metadata, db.as_deref()));
+                let counter = counter_for(&header, metadata, db.as_deref());
+                let mut recorder =
+                    Recorder::new(data_offset).with_census(header.columns.len(), counter);
                 if timescaledb::records_rows(&header) {
-                    builder.record_rows();
+                    recorder = recorder.with_rows();
+                }
+                open = Some((header, recorder));
+            }
+            Event::Row(row) => {
+                if let Some((_, recorder)) = &mut open {
+                    recorder.row(row.offset, row.raw);
                 }
             }
-            Event::Row(row) => builder.on_row(row.offset, row.raw),
-            // Every block here is censused, so no row is streamed.
+            // `scan` streams no row.
             Event::StreamedRow(_) => unreachable!("an eager pass streams no row"),
             Event::CopyEnd(end) => {
-                if let Err(e) = builder.on_copy_end(*end) {
-                    failed = Some(e);
-                    return std::ops::ControlFlow::Break(());
+                let record = match open.take() {
+                    Some((header, recorder)) => finish_block(recorder, &header, &end),
+                    None => Ok(BlockRecord::default()),
+                };
+                match record {
+                    Ok(record) => builder.on_copy_end(*end, record),
+                    Err(e) => {
+                        failed = Some(e);
+                        return std::ops::ControlFlow::Break(());
+                    }
                 }
             }
             Event::Line(line) => builder.feed_line(line.offset, line.raw),

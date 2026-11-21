@@ -34,7 +34,7 @@ pub mod internal {
     /// watched save.
     #[cfg(any(test, feature = "test-support"))]
     pub use crate::cache::store::{load, load_offline, save};
-    pub use crate::map::{Builder, RowFold, derived_diagnostics};
+    pub use crate::map::{Builder, derived_diagnostics, finish_block};
     pub use crate::preamble::scan_preamble;
     /// [`ReadOptions`](crate::ReadOptions) at a line bound a test states.
     #[cfg(any(test, feature = "test-support"))]

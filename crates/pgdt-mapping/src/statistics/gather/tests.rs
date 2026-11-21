@@ -10,13 +10,31 @@ use pgdt_codec::compare::{CompareKind, ComparisonPlan};
 use pgdt_codec::decode::render_bytea;
 use pgdt_codec::internal::{compare_keys, order_key};
 use pgdt_codec::pgtype::NestedPlan;
-use pgdt_model::internal::{BlockObserver, ColumnStatisticsExt, vec_heap};
+use pgdt_model::internal::{BlockObserver, ColumnStatisticsExt, RowObserver, vec_heap};
 use pgdt_model::{
     BlockGathered, BlockStatistics, Bounds, ColumnStatistics, FieldRefusal, GroupSizing,
     PostgresInvalidValues, RowGroup, Sortedness,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// **A row held whole, fed to an observer as a block's recorder feeds it**:
+/// split once, each field folded whole (`pgdt_model::internal::Recorder`).
+trait HeldRow {
+    fn observe_row(&mut self, offset: u64, raw: &[u8]);
+}
+
+impl<O: RowObserver + ?Sized> HeldRow for O {
+    fn observe_row(&mut self, offset: u64, raw: &[u8]) {
+        self.begin_row(offset);
+        let mut fields = 0;
+        for (column, field) in pgdt_core::split_fields(raw).enumerate() {
+            self.fold(column, field, true);
+            fields = column + 1;
+        }
+        self.end_row(fields);
+    }
+}
 
 /// The kinds the join test's columns are compared by, a bytewise kind of
 /// each canonical form and three keyed ones, two of whose types cannot
@@ -526,7 +544,7 @@ fn a_declined_piece_declines_its_block_and_a_declined_block_its_pieces() {
         Box::new(BlockGatherer::new(sizing, join_columns(), None, charge));
     // One piece a row, folded a window of four at a time, as the leader
     // folds them.
-    let mut window: Vec<Box<dyn BlockObserver>> = Vec::new();
+    let mut window: Vec<Box<dyn RowObserver>> = Vec::new();
     for (line, &offset) in block.lines.iter().zip(&block.offsets) {
         window.push(observer.piece());
         window.last_mut().expect("just pushed").observe_row(offset, line);
@@ -659,7 +677,7 @@ fn a_refusal_past_a_decline_counts_the_declined_rows() {
         Box::new(BlockGatherer::new(sized(64, None, None), join_columns(), None, charge));
     // Three pieces made before any is handed a row, as the leader makes a
     // window's: three rows, five, then the refused row and one after it.
-    let mut window: Vec<Box<dyn BlockObserver>> = (0..3).map(|_| observer.piece()).collect();
+    let mut window: Vec<Box<dyn RowObserver>> = (0..3).map(|_| observer.piece()).collect();
     for (r, (line, &offset)) in lines.iter().zip(&offsets).enumerate() {
         let piece = match r {
             0..3 => 0,

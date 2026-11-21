@@ -247,15 +247,15 @@ impl ColdPass<'_> {
         for at in lacking {
             let path = self.mode.path();
             let reported = &mut shortfall_reported;
-            let census = reread_rows(read, path, metadata, database, &blocks[at], None, reported);
-            let Some(census) = census.await? else {
+            let record = reread_rows(read, path, metadata, database, &blocks[at], None, reported);
+            let Some(record) = record.await? else {
                 return Err(Error::ScanCancelled {
                     scanned_through: blocks[at].address.header_offset,
                 });
             };
             // The map's record is shared: this query's copy is its own
             // (`docs/design/decisions.md`, "D168").
-            Arc::make_mut(&mut blocks[at].record).census = Some(census);
+            Arc::make_mut(&mut blocks[at].record).census = record.census;
         }
         Ok(())
     }

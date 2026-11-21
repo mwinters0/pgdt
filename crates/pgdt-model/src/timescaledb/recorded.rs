@@ -3,8 +3,7 @@
 //! (`docs/design/decisions.md`, "D133") as `crate::persisted::timescaledb`'s
 //! shape.
 
-use crate::timescaledb::RecordedRows;
-use pgdt_core::{CopyHeader, split_fields, unescape_field};
+use pgdt_core::{CopyHeader, unescape_field};
 
 /// The schema TimescaleDB's catalog tables live in.
 pub const CATALOG_SCHEMA: &str = "_timescaledb_catalog";
@@ -30,15 +29,14 @@ pub fn records_rows(header: &CopyHeader) -> bool {
     header.schema.as_deref() == Some(CATALOG_SCHEMA) && RECORDED.contains(&header.table.as_str())
 }
 
-impl RecordedRows {
-    /// Fold one still-escaped data row of the block in.
-    pub fn observe_row(&mut self, raw: &[u8]) {
-        let fields = split_fields(raw)
-            .map(|field| match unescape_field(field) {
-                Ok(text) => text.map(|text| text.into_owned()),
-                Err(_) => Some(String::from_utf8_lossy(field).into_owned()),
-            })
-            .collect();
-        self.rows.push(fields);
+/// One still-escaped field of a recorded row as `RecordedRows` keeps it:
+/// its text with its `COPY` escapes undone, a NULL as `None`, and one that is
+/// not UTF-8 once unescaped as its escaped bytes read lossily. The block's
+/// recorder hands it each field of a row it records
+/// (`crate::internal::Recorder::row`).
+pub(crate) fn recorded_field(field: &[u8]) -> Option<String> {
+    match unescape_field(field) {
+        Ok(text) => text.map(|text| text.into_owned()),
+        Err(_) => Some(String::from_utf8_lossy(field).into_owned()),
     }
 }

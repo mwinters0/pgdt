@@ -10,16 +10,15 @@ use pgdt_dump::attach_text;
 use pgdt_dump::dump_metadata_from_spans;
 use pgdt_dump::internal::Builder;
 use pgdt_dump::internal::derived_diagnostics;
-use pgdt_dump::internal::{Drawing, announce_read_loop};
+use pgdt_dump::internal::{Drawing, FieldFold, announce_read_loop, finish_block};
 use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event};
 use pgdt_io::internal::memory_budget_display;
-use pgdt_model::{DumpIndex, Span, SpanBody, timescaledb};
+use pgdt_model::internal::Recorder;
+use pgdt_model::{BlockRecord, DumpIndex, Span, SpanBody, timescaledb};
 use tokio_util::sync::CancellationToken;
 
 use crate::context::{Gathering, PassContext};
-use crate::interior::{
-    CensusPlan, Region, RegionOutcome, RegionScan, report_shortfall, scan_region,
-};
+use crate::interior::{Region, RegionOutcome, RegionScan, report_shortfall, scan_region};
 use crate::statistics::gather;
 
 mod save;
@@ -299,6 +298,9 @@ pub async fn map_forward(
     // Whether `scan started`'s `jobs=` has already been corrected for this
     // scan — see [`report_shortfall`], its only reader and writer.
     let mut shortfall_reported = false;
+    // The open `COPY` block's header and what records its rows, from its
+    // `CopyStart` to its `CopyEnd`.
+    let mut open: Option<(CopyHeader, Recorder)> = None;
 
     loop {
         // Once per chunk, the `CopyEnd` arm carrying the other check
@@ -309,10 +311,12 @@ pub async fn map_forward(
         if ctx.cancel().is_cancelled() {
             return interrupted(ctx, index).await;
         }
-        // A row the open block streams hands its fields to its census and
-        // its observer.
-        let mut fold = builder.row_fold();
-        let fold = fold.as_mut().map(|f| f as _);
+        // A row the open block streams hands its fields to its recorder.
+        let fold = open
+            .as_mut()
+            .map(|(_, recorder)| recorder)
+            .filter(|recorder| recorder.folds())
+            .map(|recorder| recorder as &mut dyn FieldFold);
         let read = chunked
             .next_chunk_folding(source, fold, Some(Drawing::held(&mut holder).parking()))
             .await;
@@ -355,7 +359,7 @@ pub async fn map_forward(
                         ),
                     };
                     let header = start.header.clone();
-                    builder.on_copy_start(*start, census);
+                    builder.on_copy_start(*start);
                     // **Once per database, not once per block**:
                     // recomputing at every `CopyStart` would put a third
                     // whole-index-sized cost in this loop.
@@ -376,12 +380,12 @@ pub async fn map_forward(
                     // After the restatement, so the count and the
                     // observer resolve the block against its database's
                     // DDL — the first segment of its name's (`KD133`).
-                    let plan = census.then(|| {
+                    let mut recorder = Recorder::new(data_offset);
+                    if census {
                         let counter =
                             counter_for(&header, index.metadata.as_deref(), db.as_deref());
-                        builder.count_block(Arc::clone(&counter));
-                        CensusPlan { width: header.columns.len(), counter }
-                    });
+                        recorder = recorder.with_census(header.columns.len(), counter);
+                    }
                     // A block no request tracks is observed too under
                     // `PostgresInvalidValues::Strict`, to check its fields.
                     let observer = gathering.and_then(|gathering| {
@@ -395,21 +399,22 @@ pub async fn map_forward(
                         )
                     });
                     if let Some(observer) = observer {
-                        builder.observe_block(observer);
+                        recorder = recorder.with_observer(observer);
                     }
                     // TimescaleDB's catalog, at every level and read on this
                     // loop, its rows never handed to the workers
                     // (`docs/design/decisions.md`, "D133").
                     let records = timescaledb::records_rows(&header);
                     if records {
-                        builder.record_rows();
+                        recorder = recorder.with_rows();
                     }
                     // A block whose rows are counted, censused and observed
                     // holds none of them: a row outgrowing its chunk is
                     // streamed (`pgdt_dump::ChunkEvents::stream_rows`), its
                     // census and its observer holding only the fields they
                     // read whole.
-                    chunk.stream_rows(!builder.reads_rows());
+                    chunk.stream_rows(!recorder.holds_rows());
+                    let (header, recorder) = open.insert((header, recorder));
                     // **The offer, and this loop is the leader making it**
                     // ([`scan_region`]): everything from
                     // `data_offset` until `\.` is line-structured rows, so
@@ -431,20 +436,18 @@ pub async fn map_forward(
                                 table: &header.qualified_name(),
                                 header_offset,
                                 data_offset,
-                                census: plan,
-                                observer: builder.block_observer(),
+                                recorder,
                             };
                             scan_region(&ctx.read, region).await?
                         }
                     };
                     report_shortfall(&mut shortfall_reported, outcome.shortfall);
                     match outcome.scan {
-                        RegionScan::Closed(interior) => {
-                            // The workers counted the rows, so their
-                            // census stands in for the `on_row` calls this
-                            // loop never made.
-                            builder.absorb_census(&interior.census);
-                            let watermark = interior.end.end_offset;
+                        RegionScan::Closed(end) => {
+                            // The workers recorded the rows into the
+                            // block's recorder, which this loop handed
+                            // none.
+                            let watermark = close_open(&mut builder, &mut open, end)?;
                             let settles = target.filter(|_| open_block_targets);
                             open_block_targets = false;
                             match close_copy_block(
@@ -454,7 +457,7 @@ pub async fn map_forward(
                                 &mut throttle,
                                 &segment,
                                 settles,
-                                interior.end,
+                                watermark,
                             )
                             .await?
                             {
@@ -495,14 +498,20 @@ pub async fn map_forward(
                 // (`docs/design/decisions.md`, "D35", "D96"), a
                 // gathering block's statistics, a strict parse's checks
                 // and TimescaleDB's catalog (D133).
-                Event::Row(row) => builder.on_row(row.offset, row.raw),
+                Event::Row(row) => {
+                    if let Some((_, recorder)) = &mut open {
+                        recorder.row(row.offset, row.raw);
+                    }
+                }
                 // A row of a block whose rows are not recorded, which the
-                // scanner counted and the census and observer folded.
-                Event::StreamedRow(_) => debug_assert!(!builder.reads_rows()),
+                // scanner counted and the recorder folded.
+                Event::StreamedRow(_) => {
+                    debug_assert!(open.as_ref().is_none_or(|(_, r)| !r.holds_rows()));
+                }
                 Event::CopyEnd(end) => {
                     let settles = target.filter(|_| open_block_targets);
                     open_block_targets = false;
-                    let end_offset = end.end_offset;
+                    let end_offset = close_open(&mut builder, &mut open, *end)?;
                     match close_copy_block(
                         ctx,
                         index,
@@ -510,7 +519,7 @@ pub async fn map_forward(
                         &mut throttle,
                         &segment,
                         settles,
-                        *end,
+                        end_offset,
                     )
                     .await?
                     {
@@ -594,8 +603,31 @@ enum BlockClose {
     Interrupted,
 }
 
-/// Close a `COPY` block on the [`pgdt_dump::internal::Builder`] and do everything
-/// [`map_forward`] owes at a `CopyEnd`: the splice, the throttled save, and the
+/// **Close the open block on the [`pgdt_dump::internal::Builder`] at the
+/// scanner's `end`**, with its recorder finished into its record
+/// ([`finish_block`]) — a default record where no `CopyStart` opened one, a
+/// scanner resumed inside a block, whose close the builder ignores — and
+/// answer the watermark it closed at. **A refused field fails the pass
+/// here**, before the splice and the save: the map stands at the last
+/// watermark it was spliced at. `end_offset` is always a safe, resumable
+/// watermark — the scanner is back in its `Outside` state there — and
+/// `on_copy_end` leaves the builder `Idle`, where `snapshot` is sound.
+fn close_open(
+    builder: &mut Builder,
+    open: &mut Option<(CopyHeader, Recorder)>,
+    end: CopyEnd,
+) -> Result<u64> {
+    let record = match open.take() {
+        Some((header, recorder)) => finish_block(recorder, &header, &end)?,
+        None => BlockRecord::default(),
+    };
+    let watermark = end.end_offset;
+    builder.on_copy_end(end, record);
+    Ok(watermark)
+}
+
+/// Do everything [`map_forward`] owes once a `COPY` block has closed at
+/// `watermark` ([`close_open`]): the splice, the throttled save, and the
 /// early-stop check. **One body, two call sites** — the serial scanner's
 /// `CopyEnd` and a region [`scan_region`] closed
 /// (`docs/design/decisions.md`, "D52") — and
@@ -609,15 +641,8 @@ async fn close_copy_block(
     throttle: &mut SaveThrottle,
     segment: &Segment,
     settles: Option<Target<'_>>,
-    end: CopyEnd,
+    watermark: u64,
 ) -> Result<BlockClose> {
-    // `end_offset` is always a safe, resumable watermark — the scanner is back
-    // in its `Outside` state there — and `on_copy_end` leaves the builder
-    // `Idle`, where `snapshot` is sound.
-    let watermark = end.end_offset;
-    // A refused field fails the pass here, before the splice and the save:
-    // the map stands at the last watermark it was spliced at.
-    builder.on_copy_end(end)?;
     // The second of the guard's two check points (`docs/design/decisions.md`,
     // "D63"): the two together bound the response by the shorter of a chunk
     // and a block, or by a leader window while a region is cut.

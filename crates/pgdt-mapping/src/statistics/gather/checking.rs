@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use pgdt_core::internal::StatisticsScope;
 use pgdt_model::BlockGathered;
-use pgdt_model::internal::{BlockObserved, BlockObserver};
+use pgdt_model::internal::{BlockObserved, BlockObserver, RowObserver};
 
 use super::read::{Absorbed, Reader};
 use super::strict::FieldCheck;
@@ -43,7 +43,7 @@ impl Drop for Checker {
     }
 }
 
-impl BlockObserver for Checker {
+impl RowObserver for Checker {
     fn holds(&self, column: usize) -> bool {
         self.reader.holds(column)
     }
@@ -60,6 +60,13 @@ impl BlockObserver for Checker {
         self.reader.end_row();
     }
 
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+/// A checker's pieces are checkers, each a row observer alone.
+impl BlockObserver for Checker {
     fn close(mut self: Box<Self>, _end: u64) -> BlockObserved {
         let _attributed = StatisticsScope::enter();
         let gathered = match self.reader.refused.take() {
@@ -70,7 +77,7 @@ impl BlockObserver for Checker {
         BlockObserved { gathered, ignored_refusals, checked_in_full: true }
     }
 
-    fn piece(&self) -> Box<dyn BlockObserver> {
+    fn piece(&self) -> Box<dyn RowObserver> {
         let _attributed = StatisticsScope::enter();
         let charge = Charge::new(Arc::clone(self.charge.account()), Term::Pieces);
         Box::new(Self { reader: self.reader.piece(), charge })
@@ -78,16 +85,12 @@ impl BlockObserver for Checker {
 
     /// A refusal outranks everything, and the earlier row's a later one's
     /// ([`Reader::absorb`]).
-    fn absorb(&mut self, later: Box<dyn BlockObserver>) {
+    fn absorb(&mut self, later: Box<dyn RowObserver>) {
         let _attributed = StatisticsScope::enter();
         let mut later = later.into_any().downcast::<Self>().expect("a piece of this checker");
         if let Absorbed::Refused(refusal) = self.reader.absorb(&mut later.reader) {
             drop(later);
             self.reader.refuse(refusal, &mut ());
         }
-    }
-
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        self
     }
 }

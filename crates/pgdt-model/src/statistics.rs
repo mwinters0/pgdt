@@ -1,8 +1,9 @@
 //! Per-row-group column statistics as a block holds them, what a field's
 //! refusal leaves behind (`docs/design/decisions.md`, "D34", "D103"), the
 //! views they are read through, and the contract over a block's rows that
-//! answers both ([`BlockObserver`]); and what a read does with a refused field
-//! ([`PostgresInvalidValues`]), the mode that record answers to. The shapes
+//! answers both ([`RowObserver`], [`BlockObserver`]); and what a read does
+//! with a refused field ([`PostgresInvalidValues`]), the mode that record
+//! answers to. The shapes
 //! are the cache's (`crate::persisted::statistics`).
 //! What a mapping pass is asked to gather, and the account of what it holds,
 //! are `pgdt_mapping::statistics`'.
@@ -286,23 +287,18 @@ impl IgnoredRefusalsExt for IgnoredRefusals {
     }
 }
 
-/// Receives every row of one `COPY` block from the mapping pass and answers
-/// the block's statistics once it closes. Defined here and implemented in mapping,
-/// the shape `docs/design/decisions.md`, "D74" gives a contract over a block's rows.
+/// **Receives the rows of one `COPY` block, or of one piece of it**, from the
+/// mapping pass: the row half of the contract over a block's rows, which a
+/// block's observer ([`BlockObserver`]) and a piece's alike answer. Defined
+/// here and implemented in mapping, the shape `docs/design/decisions.md`,
+/// "D74" gives a contract over a block's rows.
 ///
 /// **A row is folded field by field, a run of each field's bytes at a time**,
 /// as a reader streaming the row hands them over, with no field held but one
-/// [`Self::holds`] names; a row held whole is that fold fed once
-/// ([`Self::observe_row`]), so a held row and a streamed one are read alike
-/// (`docs/design/decisions.md`, "D138").
-///
-/// **A block the leader splits is observed piece by piece**: each piece's rows
-/// go to an observer [`Self::piece`] made, and the pieces are handed back in
-/// file order to [`Self::absorb`], after which the block's observer answers
-/// what it would have had it been handed every row itself — bar a decline,
-/// which a piece's charge alongside its neighbours' can reach where one
-/// observer's would not (`docs/design/decisions.md`, "D85").
-pub trait BlockObserver: Send {
+/// [`Self::holds`] names; a row held whole is that fold fed each field once
+/// (`crate::internal::Recorder::row`), so a held row and a streamed one are
+/// read alike (`docs/design/decisions.md`, "D138").
+pub trait RowObserver: Send {
     /// Whether column `column`'s field is wanted whole: its reader then holds
     /// it and hands it over once, as its last bytes. Fixed for the block, so
     /// a field is never handed over partly held.
@@ -320,19 +316,25 @@ pub trait BlockObserver: Send {
     /// The row ends, `fields` wide, its last field's end folded already.
     fn end_row(&mut self, fields: usize);
 
-    /// One row held whole, `offset` placed as [`Self::begin_row`] places it
-    /// and `raw` the still-escaped line without its terminator: the fold fed
-    /// each field once.
-    fn observe_row(&mut self, offset: u64, raw: &[u8]) {
-        self.begin_row(offset);
-        let mut fields = 0;
-        for (column, field) in pgdt_core::split_fields(raw).enumerate() {
-            self.fold(column, field, true);
-            fields = column + 1;
-        }
-        self.end_row(fields);
-    }
+    /// This observer as [`Any`](std::any::Any), which is how
+    /// [`BlockObserver::absorb`] recovers the concrete piece it made.
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
+}
 
+/// **Observes a whole `COPY` block and answers its statistics once it
+/// closes**: the rows ([`RowObserver`]), and the block's half — its close,
+/// and the pieces a split block is observed in
+/// (`docs/design/decisions.md`, "D169").
+///
+/// **A block the leader splits is observed piece by piece**: each piece's rows
+/// go to an observer [`Self::piece`] made, and the pieces are handed back in
+/// file order to [`Self::absorb`], after which the block's observer answers
+/// what it would have had it been handed every row itself — bar a decline,
+/// which a piece's charge alongside its neighbours' can reach where one
+/// observer's would not (`docs/design/decisions.md`, "D85"). A piece is a
+/// [`RowObserver`] alone: it is absorbed, never closed, and splits no
+/// further.
+pub trait BlockObserver: RowObserver {
     /// **Close the block**, `end` being the terminator line's offset relative
     /// to the block's first data byte — where the last row's line ends — and
     /// answer what its record takes of this observer
@@ -343,15 +345,11 @@ pub trait BlockObserver: Send {
     /// An observer for a piece of this block: rows starting anywhere after the
     /// ones this observer has been handed, to be given back to
     /// [`Self::absorb`] rather than closed.
-    fn piece(&self) -> Box<dyn BlockObserver>;
+    fn piece(&self) -> Box<dyn RowObserver>;
 
     /// Fold `later`, made by [`Self::piece`] and handed rows that all follow
     /// every row this observer has seen, into this one.
-    fn absorb(&mut self, later: Box<dyn BlockObserver>);
-
-    /// This observer as [`Any`](std::any::Any), which is how [`Self::absorb`]
-    /// recovers the concrete piece it made.
-    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
+    fn absorb(&mut self, later: Box<dyn RowObserver>);
 }
 
 /// What a block's observer answers as it closes ([`BlockObserver::close`]):

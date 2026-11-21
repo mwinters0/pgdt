@@ -1,6 +1,6 @@
 use super::piece::{scan_piece, scan_read};
 use super::*;
-use pgdt_core::Error;
+use pgdt_core::{CopyHeader, Error};
 use pgdt_dump::internal::Builder;
 use pgdt_dump::internal::ChunkCarry;
 use pgdt_dump::internal::with_line_bound;
@@ -9,7 +9,7 @@ use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_fixtures::{edge_cases, fixture};
 use pgdt_io::{ByteRangeSource, Ledger, PartitionRead};
 use pgdt_io::{LocalFileSource, Parallelism};
-use pgdt_model::internal::{FieldCount, Kept};
+use pgdt_model::internal::{FieldCount, Kept, Recorder};
 use pgdt_model::{BlockCensus, UnrepresentableTier};
 use pgdt_model::{DataBlock, SpanBody};
 use std::sync::Arc;
@@ -45,10 +45,30 @@ impl FieldCount for Infinities {
     }
 }
 
-/// How a block `columns` wide is censused and counted here, `None` at
-/// the metadata level.
-fn plan(columns: Option<usize>) -> Option<CensusPlan> {
-    columns.map(|width| CensusPlan { width, counter: Infinities::new() })
+/// A recorder of the block whose rows begin at `data_offset`, censusing and
+/// counting it `columns` wide as the serial pass does here, and nothing at
+/// the metadata level, `None`.
+fn recorder(columns: Option<usize>, data_offset: u64) -> Recorder {
+    let recorder = Recorder::new(data_offset);
+    match columns {
+        Some(width) => recorder.with_census(width, Infinities::new()),
+        None => recorder,
+    }
+}
+
+/// The census `recorder` recorded, `None` for a block it does not census.
+fn census_of(recorder: Recorder) -> Option<BlockCensus> {
+    let header = CopyHeader { schema: None, table: "t".to_owned(), columns: Vec::new() };
+    let end = recorder.data_offset();
+    recorder.finish(&header, 0, end, None).expect("nothing observes here").census
+}
+
+/// A block's totals, as the serial pass states them at `CopyEnd`: what its
+/// rows recorded of its census, and the `CopyEnd` itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Interior {
+    census: Option<BlockCensus>,
+    end: CopyEnd,
 }
 
 /// One `COPY` block as the **serial** pass states it: the reference every
@@ -70,16 +90,22 @@ fn reference(file: &[u8]) -> Vec<Reference> {
     let mut scanner = CopyScanner::new();
     let mut builder = Builder::with_database(None);
     let mut columns: Vec<usize> = Vec::new();
+    let mut open: Option<(CopyHeader, Recorder)> = None;
     while let Some(event) = scanner.next_event(file, true).expect("a scannable file") {
         match event {
             Event::CopyStart(start) => {
                 columns.push(start.header.columns.len());
-                builder.on_copy_start(*start, true);
-                builder.count_block(Infinities::new());
+                let recorder = recorder(Some(start.header.columns.len()), start.data_offset);
+                open = Some((start.header.clone(), recorder));
+                builder.on_copy_start(*start);
             }
-            Event::Row(row) => builder.on_row(row.offset, row.raw),
+            Event::Row(row) => open.as_mut().expect("a block open").1.row(row.offset, row.raw),
             Event::StreamedRow(_) => unreachable!("one buffer streams no row"),
-            Event::CopyEnd(end) => builder.on_copy_end(*end).expect("nothing gathers here"),
+            Event::CopyEnd(end) => {
+                let (header, recorder) = open.take().expect("a block open");
+                let record = pgdt_dump::internal::finish_block(recorder, &header, &end);
+                builder.on_copy_end(*end, record.expect("nothing gathers here"));
+            }
             Event::Line(line) => builder.feed_line(line.offset, line.raw),
             Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),
             Event::LargeObjectStart(start) => builder.on_large_object_start(start.start_offset),
@@ -97,11 +123,13 @@ fn reference(file: &[u8]) -> Vec<Reference> {
                 end_offset: block.address.end_offset,
                 columns: Some(widths.next().expect("one header per block")),
                 interior: Interior {
-                    census: block
-                        .record
-                        .census
-                        .clone()
-                        .expect("every block is censused and counted here"),
+                    census: Some(
+                        block
+                            .record
+                            .census
+                            .clone()
+                            .expect("every block is censused and counted here"),
+                    ),
                     end: CopyEnd {
                         terminator_offset: block.address.terminator_offset,
                         end_offset: block.address.end_offset,
@@ -129,25 +157,28 @@ fn split(file: &[u8], block: &Reference, pieces: usize) -> Option<Interior> {
 /// equality was a real split.
 fn cut_up(file: &[u8], block: &Reference, pieces: usize) -> (Option<Interior>, usize) {
     let len = block.end_offset - block.data_offset;
+    let mut whole = recorder(block.columns, block.data_offset);
     let mut scans = Vec::with_capacity(pieces);
+    let mut recorded = Vec::with_capacity(pieces);
     for i in 0..pieces as u64 {
         let start = block.data_offset + len * i / pieces as u64;
         let limit = block.data_offset + len * (i + 1) / pieces as u64;
         let entry = if i == 0 { PieceEntry::RowStart } else { PieceEntry::Resync };
-        scans.push(
-            scan_piece(
-                &file[start as usize..],
-                start,
-                entry,
-                limit,
-                plan(block.columns).as_ref(),
-                None,
-            )
-            .expect("a piece of a scannable file"),
-        );
+        let mut piece = whole.piece();
+        let scan = scan_piece(&file[start as usize..], start, entry, limit, &mut piece)
+            .expect("a piece of a scannable file");
+        recorded.push((piece, scan.terminator.is_some()));
+        scans.push(scan);
+    }
+    // As `run_region` folds them: in file order, through the terminator.
+    for (piece, terminates) in recorded {
+        whole.absorb(piece);
+        if terminates {
+            break;
+        }
     }
     let working = scans.iter().filter(|p| p.rows > 0).count();
-    (merge(&scans), working)
+    (merge(&scans).map(|end| Interior { census: census_of(whole), end }), working)
 }
 
 /// **The property the whole mechanism rests on: how a block's interior was
@@ -216,8 +247,7 @@ fn a_window_short_of_the_terminator_closes_nothing() {
         block.data_offset,
         PieceEntry::RowStart,
         block.data_offset + 1,
-        plan(block.columns).as_ref(),
-        None,
+        &mut recorder(block.columns, 0).piece(),
     )
     .unwrap();
     assert_eq!(piece.terminator, None);
@@ -238,8 +268,7 @@ fn a_later_pieces_false_terminator_is_never_taken() {
         block.data_offset,
         PieceEntry::RowStart,
         block.end_offset,
-        plan(block.columns).as_ref(),
-        None,
+        &mut recorder(block.columns, 0).piece(),
     )
     .unwrap();
     // The piece after the block reads the trailing `\.` as a terminator.
@@ -248,13 +277,12 @@ fn a_later_pieces_false_terminator_is_never_taken() {
         block.end_offset,
         PieceEntry::RowStart,
         file.len() as u64,
-        plan(block.columns).as_ref(),
-        None,
+        &mut recorder(block.columns, 0).piece(),
     )
     .unwrap();
     assert!(after.terminator.is_some(), "the fixture must offer a false terminator");
 
-    assert_eq!(merge(&[real, after]).as_ref(), Some(&block.interior));
+    assert_eq!(merge(&[real, after]).as_ref(), Some(&block.interior.end));
 }
 
 /// The census is a union over the pieces, which is what makes a mixed
@@ -264,10 +292,10 @@ fn a_later_pieces_false_terminator_is_never_taken() {
 fn the_census_unions_across_pieces() {
     let file = b"COPY public.t (a) FROM stdin;\n{1,2}\n{{1,2},{3,4}}\n\\.\n".to_vec();
     let block = &reference(&file)[0];
-    assert_eq!(block.interior.census.shapes[0].dims, Some((1, 2)));
+    assert_eq!(block.interior.census.as_ref().unwrap().shapes[0].dims, Some((1, 2)));
 
     let split = split(&file, block, 2).unwrap();
-    assert_eq!(split.census.shapes[0].dims, Some((1, 2)));
+    assert_eq!(split.census.as_ref().unwrap().shapes[0].dims, Some((1, 2)));
     assert_eq!(&split, &block.interior);
 }
 
@@ -279,8 +307,8 @@ fn the_count_sums_across_pieces() {
         b"COPY public.t (a, b) FROM stdin;\ninfinity\tx\n1\tinfinity\ninfinity\tinfinity\n2\t3\n\\.\n"
             .to_vec();
     let block = &reference(&file)[0];
-    let counts: Vec<u64> =
-        block.interior.census.unrepresentable.iter().map(|c| c.format()).collect();
+    let census = block.interior.census.as_ref().unwrap();
+    let counts: Vec<u64> = census.unrepresentable.iter().map(|c| c.format()).collect();
     assert_eq!(counts, [2, 2]);
     for pieces in 2..=4 {
         let (split, working) = cut_up(&file, block, pieces);
@@ -299,7 +327,7 @@ fn a_split_handed_no_width_counts_its_rows_and_censuses_none() {
     let (split, working) = cut_up(&file, &block, 2);
     let split = split.unwrap();
     assert_eq!(working, 2, "a real split");
-    assert_eq!(split.census, BlockCensus::default());
+    assert_eq!(split.census, None);
     assert_eq!(split.end, block.interior.end);
 }
 
@@ -323,8 +351,7 @@ fn a_cut_inside_a_row_whose_tail_is_a_backslash_dot_is_resynced_past() {
         cut,
         PieceEntry::Resync,
         block.end_offset,
-        plan(Some(1)).as_ref(),
-        None,
+        &mut recorder(Some(1), 0).piece(),
     )
     .unwrap();
     assert_eq!(
@@ -366,20 +393,38 @@ fn reads<'a>(
 /// [`scan_region`] over the region of `public.t` whose header is at
 /// `header_offset` and whose rows begin at `data_offset`, in a file of `size`
 /// bytes, read under `options` and `cancel` with no ledger limit, censused
-/// as `census` says and observed by nobody.
+/// `columns` wide where they are stated ([`recorder`]) and observed by
+/// nobody.
 async fn region(
     source: &dyn ByteRangeSource,
     options: &ScanOptions,
     cancel: &CancellationToken,
     header_offset: u64,
     data_offset: u64,
-    census: Option<CensusPlan>,
+    columns: Option<usize>,
     size: u64,
 ) -> Result<RegionOutcome> {
+    let recorded =
+        region_recorded(source, options, cancel, header_offset, data_offset, columns, size);
+    recorded.await.map(|(outcome, _)| outcome)
+}
+
+/// [`region`], and the census its recorder recorded.
+async fn region_recorded(
+    source: &dyn ByteRangeSource,
+    options: &ScanOptions,
+    cancel: &CancellationToken,
+    header_offset: u64,
+    data_offset: u64,
+    columns: Option<usize>,
+    size: u64,
+) -> Result<(RegionOutcome, Option<BlockCensus>)> {
     let ledger = Ledger::unlimited();
     let ctx = reads(source, options, &ledger, cancel, size);
-    let region = Region { table: "public.t", header_offset, data_offset, census, observer: None };
-    scan_region(&ctx, region).await
+    let mut recorder = recorder(columns, data_offset);
+    let region = Region { table: "public.t", header_offset, data_offset, recorder: &mut recorder };
+    let outcome = scan_region(&ctx, region).await?;
+    Ok((outcome, census_of(recorder)))
 }
 
 fn scheduled(source: &LocalFileSource, jobs: usize) -> ScanOptions {
@@ -414,20 +459,20 @@ async fn a_scheduled_region_answers_what_the_serial_scanner_answers() {
         for block in &blocks {
             for jobs in [2usize, 3, 8] {
                 let options = scheduled(&source, jobs);
-                let got = region(
+                let (got, census) = region_recorded(
                     &source,
                     &options,
                     &CancellationToken::new(),
                     block.header_offset,
                     block.data_offset,
-                    plan(block.columns),
+                    block.columns,
                     size,
                 )
                 .await
                 .unwrap();
                 assert_eq!(
-                    got.scan,
-                    RegionScan::Closed(block.interior.clone()),
+                    (got.scan, census),
+                    (RegionScan::Closed(block.interior.end.clone()), block.interior.census.clone()),
                     "{} block at {} under {jobs} jobs",
                     path.display(),
                     block.data_offset
@@ -521,7 +566,7 @@ async fn no_read_a_worker_makes_exceeds_the_chunk_size() {
                 &CancellationToken::new(),
                 block.header_offset,
                 block.data_offset,
-                plan(block.columns),
+                block.columns,
                 size,
             )
             .await
@@ -580,7 +625,7 @@ async fn no_read_a_worker_makes_exceeds_the_stated_unit() {
                 &CancellationToken::new(),
                 block.header_offset,
                 block.data_offset,
-                plan(block.columns),
+                block.columns,
                 size,
             )
             .await
@@ -631,7 +676,7 @@ async fn a_region_too_small_to_cut_is_left_to_the_serial_scanner() {
         &CancellationToken::new(),
         block.header_offset,
         block.data_offset,
-        plan(block.columns),
+        block.columns,
         size,
     )
     .await
@@ -649,7 +694,7 @@ async fn a_region_too_small_to_cut_is_left_to_the_serial_scanner() {
         &CancellationToken::new(),
         block.header_offset,
         block.data_offset,
-        plan(block.columns),
+        block.columns,
         size,
     )
     .await
@@ -673,7 +718,7 @@ async fn a_cancelled_region_closes_nothing_and_raises_nothing() {
         &cancelled(),
         block.header_offset,
         block.data_offset,
-        plan(block.columns),
+        block.columns,
         size,
     )
     .await
@@ -706,7 +751,7 @@ async fn a_budget_affording_fewer_readers_than_asked_for_answers_a_shortfall() {
         &CancellationToken::new(),
         block.header_offset,
         block.data_offset,
-        plan(block.columns),
+        block.columns,
         size,
     )
     .await
@@ -744,7 +789,7 @@ async fn an_arrangement_that_delivers_what_was_asked_answers_no_shortfall() {
         &CancellationToken::new(),
         block.header_offset,
         block.data_offset,
-        plan(block.columns),
+        block.columns,
         size,
     )
     .await
@@ -766,7 +811,7 @@ async fn an_arrangement_that_delivers_what_was_asked_answers_no_shortfall() {
         &CancellationToken::new(),
         block.header_offset,
         block.data_offset,
-        plan(block.columns),
+        block.columns,
         size,
     )
     .await
@@ -797,7 +842,7 @@ async fn a_block_the_file_ends_inside_is_unterminated() {
         &CancellationToken::new(),
         0,
         data_offset,
-        plan(Some(1)),
+        Some(1),
         file.len() as u64,
     )
     .await
@@ -824,18 +869,20 @@ async fn a_row_longer_than_a_tail_read_is_still_one_row() {
     let source = LocalFileSource::open(&path).unwrap();
     for jobs in [2usize, 4, 8] {
         let options = scheduled(&source, jobs);
-        let got = region(
+        let (got, census) = region_recorded(
             &source,
             &options,
             &CancellationToken::new(),
             block.header_offset,
             block.data_offset,
-            plan(block.columns),
+            block.columns,
             file.len() as u64,
         )
         .await
         .unwrap();
-        assert_eq!(got.scan, RegionScan::Closed(block.interior.clone()), "{jobs} jobs");
+        let interior = Interior { census, end: block.interior.end.clone() };
+        assert_eq!(got.scan, RegionScan::Closed(block.interior.end.clone()), "{jobs} jobs");
+        assert_eq!(interior, block.interior, "{jobs} jobs");
     }
 }
 
@@ -885,9 +932,8 @@ async fn a_worker_reads_a_line_longer_than_a_read_once() {
         PartitionRead::Chunked,
         PieceEntry::RowStart,
         data_offset..data_offset + 16,
-        plan(Some(1)),
         file.len() as u64,
-        None,
+        recorder(Some(1), data_offset).piece(),
     )
     .await
     .unwrap();
@@ -923,9 +969,8 @@ async fn a_piece_inside_a_line_reads_its_own_range_alone() {
         PartitionRead::Chunked,
         PieceEntry::Resync,
         start..limit,
-        plan(Some(1)),
         file.len() as u64,
-        None,
+        recorder(Some(1), data_offset).piece(),
     )
     .await
     .unwrap();
@@ -964,9 +1009,8 @@ async fn a_worker_holds_a_line_to_the_bound_exactly() {
                 read,
                 PieceEntry::RowStart,
                 data_offset..end,
-                plan(Some(1)),
                 file.len() as u64,
-                None,
+                recorder(Some(1), data_offset).piece(),
             )
             .await
             .map(|(scans, _)| scans.iter().map(|scan| scan.rows).sum::<u64>());
@@ -1013,24 +1057,22 @@ async fn a_split_block_refuses_the_row_a_serial_scan_refuses() {
             let source = LocalFileSource::open(&path).unwrap();
             for jobs in [2usize, 3, 8] {
                 let options = scheduled(&source, jobs);
-                let got = region(
+                let got = region_recorded(
                     &source,
                     &options,
                     &CancellationToken::new(),
                     0,
                     header.len() as u64,
-                    plan(Some(1)),
+                    Some(1),
                     file.len() as u64,
                 )
                 .await;
                 let context = format!("{block:?} block, odd row {odd_row:?}, {jobs} jobs");
                 match (odd_row, got) {
-                    (None, Ok(outcome)) => {
-                        assert_eq!(
-                            outcome.scan,
-                            RegionScan::Closed(reference(&file)[0].interior.clone()),
-                            "{context}"
-                        );
+                    (None, Ok((outcome, census))) => {
+                        let interior = reference(&file).remove(0).interior;
+                        assert_eq!(outcome.scan, RegionScan::Closed(interior.end), "{context}");
+                        assert_eq!(census, interior.census, "{context}");
                     }
                     (
                         Some(row),
@@ -1050,32 +1092,24 @@ async fn a_split_block_refuses_the_row_a_serial_scan_refuses() {
 }
 
 /// Every read of a piece from `start` to `limit`, in `chunk`-byte reads of
-/// `file` as `scan_partition` makes them, and the scans they answered.
+/// `file` as `scan_partition` makes them, the scans they answered, and the
+/// census the piece recorded, `columns` wide ([`recorder`]).
 fn read_piece(
     file: &[u8],
     start: u64,
     limit: u64,
     chunk: usize,
-    census: Option<&CensusPlan>,
-) -> Vec<PieceScan> {
+    columns: Option<usize>,
+) -> (Vec<PieceScan>, Option<BlockCensus>) {
     let mut carry = ChunkCarry::new(chunk);
-    let mut fold = census.map(CensusPlan::fold);
+    let mut whole = recorder(columns, start);
+    let mut piece = whole.piece();
     let (mut at, mut entry, mut out) = (start as usize, PieceEntry::RowStart, Vec::new());
     while at < file.len() {
         let end = (at + chunk).min(file.len());
         let eof = end == file.len();
-        let read = scan_read(
-            &mut carry,
-            fold.as_mut(),
-            &file[at..end],
-            at as u64,
-            eof,
-            entry,
-            limit,
-            census,
-            None,
-        )
-        .expect("a piece records its endings rather than refusing them");
+        let read = scan_read(&mut carry, &file[at..end], at as u64, eof, entry, limit, &mut piece)
+            .expect("a piece records its endings rather than refusing them");
         out.extend(read.scans);
         if read.done || eof {
             break;
@@ -1083,7 +1117,8 @@ fn read_piece(
         entry = read.next;
         at = end;
     }
-    out
+    whole.absorb(piece);
+    (out, census_of(whole))
 }
 
 /// **A worker censusing a block streams a row and censuses it as one
@@ -1106,21 +1141,23 @@ fn a_censusing_worker_streams_a_row_and_censuses_it_as_held() {
         let body: String = rows.iter().map(|row| format!("{row}{ending}")).collect();
         let file = format!("{header}{body}\\.\n").into_bytes();
         let start = header.len() as u64;
-        let plan = plan(Some(3));
-        let whole = scan_piece(
+        let mut whole = recorder(Some(3), start);
+        let mut piece = whole.piece();
+        scan_piece(
             &file[start as usize..],
             start,
             PieceEntry::RowStart,
             file.len() as u64,
-            plan.as_ref(),
-            None,
+            &mut piece,
         )
         .expect("one span");
+        whole.absorb(piece);
+        let whole = census_of(whole);
         for chunk in [1usize, 2, 3, 5, 64, 299, 301] {
-            let scans = read_piece(&file, start, file.len() as u64, chunk, plan.as_ref());
-            let interior = merge(&scans).expect("the terminator");
-            assert_eq!(interior.census, whole.census, "{ending:?} rows, chunk {chunk}");
-            assert_eq!(interior.end.row_count, 4, "{ending:?} rows, chunk {chunk}");
+            let (scans, census) = read_piece(&file, start, file.len() as u64, chunk, Some(3));
+            let end = merge(&scans).expect("the terminator");
+            assert_eq!(census, whole, "{ending:?} rows, chunk {chunk}");
+            assert_eq!(end.row_count, 4, "{ending:?} rows, chunk {chunk}");
         }
     }
 }
@@ -1140,11 +1177,8 @@ fn a_metadata_level_worker_streams_what_it_would_hold() {
         let start = header.len() as u64;
         for chunk in [1usize, 2, 3, 5, 64, 299] {
             for limit in [start + 1, start + 40, start + 330, start + 700, file.len() as u64] {
-                let streamed = read_piece(&file, start, limit, chunk, None);
-                let mut held = read_piece(&file, start, limit, chunk, plan(Some(1)).as_ref());
-                for scan in &mut held {
-                    scan.census = BlockCensus::default();
-                }
+                let (streamed, _) = read_piece(&file, start, limit, chunk, None);
+                let (held, _) = read_piece(&file, start, limit, chunk, Some(1));
                 assert_eq!(streamed, held, "{ending:?} rows, chunk {chunk}, limit {limit}");
             }
         }

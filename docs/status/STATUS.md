@@ -94,7 +94,7 @@ Spec: [`../design/roadmap-P43-block-model.md`](../design/roadmap-P43-block-model
 - [x] **43.3** `BlockId`, derived from the header offset, at every identity site; display sites print the address; no format change — [notes](../design/roadmap-P43.3-block-id-notes.md)
 - [x] **43.4** `CopyBlock` as header, partition root, `BlockAddress` and `Arc<BlockRecord>`; `LongestLine` block-relative; `InsertRun` holding a record; copy-on-write in the back-fill and `settle.rs`; `Segment` holding header and address, no whole block cloned; the cache-format bump; `--count-pair` on the typed query — [notes](../design/roadmap-P43.4-block-record-notes.md)
 - [x] **43.5** `BlockObserver`'s one-call close; the `Gatherer` as a block's gatherer, a piece's and the strict checker; `--count-pair` on a data-level parse — [notes](../design/roadmap-P43.5-observer-close-notes.md)
-- [ ] **43.6** The `Recorder` in `pgdt-model`: a held row split once, `RowFold` replaced, the three hosts fed through it, the observer contract split into its row and block traits, `Builder` recording nothing and `on_copy_end` taking the record; `--count-pair` on a data-level parse
+- [x] **43.6** The `Recorder` in `pgdt-model`: a held row split once, `RowFold` replaced, the three hosts fed through it, the observer contract split into its row and block traits, `Builder` recording nothing and `on_copy_end` taking the record; `--count-pair` on a data-level parse — [notes](../design/roadmap-P43.6-recorder-notes.md)
 - [ ] **43.7** One open under per-pass policies, `map_forward`'s `CopyStart` arm becoming it; one close, the back-fill merging through `BlockRecord`; `--count-pair` on a data-level parse
 - [ ] **43.8** `build_index`, `build_map` and `backfill_block` in `pgdt-fixtures` behind `mapping`, the eager pass opening through the open under its policy
 
@@ -127,4 +127,15 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **43.6's `Recorder` holds no row count**, though the spec lists one among
+  its parts (`../design/roadmap-P43-block-model.md`, "One recorder, a held
+  row split once"). **The call**: `finish` takes the scanner's count from
+  the `CopyEnd`, as it takes the longest line. The scanner sees every row,
+  while a block recording nothing, such as a metadata-level parse's, hands
+  no row to any recorder. A count kept by the recorder would either fall
+  short or need every row handed to it: one call a row on a parse that
+  makes none today. **Reconsidering** means every host hands every row to
+  the recorder and the scanner's count is checked against the recorder's
+  (D169).
 

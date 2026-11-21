@@ -8,20 +8,19 @@ use std::sync::Arc;
 use pgdt_codec::internal::counter_for;
 use pgdt_core::internal::StatisticsScope;
 use pgdt_core::{Error, Result};
-use pgdt_dump::internal::{Drawing, RowFold, announce_read_loop};
+use pgdt_dump::internal::{Drawing, FieldFold, announce_read_loop, finish_block};
 use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ReadOptions, ScanOptions};
 use pgdt_io::{Arrangement, ByteRangeSource};
-use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
 use pgdt_model::{
-    BlockCensus, BlockGathered, BlockId, BlockStatistics, CopyBlock, DataBlock, DumpIndex,
-    DumpMetadata, IgnoredRefusals, PostgresInvalidValues, Span, SpanBody,
-    internal::{BlockObserved, BlockObserver},
+    BlockId, BlockRecord, BlockStatistics, CopyBlock, DataBlock, DumpIndex, DumpMetadata,
+    IgnoredRefusals, PostgresInvalidValues, Span, SpanBody,
+    internal::{BlockObserver, Recorder},
 };
 use tokio_util::sync::CancellationToken;
 
 use crate::context::{Gathering, PassContext, ReadContext};
 use crate::forward::{SaveThrottle, cancelled_read};
-use crate::interior::{CensusPlan, Region, RegionScan, report_shortfall, scan_region};
+use crate::interior::{Region, RegionScan, report_shortfall, scan_region};
 use crate::statistics::account::{StatisticsAccount, Term};
 use crate::statistics::density::BlockStatisticsExt;
 use crate::statistics::gather;
@@ -374,106 +373,83 @@ impl Rereads<'_> {
         database: Option<&str>,
         block: &CopyBlock,
         plan: Option<&StatisticsBackfill>,
-    ) -> Result<Option<BlockReread>> {
+    ) -> Result<Option<BlockRecord>> {
         let (header, account, invalid) =
             (&block.header, self.gathering.account, self.gathering.invalid);
-        let mut observer = match plan {
+        let observer = match plan {
             Some(plan) => {
                 gather::observer_tracking(plan, header, metadata, database, account, invalid)
             }
             None => gather::checker(header, metadata, database, account),
         };
-        let read = reread_rows(
+        reread_rows(
             &self.read,
             self.cache_path,
             metadata,
             database,
             block,
-            Some(observer.as_mut()),
+            Some(observer),
             &mut self.shortfall_reported,
         )
-        .await?;
-        let Some(census) = read else { return Ok(None) };
-        // The observer's own allocation is freed as `close` returns, attributed
-        // as it was allocated (`pgdt_core::instrument`).
-        let _attributed = StatisticsScope::enter();
-        let observed = observer.close(block.address.terminator_offset - block.address.data_offset);
-        if let BlockGathered::Refused(refusal) = observed.gathered {
-            return Err(refusal.into_error(&block.header, block.address.data_offset));
-        }
-        Ok(Some(BlockReread { observed, census }))
+        .await
     }
 
-    /// Record in `block` what one read of it found: its census where the read
-    /// `gathered` — every row was read, so a block gathering is at the data
-    /// level whether its statistics fitted or not; a check alone records only
-    /// that it checked, as a strict mapping pass records nothing more of a
-    /// block it was not asked to — and what it gathered, or declined.
-    fn record(&mut self, block: &mut CopyBlock, reread: BlockReread, gathered: bool) {
-        let BlockReread { observed, census } = reread;
-        let BlockObserved { gathered: outcome, ignored_refusals: ignored, checked_in_full } =
-            observed;
+    /// Record in `block` what one read of it found, `read` being the record
+    /// that read finished: its census where the read `gathered` — every row
+    /// was read, so a block gathering is at the data level whether its
+    /// statistics fitted or not; a check alone records only that it checked,
+    /// as a strict mapping pass records nothing more of a block it was not
+    /// asked to — and what it gathered, or declined, with the fields its
+    /// type's `*_in` refuses that the read keyed and went past, per column —
+    /// under [`PostgresInvalidValues::Ignore`], or in a column gathered only
+    /// because the block held it ([`StatisticsBackfill::requested`]).
+    fn record(&mut self, block: &mut CopyBlock, read: BlockRecord, gathered: bool) {
         let id = block.address.id();
         // Copied on write where another holder shares it (`docs/design/decisions.md`, "D168").
         let record = Arc::make_mut(&mut block.record);
         if gathered {
-            record.census = Some(census);
+            record.census = read.census;
         }
-        record.checked_in_full |= checked_in_full;
+        record.checked_in_full |= read.checked_in_full;
+        let ignored = read.ignored_refusals.map(|ignored| *ignored);
         let _attributed = StatisticsScope::enter();
-        match outcome {
+        if let Some(allowance) = read.statistics_declined {
             // **A re-read that declined keeps what the block already
             // held**: the observer freed its own and holds nothing to
             // replace them with, so the block records the allowance
             // beside whatever an earlier pass gathered
             // (`docs/design/decisions.md`, "D85").
-            BlockGathered::Declined { allowance } => {
-                record.statistics_declined = Some(allowance);
-                merge_ignored(&mut record.ignored_refusals, ignored);
-            }
-            BlockGathered::Refused(_) => unreachable!("a re-read fails on a refusal"),
-            BlockGathered::Checked => {}
-            BlockGathered::Gathered(gathered) => {
-                let replaced = record.statistics.as_deref().map_or(0, BlockStatistics::heap_bytes);
-                // The re-read's own observer has already credited
-                // `Term::Retained`, so what it replaced leaves the term
-                // that carried it: `Term::Loaded` for a block the cache
-                // supplied, and `Term::Retained` for one this run
-                // gathered — which a block re-read for a stated maximum
-                // is, its own first read included.
-                let term = if self.loaded.remove(&id) { Term::Loaded } else { Term::Retained };
-                record.statistics = Some(Arc::new(gathered));
-                // A block that holds what was asked declines nothing,
-                // so a record from an earlier, tighter allowance goes.
-                record.statistics_declined = None;
-                merge_ignored(&mut record.ignored_refusals, ignored);
-                self.gathering.account.apply(&[(term, -(replaced as i64))]);
-            }
+            record.statistics_declined = Some(allowance);
+            merge_ignored(&mut record.ignored_refusals, ignored);
+        } else if let Some(gathered) = read.statistics {
+            let replaced = record.statistics.as_deref().map_or(0, BlockStatistics::heap_bytes);
+            // The re-read's own observer has already credited
+            // `Term::Retained`, so what it replaced leaves the term
+            // that carried it: `Term::Loaded` for a block the cache
+            // supplied, and `Term::Retained` for one this run
+            // gathered — which a block re-read for a stated maximum
+            // is, its own first read included.
+            let term = if self.loaded.remove(&id) { Term::Loaded } else { Term::Retained };
+            record.statistics = Some(gathered);
+            // A block that holds what was asked declines nothing,
+            // so a record from an earlier, tighter allowance goes.
+            record.statistics_declined = None;
+            merge_ignored(&mut record.ignored_refusals, ignored);
+            self.gathering.account.apply(&[(term, -(replaced as i64))]);
         }
+        // A check alone gathered nothing and declined nothing: what it
+        // checked is all it records.
     }
 }
 
-/// What one read of a block the map already holds found.
-struct BlockReread {
-    /// What its observer answered: what the block gathered, or the allowance
-    /// it declined under; the fields its type's `*_in` refuses that the
-    /// re-read keyed and went past, per column — under
-    /// [`PostgresInvalidValues::Ignore`], or in a column gathered only because
-    /// the block held it ([`StatisticsBackfill::requested`]); and whether it
-    /// checked every field of the block, as it does under
-    /// [`PostgresInvalidValues::Strict`], finding none refused.
-    observed: BlockObserved,
-    /// The block's census and count, which every re-read takes, having read
-    /// every row — a declined one included.
-    census: BlockCensus,
-}
-
 /// Read every row of `block` again, as a mapping pass reads them — offered
-/// to the leader, and serially where it declines — censusing and counting
-/// them against the DDL `metadata` states for the block in `database`, handing each to
-/// `observer` where there is one, and answer the census and count:
+/// to the leader, and serially where it declines — recording them as a
+/// mapping pass records them ([`Recorder`]): censused and counted against the
+/// DDL `metadata` states for the block in `database`, each handed to
+/// `observer` where there is one, and answer the record the read finished:
 /// what a back-fill's read (`Rereads::reread`) and a query's census of a block mapped
-/// at the metadata level (`pgdt_query::Table::settle`) both read. `None` is
+/// at the metadata level (`pgdt_query::Table::settle`) both read, a field the
+/// observer refuses failing it. `None` is
 /// `ctx`'s token stopping it first, by its flag or by a read it dropped, whichever
 /// reader made that read, and nothing else answers it; a block no
 /// longer ending where the map says is [`Error::CachedBlockChanged`], naming
@@ -485,9 +461,9 @@ pub async fn reread_rows(
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
     block: &CopyBlock,
-    mut observer: Option<&mut (dyn BlockObserver + 'static)>,
+    observer: Option<Box<dyn BlockObserver>>,
     shortfall_reported: &mut bool,
-) -> Result<Option<BlockCensus>> {
+) -> Result<Option<BlockRecord>> {
     let moved = || Error::CachedBlockChanged {
         path: cache_path.map(Path::to_path_buf),
         header_offset: block.address.header_offset,
@@ -498,16 +474,17 @@ pub async fn reread_rows(
     if ctx.extent.exact().is_some_and(|size| block.address.end_offset > size) {
         return Err(moved());
     }
-    let plan = CensusPlan {
-        width: block.header.columns.len(),
-        counter: counter_for(&block.header, metadata, database),
-    };
+    let counter = counter_for(&block.header, metadata, database);
+    let mut recorder =
+        Recorder::new(block.address.data_offset).with_census(block.header.columns.len(), counter);
+    if let Some(observer) = observer {
+        recorder = recorder.with_observer(observer);
+    }
     let region = Region {
         table: &block.header.qualified_name(),
         header_offset: block.address.header_offset,
         data_offset: block.address.data_offset,
-        census: Some(plan.clone()),
-        observer: observer.as_deref_mut(),
+        recorder: &mut recorder,
     };
     let outcome = match scan_region(ctx, region).await {
         Ok(outcome) => outcome,
@@ -518,11 +495,11 @@ pub async fn reread_rows(
         Err(e) => return Err(e),
     };
     report_shortfall(shortfall_reported, outcome.shortfall);
-    let (end, census) = match outcome.scan {
-        RegionScan::Closed(interior) => (interior.end, interior.census),
+    let end = match outcome.scan {
+        RegionScan::Closed(end) => end,
         RegionScan::Cancelled => return Ok(None),
-        RegionScan::Declined => match observe_rows(ctx, block, &plan, observer).await? {
-            Some(read) => read,
+        RegionScan::Declined => match record_rows(ctx, block, &mut recorder).await? {
+            Some(end) => end,
             None => return Ok(None),
         },
     };
@@ -536,37 +513,30 @@ pub async fn reread_rows(
     if (end.terminator_offset, end.end_offset, end.row_count, longest_line) != recorded {
         return Err(moved());
     }
-    Ok(Some(census))
+    finish_block(recorder, &block.header, &end).map(Some)
 }
 
-/// Census and count every row of `block` as `plan` says, read serially from
-/// its first data byte to its terminator, handing each to `observer` where
-/// there is one — a row outgrowing its chunk streamed, its fields folded
-/// into both as they go by (`docs/design/decisions.md`, "D138") — and answer
-/// the `CopyEnd` the scanner met with the census —
-/// `None` where
-/// `ctx`'s token fired first, read once per chunk as
-/// [`map_forward`](crate::forward::map_forward) reads it.
-async fn observe_rows(
+/// Hand every row of `block` to `recorder`, read serially from its first
+/// data byte to its terminator — a row outgrowing its chunk streamed, its
+/// fields folded as they go by (`docs/design/decisions.md`, "D138") — and
+/// answer the `CopyEnd` the scanner met — `None` where `ctx`'s token fired
+/// first, read once per chunk as [`map_forward`](crate::forward::map_forward)
+/// reads it.
+async fn record_rows(
     ctx: &ReadContext<'_>,
     block: &CopyBlock,
-    plan: &CensusPlan,
-    mut observer: Option<&mut (dyn BlockObserver + 'static)>,
-) -> Result<Option<(CopyEnd, BlockCensus)>> {
+    recorder: &mut Recorder,
+) -> Result<Option<CopyEnd>> {
     let (source, cancel) = (ctx.source, ctx.cancel);
     let scanner =
         CopyScanner::resume(block.address.data_offset, Some((block.address.header_offset, 0)));
     let mut chunked = ChunkedScanner::to_source_end(scanner, ctx.extent, ctx.scan.read);
-    let mut census = BlockCensus::new(plan.width);
-    let mut streamed = plan.fold();
     let mut holder = ctx.ledger.holder();
     loop {
         if cancel.is_cancelled() {
             return Ok(None);
         }
-        let block_observer = observer.as_deref_mut().map(|o| o as &mut dyn BlockObserver);
-        let mut fold = RowFold::new(Some(&mut streamed), block_observer, block.address.data_offset);
-        let fold = fold.as_mut().map(|f| f as _);
+        let fold = Some(&mut *recorder as &mut dyn FieldFold);
         let read = chunked
             .next_chunk_folding(source, fold, Some(Drawing::held(&mut holder).parking()))
             .await;
@@ -582,17 +552,9 @@ async fn observe_rows(
         chunk.stream_rows(true);
         while let Some(event) = chunk.next_event()? {
             match event {
-                Event::Row(row) => {
-                    census.observe_row(plan.counter.as_ref(), row.raw);
-                    if let Some(observer) = observer.as_deref_mut() {
-                        observer.observe_row(row.offset - block.address.data_offset, row.raw);
-                    }
-                }
-                Event::CopyEnd(end) => {
-                    census.merge(&streamed.take());
-                    return Ok(Some((*end, census)));
-                }
-                // A streamed row was folded into both as it went by; a
+                Event::Row(row) => recorder.row(row.offset, row.raw),
+                Event::CopyEnd(end) => return Ok(Some(*end)),
+                // A streamed row was folded into the recorder as it went by; a
                 // scanner inside a block's rows emits nothing else before
                 // its `CopyEnd`.
                 _ => {}

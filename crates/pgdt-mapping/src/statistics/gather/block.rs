@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use pgdt_core::internal::StatisticsScope;
 use pgdt_model::{
     BlockGathered, BlockStatistics, GroupSizing,
-    internal::{BlockObserved, BlockObserver},
+    internal::{BlockObserved, BlockObserver, RowObserver},
 };
 
 use super::charge::reserve_charged;
@@ -250,7 +250,7 @@ impl Drop for BlockGatherer {
     }
 }
 
-impl BlockObserver for BlockGatherer {
+impl RowObserver for BlockGatherer {
     fn holds(&self, column: usize) -> bool {
         self.reader.holds(column)
     }
@@ -281,6 +281,12 @@ impl BlockObserver for BlockGatherer {
         }
     }
 
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+impl BlockObserver for BlockGatherer {
     /// **The block's charge becomes its retained bytes** once the interning
     /// maps are freed, in one update of the account — and a block that
     /// declined answers the allowance it declined under, holding nothing to
@@ -293,7 +299,7 @@ impl BlockObserver for BlockGatherer {
         BlockObserved { gathered, ignored_refusals, checked_in_full }
     }
 
-    fn piece(&self) -> Box<dyn BlockObserver> {
+    fn piece(&self) -> Box<dyn RowObserver> {
         let _attributed = StatisticsScope::enter();
         let columns = self.groups.columns.iter().map(|c| c.as_ref().map(ColumnGatherer::fresh));
         let charge = Charge::new(Arc::clone(self.groups.charge.account()), Term::Pieces);
@@ -314,7 +320,7 @@ impl BlockObserver for BlockGatherer {
     /// **A refusal outranks a decline, and the earlier row's outranks a later
     /// one's** ([`Reader::absorb`]). Every other piece's rows are counted,
     /// folded or dropped.
-    fn absorb(&mut self, later: Box<dyn BlockObserver>) {
+    fn absorb(&mut self, later: Box<dyn RowObserver>) {
         let _attributed = StatisticsScope::enter();
         let later = later.into_any().downcast::<PieceGatherer>().expect("a piece of this block");
         let mut later = *later;
@@ -337,9 +343,5 @@ impl BlockObserver for BlockGatherer {
                 }
             },
         }
-    }
-
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        self
     }
 }

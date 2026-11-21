@@ -129,14 +129,11 @@ use crate::ddl::{
 };
 use crate::lex::standard_conforming_strings;
 use crate::scan::{CopyEnd, CopyStart, FieldFold};
-use pgdt_core::Result;
-use pgdt_core::internal::StatisticsScope;
-use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
-use pgdt_model::timescaledb::RecordedRows;
+use pgdt_core::{CopyHeader, Result};
+use pgdt_model::internal::{Recorder, RowObserver};
 use pgdt_model::{
-    BlockAddress, BlockCensus, BlockGathered, BlockRecord, CopyBlock, DataBlock, InsertRun,
-    LargeObjectRegion, Span, SpanBody, TocHeader,
-    internal::{BlockObserver, CensusFold, FieldCount},
+    BlockAddress, BlockRecord, CopyBlock, DataBlock, InsertRun, LargeObjectRegion, Span, SpanBody,
+    TocHeader,
 };
 
 /// Accumulator state between one span boundary and the next.
@@ -241,29 +238,6 @@ pub struct Builder {
     /// and `None` for `Framing`/`Connect`/`VersionHeader`. Reset fresh by
     /// every new `Builder`.
     governing_toc: Option<TocHeader>,
-    /// The census and count accumulating for the open `COPY` block
-    /// ([`BlockCensus`]), and `None` for a block at the metadata level, whose
-    /// rows are not split (`docs/design/decisions.md`, "D35"). Sized at
-    /// `CopyStart` from the header's column list, and its shapes grown by any
-    /// row holding a `{` or `[` that turns out to have more fields, the mapping pass never refusing
-    /// a row's width (`docs/design/decisions.md`, "D28"); a query refuses that
-    /// row, so nothing reads the extra entries.
-    pending_census: Option<BlockCensus>,
-    /// What the open block's values are counted against
-    /// ([`Builder::count_block`]); a censused block counts nothing without it.
-    pending_counter: Option<Arc<dyn FieldCount>>,
-    /// The open block's census and count over the rows its reader streams
-    /// ([`Builder::row_fold`]), unioned into `pending_census` at its end:
-    /// there for a censused block once it is counted.
-    pending_fold: Option<CensusFold>,
-    /// The statistics observer for the open `COPY` block, when the mapping pass
-    /// asked for one ([`Builder::observe_block`]). Handed every row and
-    /// finished into [`BlockRecord::statistics`] at its `CopyEnd`.
-    pending_observer: Option<Box<dyn BlockObserver>>,
-    /// The open block's rows as text, where the mapping pass asked for them
-    /// ([`Builder::record_rows`]); its
-    /// [`BlockRecord::recorded_rows`] at its `CopyEnd`.
-    pending_rows: Option<RecordedRows>,
     /// The `standard_conforming_strings` the file last stated, which every
     /// statement's [`StatementScan`] lexes under, as the scanner does
     /// (I50). `on` for a builder starting partway through a file, as for
@@ -271,60 +245,37 @@ pub struct Builder {
     standard_strings: bool,
 }
 
-/// **What a block folds a streamed row's fields into**: its census and its
-/// statistics observer, each handed every run, a field either wants whole
-/// held for both (`docs/design/decisions.md`, "D138"). The trait is the
-/// scanner's, the census and the observer the model's; the serial pass's
-/// ([`Builder::row_fold`]) and an interior worker's alike.
-pub struct RowFold<'a> {
-    census: Option<&'a mut CensusFold>,
-    /// The observer, and the block's first data byte, which it places a
-    /// row's start against.
-    observer: Option<(&'a mut dyn BlockObserver, u64)>,
-}
-
-impl<'a> RowFold<'a> {
-    /// A fold into `census` and `observer`, either where present, `None`
-    /// where neither is; `observer` places a row against `data_offset`.
-    pub fn new(
-        census: Option<&'a mut CensusFold>,
-        observer: Option<&'a mut dyn BlockObserver>,
-        data_offset: u64,
-    ) -> Option<Self> {
-        (census.is_some() || observer.is_some())
-            .then(|| Self { census, observer: observer.map(|o| (o, data_offset)) })
-    }
-}
-
-impl FieldFold for RowFold<'_> {
+/// **A streamed row's fields go to its block's recorder**, every part it
+/// records folding each run, a field any of them wants whole held for all
+/// (`docs/design/decisions.md`, "D138", "D169"). The trait is the scanner's,
+/// the recorder the model's; the serial pass's and an interior worker's
+/// alike.
+impl<O: ?Sized + RowObserver> FieldFold for Recorder<O> {
     fn holds(&self, field: usize) -> bool {
-        self.census.as_ref().is_some_and(|census| census.holds(field))
-            || self.observer.as_ref().is_some_and(|(observer, _)| observer.holds(field))
+        Recorder::holds(self, field)
     }
 
     fn begin_row(&mut self, offset: u64) {
-        if let Some((observer, data_offset)) = &mut self.observer {
-            observer.begin_row(offset - *data_offset);
-        }
+        Recorder::begin_row(self, offset);
     }
 
     fn fold(&mut self, field: usize, bytes: &[u8], ends: bool) {
-        if let Some(census) = &mut self.census {
-            census.fold(field, bytes, ends);
-        }
-        if let Some((observer, _)) = &mut self.observer {
-            observer.fold(field, bytes, ends);
-        }
+        Recorder::fold(self, field, bytes, ends);
     }
 
     fn end_row(&mut self, fields: usize) {
-        if let Some(census) = &mut self.census {
-            census.end_row(fields);
-        }
-        if let Some((observer, _)) = &mut self.observer {
-            observer.end_row(fields);
-        }
+        Recorder::end_row(self, fields);
     }
+}
+
+/// **`recorder` finished into the record of the block `header` opens**, at
+/// the scanner's `end`: its row count, and its longest line placed in the
+/// block ([`Recorder::finish`]). A field the block's observer refused fails
+/// it.
+pub fn finish_block(recorder: Recorder, header: &CopyHeader, end: &CopyEnd) -> Result<BlockRecord> {
+    let data_offset = recorder.data_offset();
+    let longest_line = end.longest_line.map(|line| line.in_block(data_offset));
+    recorder.finish(header, end.row_count, end.terminator_offset, longest_line)
 }
 
 /// The table an `INSERT INTO <table> ...` line targets, if `line` is one —
@@ -377,11 +328,6 @@ impl Builder {
             roles: BTreeSet::new(),
             tablespaces: BTreeSet::new(),
             governing_toc: None,
-            pending_census: None,
-            pending_counter: None,
-            pending_fold: None,
-            pending_observer: None,
-            pending_rows: None,
             standard_strings: true,
         }
     }
@@ -836,10 +782,10 @@ impl Builder {
         }
     }
 
-    /// A `COPY` header opened a block, censused and counted where `census`
-    /// says its table is at the data level — counted against what
-    /// [`count_block`](Self::count_block) hands it next.
-    pub fn on_copy_start(&mut self, event: CopyStart, census: bool) {
+    /// A `COPY` header opened a block. What its rows hold is recorded by the
+    /// pass, whose recorder's record [`on_copy_end`](Self::on_copy_end)
+    /// takes.
+    pub fn on_copy_start(&mut self, event: CopyStart) {
         // I12 puts the large-object region after every `COPY` block, so a
         // pending one here means non-`pg_dump` input — flushed rather than
         // silently absorbing whatever follows into it.
@@ -864,141 +810,19 @@ impl Builder {
                 (event.header_offset, None)
             }
         };
-        self.pending_census = census.then(|| BlockCensus::new(event.header.columns.len()));
-        self.pending_counter = None;
-        self.pending_fold = None;
-        self.pending_observer = None;
-        self.pending_rows = None;
         self.pending_data = Some((start, event, self.pending_partition_root.take(), toc));
     }
 
-    /// Fold one data row of the open `COPY` block into its census and count,
-    /// where it has them (`BlockCensusExt::observe_row`, as the interior
-    /// workers a split `COPY` block is scanned by fold theirs), and hand it to
-    /// the block's statistics observer, if it has one. `offset` is the
-    /// row's absolute file offset.
-    pub fn on_row(&mut self, offset: u64, raw: &[u8]) {
-        if let (Some(census), Some(counter)) =
-            (self.pending_census.as_mut(), self.pending_counter.as_deref())
-        {
-            census.observe_row(counter, raw);
-        }
-        if let (Some(observer), Some((_, start, ..))) =
-            (self.pending_observer.as_mut(), self.pending_data.as_ref())
-        {
-            observer.observe_row(offset - start.data_offset, raw);
-        }
-        if let Some(rows) = self.pending_rows.as_mut() {
-            rows.observe_row(raw);
-        }
-    }
-
-    /// Whether [`on_row`](Self::on_row) reads the open `COPY` block's rows
-    /// whole: it does where the block is recorded, or censused with no fold
-    /// to take its fields, and otherwise counts them
-    /// and folds their fields into its census and its observer, so its
-    /// reader may stream them ([`crate::ChunkEvents::stream_rows`]), handing
-    /// a streamed row's fields over as they go by
-    /// ([`row_fold`](Self::row_fold)).
-    pub fn reads_rows(&self) -> bool {
-        (self.pending_census.is_some() && self.pending_fold.is_none())
-            || self.pending_rows.is_some()
-    }
-
-    /// What the open block folds a streamed row's fields into ([`RowFold`]),
-    /// its reader handing them over as they go by — `None` for a block
-    /// censusing and observing nothing.
-    pub fn row_fold(&mut self) -> Option<RowFold<'_>> {
-        let data_offset = self.pending_data.as_ref().map_or(0, |(_, start, ..)| start.data_offset);
-        let observer = self.pending_observer.as_deref_mut().map(|o| o as &mut dyn BlockObserver);
-        RowFold::new(self.pending_fold.as_mut(), observer, data_offset)
-    }
-
-    /// Record the rows of the `COPY` block
-    /// [`on_copy_start`](Self::on_copy_start) just opened as text: every row
-    /// [`on_row`](Self::on_row) folds is kept, as the block's
-    /// [`BlockRecord::recorded_rows`]. Never for a block whose rows interior
-    /// workers read, which hand no row here.
-    pub fn record_rows(&mut self) {
-        self.pending_rows = Some(RecordedRows::default());
-    }
-
-    /// Gather statistics for the `COPY` block
-    /// [`on_copy_start`](Self::on_copy_start) just opened: every row
-    /// [`on_row`](Self::on_row) folds is handed to `observer`, and its answer
-    /// is the block's [`BlockRecord::statistics`].
-    pub fn observe_block(&mut self, observer: Box<dyn BlockObserver>) {
-        self.pending_observer = Some(observer);
-    }
-
-    /// Count the values of the `COPY` block [`on_copy_start`](Self::on_copy_start)
-    /// just opened at the data level against `counter`, which the caller
-    /// resolves from the DDL above the block once it has stated it
-    /// (`docs/design/decisions.md`, "D96"). A block at the metadata level
-    /// ignores it.
-    pub fn count_block(&mut self, counter: Arc<dyn FieldCount>) {
-        self.pending_fold = self
-            .pending_census
-            .as_ref()
-            .map(|census| CensusFold::new(census.shapes.len(), Arc::clone(&counter)));
-        self.pending_counter = Some(counter);
-    }
-
-    /// The open `COPY` block's statistics observer, for the interior workers
-    /// that observe its rows in pieces instead of [`on_row`](Self::on_row)
-    /// (`pgdt_mapping`'s `scan_region`).
-    pub fn block_observer(&mut self) -> Option<&mut (dyn BlockObserver + 'static)> {
-        self.pending_observer.as_deref_mut()
-    }
-
-    /// Union an already-folded census and count into the open `COPY` block's
-    /// own — what a block whose rows were counted by interior workers states
-    /// instead of the [`on_row`](Self::on_row) calls it never made
-    /// (`pgdt_mapping`'s `scan_region`). Takes the model's [`BlockCensus`]
-    /// rather than the leader's `Interior`, so the map does not reach into the
-    /// leader that drives it. A block holding no census absorbs nothing.
-    pub fn absorb_census(&mut self, census: &BlockCensus) {
-        if let Some(pending) = self.pending_census.as_mut() {
-            pending.merge(census);
-        }
-    }
-
-    /// Close the open `COPY` block, pushing its span with what its census,
-    /// count and observer answered.
-    ///
-    /// **A block whose observer met a field PostgreSQL refuses fails the
-    /// pass** with [`pgdt_core::Error::FieldRefused`], pushing no span for it, so
-    /// the map stands at the block before (`roadmap.md`, "A literal is
-    /// guaranteed in `*_out`'s form and never read past `*_in`'s").
-    pub fn on_copy_end(&mut self, end: CopyEnd) -> Result<()> {
+    /// Close the open `COPY` block at the scanner's `end`, pushing its span
+    /// with `record`, what the pass recorded of its rows
+    /// ([`finish_block`]).
+    pub fn on_copy_end(&mut self, end: CopyEnd, record: BlockRecord) {
         // `None` only after a scanner resumed inside a block
         // (`CopyScanner::resume`), whose `CopyEnd` has no `CopyStart`.
         let Some((start, copy_start, partition_root, toc)) = self.pending_data.take() else {
-            return Ok(());
+            return;
         };
-        // Shared (`docs/design/decisions.md`, "D34"); a block that declined
-        // records the allowance instead (`docs/design/decisions.md`, "D85").
-        // The `Arc` is sealed inside the scope too, its allocation being part
-        // of what the account retains (`pgdt_core::instrument`).
-        let mut record = BlockRecord::default();
-        if let Some(observer) = self.pending_observer.take() {
-            let _attributed = StatisticsScope::enter();
-            let observed = observer.close(end.terminator_offset - copy_start.data_offset);
-            match observed.gathered {
-                BlockGathered::Gathered(statistics) => {
-                    record.statistics = Some(Arc::new(statistics));
-                }
-                BlockGathered::Declined { allowance } => {
-                    record.statistics_declined = Some(allowance);
-                }
-                BlockGathered::Refused(refusal) => {
-                    return Err(refusal.into_error(&copy_start.header, copy_start.data_offset));
-                }
-                BlockGathered::Checked => {}
-            }
-            record.ignored_refusals = observed.ignored_refusals.map(Box::new);
-            record.checked_in_full = observed.checked_in_full;
-        }
+        debug_assert_eq!(record.row_count, end.row_count, "the record counts the scanner's rows");
         let block = CopyBlock {
             header: copy_start.header,
             partition_root,
@@ -1008,28 +832,10 @@ impl Builder {
                 terminator_offset: end.terminator_offset,
                 end_offset: end.end_offset,
             },
-            record: Arc::new(BlockRecord {
-                row_count: end.row_count,
-                census: self.pending_census.take().map(|mut census| {
-                    if let Some(mut fold) = self.pending_fold.take() {
-                        census.merge(&fold.take());
-                    }
-                    census
-                }),
-                recorded_rows: self.pending_rows.take().map(Box::new),
-                longest_line: end.longest_line.map(|line| line.in_block(copy_start.data_offset)),
-                ..record
-            }),
+            record: Arc::new(record),
         };
-        debug_assert!(
-            block.record.census.is_none() || self.pending_counter.is_some(),
-            "a censused block is counted too (D96)"
-        );
-        self.pending_counter = None;
-        self.pending_fold = None;
         let owned = toc.is_some();
         self.push_span(start, SpanBody::Data(DataBlock::Copy(block)), toc, owned);
-        Ok(())
     }
 
     /// A `BEGIN;` line opened a large-object data region (I12) — see

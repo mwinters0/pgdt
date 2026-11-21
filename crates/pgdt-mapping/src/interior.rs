@@ -20,26 +20,22 @@
 use std::ops::Range;
 
 use pgdt_core::{Error, Result};
-use pgdt_dump::internal::{ChunkCarry, Drawing, FieldFold, draw_absorbing};
+use pgdt_dump::internal::{ChunkCarry, Drawing, draw_absorbing};
 use pgdt_dump::{CopyEnd, ScanOptions, ScannedLine};
 use pgdt_io::{
     ByteRangeSource, PartitionRead, Partitioning, WaitPolicy,
     internal::{cut, worker_count},
 };
-use pgdt_model::internal::BlockCensusExt;
-use pgdt_model::internal::BlockObserver;
+use pgdt_model::internal::{Recorder, RowObserver};
 
 use crate::context::ReadContext;
 
 mod piece;
 
-use self::piece::{
-    BlockEndings, PieceEntry, PieceObserver, PieceScan, empty_census, merge, row_fold, scan_read,
-};
-pub(crate) use self::piece::{CensusPlan, Interior};
+use self::piece::{BlockEndings, PieceEntry, PieceScan, folding, merge, scan_read};
 
 /// One open `COPY` region, as the leader is offered it: the block it opens,
-/// where its rows begin, how they are censused and who observes them.
+/// where its rows begin, and what records them.
 pub(crate) struct Region<'a> {
     /// The block's table, as a refusal inside it names it.
     pub table: &'a str,
@@ -48,19 +44,18 @@ pub(crate) struct Region<'a> {
     pub header_offset: u64,
     /// The block's first data byte, after `COPY … FROM stdin;`.
     pub data_offset: u64,
-    /// How the block is censused and counted, `None` where it is not
-    /// ([`scan_piece`]).
-    pub census: Option<CensusPlan>,
-    /// The block's statistics observer, where it gathers any.
-    pub observer: Option<&'a mut (dyn BlockObserver + 'static)>,
+    /// The block's recorder, which a closed region has handed every row
+    /// ([`scan_region`]).
+    pub recorder: &'a mut Recorder,
 }
 
 /// What the leader made of one open `COPY` region.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RegionScan {
-    /// The block closed, and these are its totals — what the serial scanner
-    /// would have stated at its `CopyEnd`.
-    Closed(Interior),
+    /// The block closed, its recorder handed every row, and this is what the
+    /// serial scanner would have stated at its `CopyEnd`, byte for byte
+    /// (`docs/design/decisions.md`, "D52").
+    Closed(CopyEnd),
     /// The region was not cut at all, and the serial scanner still owns it:
     /// the caller allows one worker, the source declines to be split here or
     /// does not know its end yet, or what is left of the file is smaller than
@@ -190,11 +185,11 @@ pub(crate) fn report_shortfall(flag: &mut bool, shortfall: Option<Shortfall>) {
 /// [`scan_piece`] never claims end of file, and the leader is the only party
 /// that knows there is none left.
 ///
-/// **The region's observer is the block's statistics observer, where it gathers any.**
-/// Each partition observes its rows into one [`BlockObserver::piece`] made,
-/// and every partition up to the one holding the terminator is absorbed back
-/// into it in file order, so a block closed here has observed what the serial
-/// scanner would have handed it. A declined region leaves it untouched.
+/// **The region's recorder is the block's.** Each partition records its rows
+/// into one [`Recorder::piece`] made, and every partition up to the one
+/// holding the terminator is absorbed back into it in file order, so a block
+/// closed here has recorded what the serial scanner would have handed it. A
+/// declined region leaves it untouched.
 ///
 /// **It reads `partitions()` for the shape of the cut and never for whether
 /// cutting pays**, beyond a source stating one partition at most and a
@@ -278,7 +273,7 @@ pub(crate) async fn scan_region(
     source.hint_wait_policy(WaitPolicy::NeverWait);
 
     let scan = match scanned? {
-        Some(interior) => RegionScan::Closed(interior),
+        Some(end) => RegionScan::Closed(end),
         None if ctx.cancel.is_cancelled() => RegionScan::Cancelled,
         // Every window ran to the end of the file and none held the
         // terminator: `UnterminatedCopyBlock`, reached the parallel way.
@@ -358,11 +353,10 @@ async fn run_region(
     advice: &Partitioning,
     workers: usize,
     size: u64,
-) -> Result<Option<Interior>> {
-    let Region { table, data_offset, census: plan, mut observer, .. } = region;
+) -> Result<Option<CopyEnd>> {
+    let Region { table, data_offset, recorder, .. } = region;
     let mut rows = 0u64;
     let mut longest_line = None;
-    let mut census = empty_census(plan.as_ref());
     let mut frontier = data_offset;
     let mut entry = PieceEntry::RowStart;
     let mut endings = BlockEndings::default();
@@ -384,21 +378,12 @@ async fn run_region(
             .enumerate()
             .map(|(i, range)| {
                 let entry = if i == 0 { entry } else { PieceEntry::Resync };
-                let piece =
-                    observer.as_deref().map(|block| PieceObserver::new(block.piece(), data_offset));
-                scan_partition(
-                    ctx,
-                    advice.partition_read(),
-                    entry,
-                    range,
-                    plan.clone(),
-                    size,
-                    piece,
-                )
+                let piece = recorder.piece();
+                scan_partition(ctx, advice.partition_read(), entry, range, size, piece)
             })
             .collect();
-        // Each partition's observer, and whether it read a terminator.
-        let mut pieces: Vec<(Option<PieceObserver>, bool)> = Vec::with_capacity(workers);
+        // Each partition's recorder, and whether it read a terminator.
+        let mut pieces: Vec<(Recorder<dyn RowObserver>, bool)> = Vec::with_capacity(workers);
         // **The lowest-offset error is the one raised, and this is what
         // arranges it** (`docs/design/decisions.md`, "D52"). A window's pieces
         // tile the region in ascending order, so partition order *is* file
@@ -432,35 +417,27 @@ async fn run_region(
             scans.extend(partition_scans);
             pieces.push((piece, terminates));
         }
-        // **Statistics fold as [`merge`] does, and stop where it stops**: the
-        // partition holding the earliest terminator is the last in the block,
-        // and what a later one observed is past the block's end.
-        if let Some(block) = observer.as_deref_mut() {
-            for (piece, terminates) in pieces {
-                if let Some(piece) = piece {
-                    block.absorb(piece.into_observer());
-                }
-                if terminates {
-                    break;
-                }
+        // **What the pieces recorded folds as [`merge`] does, and stops where
+        // it stops**: the partition holding the earliest terminator is the
+        // last in the block, and what a later one recorded is past the
+        // block's end.
+        for (piece, terminates) in pieces {
+            recorder.absorb(piece);
+            if terminates {
+                break;
             }
         }
 
-        if let Some(interior) = merge(&scans) {
-            census.merge(&interior.census);
-            return Ok(Some(Interior {
-                census,
-                end: CopyEnd {
-                    row_count: rows + interior.end.row_count,
-                    longest_line: ScannedLine::fold(longest_line, interior.end.longest_line),
-                    ..interior.end
-                },
+        if let Some(end) = merge(&scans) {
+            return Ok(Some(CopyEnd {
+                row_count: rows + end.row_count,
+                longest_line: ScannedLine::fold(longest_line, end.longest_line),
+                ..end
             }));
         }
         for piece in &scans {
             rows += piece.rows;
             longest_line = ScannedLine::fold(longest_line, piece.longest_line);
-            census.merge(&piece.census);
         }
         // The last piece's `through` is where the window's last complete line
         // ended, so the next window begins there rather than at the window's
@@ -516,10 +493,9 @@ async fn scan_partition(
     read: PartitionRead,
     entry: PieceEntry,
     range: Range<u64>,
-    census: Option<CensusPlan>,
     size: u64,
-    mut piece: Option<PieceObserver>,
-) -> Result<(Vec<PieceScan>, Option<PieceObserver>)> {
+    mut recorder: Recorder<dyn RowObserver>,
+) -> Result<(Vec<PieceScan>, Recorder<dyn RowObserver>)> {
     let source = ctx.source;
     let limit = range.end;
     let mut out = Vec::new();
@@ -527,7 +503,6 @@ async fn scan_partition(
     let (chunk, bound) = (ctx.scan.read.chunk(), ctx.scan.read.line_bound());
     let mut carry = ChunkCarry::new(chunk);
     let mut holder = ctx.ledger.holder();
-    let mut fold = census.as_ref().map(CensusPlan::fold);
     let mut at = range.start;
     let mut want = match read {
         PartitionRead::Whole { unit } => {
@@ -548,31 +523,18 @@ async fn scan_partition(
         }
         // Drawn in this half, which can wait: the blocking half absorbs it.
         let eof = end >= size;
-        let mut folding = row_fold(fold.as_mut(), piece.as_mut());
-        let folding = folding.as_mut().map(|fold| fold as &mut dyn FieldFold);
         let drawing = Drawing::held(&mut holder).parking();
-        draw_absorbing(&mut carry, drawing, source, at, &mut bytes, eof, folding).await?;
-        // The observer, the carry and its fold go to the blocking pool with
-        // the bytes and come back with the scan, one read of the piece at a
-        // time.
-        let plan = census.clone();
-        let (scanned, returned, carried, folded) = tokio::task::spawn_blocking(move || {
-            let scanned = scan_read(
-                &mut carry,
-                fold.as_mut(),
-                &bytes,
-                at,
-                eof,
-                entry,
-                limit,
-                plan.as_ref(),
-                piece.as_mut(),
-            );
-            (scanned, piece, carry, fold)
+        let fold = folding(&mut recorder);
+        draw_absorbing(&mut carry, drawing, source, at, &mut bytes, eof, fold).await?;
+        // The recorder and the carry go to the blocking pool with the bytes
+        // and come back with the scan, one read of the piece at a time.
+        let (scanned, returned, carried) = tokio::task::spawn_blocking(move || {
+            let scanned = scan_read(&mut carry, &bytes, at, eof, entry, limit, &mut recorder);
+            (scanned, recorder, carry)
         })
         .await
         .map_err(Error::join)?;
-        (piece, carry, fold) = (returned, carried, folded);
+        (recorder, carry) = (returned, carried);
         let scanned = scanned?;
         out.extend(scanned.scans);
         // Finished when it has read the line ending at or past its limit,
@@ -585,7 +547,7 @@ async fn scan_partition(
         at = end;
         want = (chunk as u64).max(1);
     }
-    Ok((out, piece))
+    Ok((out, recorder))
 }
 
 #[cfg(test)]

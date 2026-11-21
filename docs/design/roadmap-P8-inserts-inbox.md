@@ -132,15 +132,15 @@ which put it on the scanner's lexer. The mechanism is
 
 **Fact.** A field its type's `*_in` refuses at a `pg-refuses` check fails a
 data-level parse keying it: the statistics observer answers
-`BlockGathered::Refused`, and `map::Builder::on_copy_end` raises
-`Error::FieldRefused`, as a restore under `ON_ERROR_STOP` fails the table's
+`BlockGathered::Refused`, and the block's `Recorder::finish` raises
+`Error::FieldRefused` at its `CopyEnd`, as a restore under `ON_ERROR_STOP` fails the table's
 `COPY`. Nothing raises it for an `INSERT` run, whose rows nothing reads yet.
 
 **Why P8 cares.** P8 reads `INSERT` rows, and a restore of an
 `--inserts` dump fails per statement, not per table: without `ON_ERROR_STOP`
 it loses the one row and goes on. Whether the parse fails at a refused
-`INSERT` value as at a `COPY` field, where the raise sits when a run has
-no `on_copy_end`, and what it names the statement by — `FieldRefused`'s
+`INSERT` value as at a `COPY` field, where the raise sits when no `CopyEnd`
+closes a run, and what it names the statement by — `FieldRefused`'s
 `line` is `COPY`'s count of a block's rows, which a run of
 statements has no counterpart of — is this phase's to decide.
 
@@ -150,7 +150,7 @@ statements has no counterpart of — is this phase's to decide.
 
 ## The row contracts are over `COPY`-escaped bytes, and a line is a row
 
-**Fact.** `BlockObserver::fold` takes a field "still escaped, a delimiter never
+**Fact.** `RowObserver::fold` takes a field "still escaped, a delimiter never
 among them" (`pgdt-model/src/statistics.rs`), and so does `FieldCount::tier`
 (`block.rs`). The unescape happens at the leaves, in at least five places:
 `ColumnGatherer::observe`, `FieldCheck::refused`, `Counter::tier`,
