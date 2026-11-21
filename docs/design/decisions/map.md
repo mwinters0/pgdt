@@ -109,12 +109,12 @@ each have to carve; a record unshared, every clone copying its census; a segment
 copying it. Code: `pgdt_model::CopyBlock`. Evidence: `pgdt-query`'s `a_replay_holds_no_block_s_statistics`.
 
 ### D169 One recorder takes a block's rows, a held row split once, and a piece observes rows alone
-`Recorder` holds what a pass records of a block — census and count, observer, rows as text — and every host feeds it:
-the forward and eager passes, an interior worker its piece's, a re-read. A held row is split once, each field to every
-part (D28), the census reading a row holding no array only to its tested columns; a streamed row's runs reach it as
-`FieldFold`. `finish` closes the observer into a fresh `BlockRecord`, which `Builder::on_copy_end` takes; row count and
-longest line stay the scanner's, which sees rows nothing records. The observer contract is `RowObserver` and
-`BlockObserver` (close, pieces), `Recorder<O>` generic over them, so no piece carries a close. Rejected: a split per
-part; a held row's every field to the census (gate lost); one trait, a piece answering close with a panic a one-type
-recorder carries up; the builder hosting the row path. Code: `pgdt_model::internal::Recorder`. Evidence:
+`Recorder` holds what a pass records of a block — census and unrepresentable count (D96), observer, rows as text — and
+every host feeds it. A held row is split once, each field to every part (D28), the census reading a row holding no
+array only to its tested columns; a streamed row's runs reach it as `FieldFold`. Row count and longest line are the
+line machine's, as the extent is: pieces sum to the serial `CopyEnd` (D52), a re-read is checked against them. The
+observer contract is `RowObserver` and `BlockObserver` (close, pieces), `Recorder<O>` generic over them, so no piece
+carries a close. Rejected: a split per part; a held row's every field to the census (gate lost); the recorder counting
+rows, which checks only that a host hands each on; one trait, a piece answering close with a panic a one-type recorder
+carries up; the builder hosting the row path. Code: `pgdt_model::internal::Recorder`. Evidence:
 `a_row_held_whole_is_censused_as_one_folded_in_runs`, `pieces_absorbed_in_file_order_record_the_whole_block`.

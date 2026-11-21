@@ -1,8 +1,9 @@
 //! **What a pass records of one `COPY` block's rows, in one place**: its
-//! census and count, its observer and, for TimescaleDB's catalog, its rows as
-//! text — each part fed every field of a row from one split of a held row, or
-//! from the runs a streaming reader hands over — and the block's record
-//! finished from them at its close (`docs/design/decisions.md`, "D169").
+//! census and unrepresentable count, its observer and, for TimescaleDB's
+//! catalog, its rows as text — each part fed every field of a row from one
+//! split of a held row, or from the runs a streaming reader hands over — and
+//! the block's record finished from them at its close
+//! (`docs/design/decisions.md`, "D169").
 
 use std::sync::Arc;
 
@@ -15,8 +16,8 @@ use crate::timescaledb::{RecordedRows, recorded_field};
 use crate::{BlockGathered, BlockRecord, LongestLine};
 
 /// **Records one `COPY` block's rows, or one piece's**, into every part the
-/// pass asked of it: the census and count, the block's observer and its rows
-/// as text — any of them, or none.
+/// pass asked of it: the census and unrepresentable count, the block's
+/// observer and its rows as text — any of them, or none.
 ///
 /// **A held row is split once** ([`Self::row`]), each field handed to every
 /// part recording it, as a streamed row's runs are ([`Self::fold`]) — D28's
@@ -29,7 +30,7 @@ use crate::{BlockGathered, BlockRecord, LongestLine};
 pub struct Recorder<O: ?Sized = dyn BlockObserver> {
     /// The block's first data byte, which its observer places a row against.
     data_offset: u64,
-    /// The census and count, for a block at the data level
+    /// The census and unrepresentable count, for a block at the data level
     /// (`docs/design/decisions.md`, "D35", "D96").
     census: Option<CensusFold>,
     /// The rows as text, for a block whose rows a pass records
@@ -47,8 +48,8 @@ impl Recorder {
         Self { data_offset, census: None, rows: None, observer: None }
     }
 
-    /// Census the block's rows, `width` columns wide, and count them against
-    /// `counter`.
+    /// Census the block's rows, `width` columns wide, and count their
+    /// unrepresentable values against `counter`.
     pub fn with_census(mut self, width: usize, counter: Arc<dyn FieldCount>) -> Self {
         self.census = Some(CensusFold::new(width, counter));
         self

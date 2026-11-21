@@ -128,14 +128,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **43.6's `Recorder` holds no row count**, though the spec lists one among
-  its parts (`../design/roadmap-P43-block-model.md`, "One recorder, a held
-  row split once"). **The call**: `finish` takes the scanner's count from
-  the `CopyEnd`, as it takes the longest line. The scanner sees every row,
-  while a block recording nothing, such as a metadata-level parse's, hands
-  no row to any recorder. A count kept by the recorder would either fall
-  short or need every row handed to it: one call a row on a parse that
-  makes none today. **Reconsidering** means every host hands every row to
-  the recorder and the scanner's count is checked against the recorder's
-  (D169).
-
