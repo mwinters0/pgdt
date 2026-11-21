@@ -1,6 +1,6 @@
 ---
 name: seams
-description: Redraw seams where the code has outgrown its files or crates — run `scripts/file_limits.py`, move inline tests beside their module, design the next version of the concept map (`docs/design/concepts.md`) across crates and each crate's tree from it, cut toward it, and say when a crate should split, two merge, or a concept's part move crate. Use when the user invokes /seams, when the `seams` meter is red in `mise run check`, before a phase wrap, or when a slice leaves a file over a limit.
+description: Redraw seams where the code has outgrown its files or crates — run `scripts/file_limits.py`, move inline tests beside their module, design the next version of the concept map (`docs/design/concepts.md`) across crates and scripts and each crate's tree from it, cut toward it, and say when a crate should split, two merge, or a concept's part move crate. Use when the user invokes /seams, when the `seams` meter is red in `mise run check`, before a phase wrap, or when a slice leaves a file over a limit.
 ---
 
 The rule is `docs/process.md`, "Seams"; **invoke the `process` skill first**.
@@ -12,13 +12,14 @@ signature changes only where a module boundary forces an item `pub(crate)`.
 
 Run `cd scripts && uv run file_limits.py`. Keep every `!!` and `..` line and
 every `==` exemption. A hard line puts **its module tree** in this round's
-scope — the crate it sits in, or the top-level module when the crate is large
-— and every soft line inside that scope comes with it. `--all` prints every
+scope — the crate it sits in, or the top-level module when the crate is large;
+a script's package, or the script itself at the top of `scripts/` — and every
+soft line inside that scope comes with it. `--all` prints every
 file's reading; read it for the whole scope, since the design is of the tree.
 
 Then read `docs/design/concepts.md` for every concept the scope's files hold,
-**and every crate each one reaches**: a concept is designed once, across the
-crates holding it, so its other crates' modules are in scope too. And run
+**and every crate or script each one reaches**: a concept is designed once,
+across the crates and scripts holding it, so its other parts are in scope too. And run
 `uv run module_graph.py --docs`: each cycle in scope is in the round, with the
 references making it, and a doc link against the edges is a concept not yet
 standing on its own — weighed, never counted.
@@ -31,7 +32,8 @@ body moves whole to `<module>/name.rs` (`src/name.rs` beside a crate root),
 indentation left to `cargo fmt`, never dedented by hand — a multi-line string
 literal would change. Then hunt what named the test by its old path: a script
 locating a test function by file (`rg -n 'fn <name>\(' scripts/`), a doc
-citing `<module>.rs`'s unit test, and repoint it in the same change.
+citing `<module>.rs`'s unit test, and repoint it in the same change. A
+script's tests are already a file of their own, `test_<module>.py` beside it.
 
 ## 3. Design the tree, then cut toward it
 
@@ -48,9 +50,10 @@ docs alone, can they say where a concept lives, and where a new feature goes?
 
 **The design is the concept map's next version**: each concept's claims as the
 design draws them, and no **Not in one place** line it leaves standing. Draw it
-across crates first, then each crate's tree. A concept may span crates only
-along the layering (`docs/process.md`, "Seams"), each part saying why its crate
-holds it; a part with no such reason moves to the crate the layering names, and
+across crates and scripts first, then each crate's tree and each package's. A
+concept may span crates only along the layering (`docs/process.md`, "Seams"),
+each part saying why its crate holds it, and reaches a script only as that
+section says, the script's part saying why it is one; a part with no such reason moves to the crate the layering names, and
 a whole module changing crate edits `docs/design/decisions.md`, "D68", so it
 goes to the maintainer as §4's answers do.
 

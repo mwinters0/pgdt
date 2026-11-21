@@ -333,10 +333,14 @@ the modules holding it in every crate, and why each crate holds its part. **A
 concept spans crates only along the layering** — data the cache persists in the
 model, value semantics in the codec, what decodes or builds Arrow in the query
 layer, a front end's syntax in its binary — and anything it scatters otherwise
-is listed against it until a round removes it. A round's design is the map's
-next version, so it is drawn across crates, never one crate at a time. Feature
-work keeps the map true as it grows: the spec places what a phase adds, and
-`scripts/concepts.py` fails on a production file no concept claims, or two do.
+is listed against it until a round removes it. **The scripts are code as the
+crates are**, metered and mapped alike: a concept reaches them where a script
+writes what a crate reads, or measures or checks what one does, and a package's
+concepts span it along the layering its own doc states. A round's design is the
+map's next version, so it is drawn across crates and scripts, never one crate at
+a time. Feature work keeps the map true as it grows: the spec places what a
+phase adds, and `scripts/concepts.py` fails on a production file or script no
+concept claims, or two do.
 
 **A phase closes on a tree that is not yet ideal.** What a round's read finds,
 rules a defect and does not remove goes to the seam register, marked at its

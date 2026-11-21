@@ -3,15 +3,23 @@
 Each concept the code holds, the crates and modules holding it, and why each
 crate holds its part. **Read it before deciding where new code goes.** The rule
 it serves is [`../process.md`](../process.md), "Seams"; `scripts/concepts.py`
-holds every production file in the workspace to exactly one concept here.
+holds every production file in the workspace, and every script, to exactly one
+concept here.
 
 A line `- **<crate>** — …` claims the backticked paths in it, relative to that
 crate's `src/`: a file, or a directory written with a trailing `/`, which
 claims everything under it and the `<dir>.rs` beside it. A crate root
 (`lib.rs`, `main.rs`) holding only its crate's doc, `mod` lines and
-re-exports is claimed by none. **A concept spans crates only along the
-layering** ([`decisions.md`](decisions.md), "D68", "D74"), and each crate's
-part says why it sits there. **Not in one place** names what today's tree
+re-exports is claimed by none. A line `- **scripts** — …` claims the same way
+relative to `scripts/`, a package's `__init__.py` holding only its doc being a
+root as a crate's is. **A concept spans crates only along the layering**
+([`decisions.md`](decisions.md), "D68", "D74"), and each crate's part says why
+it sits there. **The scripts are code as the crates are**, outside the
+workspace and linked by nothing in it: a concept reaches them where a script
+writes what a crate reads, or measures or checks what one does, its part saying
+why it is a script; the harness's concepts span its package along the layering
+its doc states (`scripts/measurement/__init__.py`), as a crate concept spans
+crates along D68's. **Not in one place** names what today's tree
 scatters and the layering does not explain; the `seams` skill's design removes
 it.
 
@@ -50,6 +58,9 @@ the compressed file pulled or fetched, the remote object
   the inflater over the zlib API, whichever engine a feature names — a leaf beneath io naming no `pg_dump`, as `xz-seek` is the
   `.xz` one's outside the workspace, so the source over it is io's and the
   container's addressing its own (D68).
+- **scripts** — `vendor_xz_seek.py`: `xz-seek`'s frozen copy in the repo's vendor tree,
+  re-synced from its own checkout and never patched in place (D14); a script,
+  the copy being no crate's to write.
 
 ## Memory and parallelism
 
@@ -404,6 +415,9 @@ a table's summary, DataFusion's statistics, `pgdt info --detail`
 - **datafusion-pgdump** — `statistics.rs`: the map's statistics as
   DataFusion's, and what a pushed filter or a fetch leaves of them.
 - **pgdt** — `info/statistics.rs`: what `pgdt info --detail` prints of them.
+- **scripts** — `row_density.py`: a real dump's rows per group at every
+  candidate size, read off `pgdt info --json`, the distribution the density
+  rule is written against (D82); a script, reading the binary's output.
 
 ## The replay
 
@@ -478,12 +492,12 @@ every arrangement `pgdt` resolves holds beside its readers
 
 ## The fixture vocabulary
 
-What every crate's tests address the fixtures by: the generated tree and its
-enumerator, the sandboxes a test writes a cache beside, the multi-database
+The fixture tree and its generator, and what every crate's tests address the
+fixtures by: the tree's enumerator, the sandboxes a test writes a cache beside, the multi-database
 concatenation, the fields PostgreSQL refuses and how a sweep maps past them, a
 fixture mapped beside its cache, the eager pass the mapping pass is held to,
 the server's answers beside a dump, and the hand-written dump
-([`decisions.md`](decisions.md), "D68").
+([`decisions.md`](decisions.md), "D68", "D69").
 
 - **pgdt-fixtures** — `lib.rs`, `refused.rs`, `parsed.rs`, `eager.rs`, `answers.rs`: a
   member only a dev-dependency reaches, so every crate's tests share one copy
@@ -492,3 +506,184 @@ the server's answers beside a dump, and the hand-written dump
   a whole file mapped serially through the mapping pass's one open, and one
   block back-filled outside any pass — behind its `mapping` feature, called
   by tests alone and so no part of the mapping pass's API (D106).
+- **scripts** — `generate_fixtures.py`: the tree written, each major's own
+  `pg_dump` run over a server in a memory-limited container, schema by schema
+  across each one's flag matrix, and the oracles' answers taken in the same
+  database ("Agreement with PostgreSQL"); a script, since it drives servers,
+  which no crate does.
+
+## Agreement with PostgreSQL
+
+What PostgreSQL, its ADBC driver and `pg_dump` answer, read out of each
+producer, and the reconciliations joining every answer to the arm it is about
+([`decisions.md`](decisions.md), "D38", "D71", "D73").
+
+- **scripts** — `comparison_oracle.py`, `oracle_register.py`,
+  `oracle_differences.py`, `value_oracle.py`, `adbc_floor.py`,
+  `floor_mapping.py`, `emitter_register.py`: the server's comparisons, its
+  readings of every typed value and the driver's types, each case table with
+  the reconciliation holding the codec's register, typed arms and mapping to
+  it, the cross-major differ, and `pg_dump`'s literals and options read out of
+  its source and joined against the fixtures; scripts, since their producers
+  are servers and upstream checkouts no crate reads.
+
+## The record held to the code
+
+Each register against the code markers carrying its detail, every citation
+resolved, and the record's caps and growth
+([`../process.md`](../process.md), "Repointing").
+
+- **scripts** — `citations.py`, `deficiencies.py`, `upstream.py`,
+  `seam_register.py`, `pg_refuses.py`, `timescaledb_invariants.py`,
+  `major_differences.py`, `repoint.py`: a reconciler a register, and the
+  caps; read from outside, every crate's sources and docs alike.
+
+## The code's shape
+
+The code read against its size, its concept map, its module edges and its
+crate graph ([`../process.md`](../process.md), "Seams";
+[`decisions.md`](decisions.md), "D27", "D68", "D106").
+
+- **scripts** — `file_limits.py`, `concepts.py`, `module_graph.py`,
+  `layering.py`: the limits, stated once; this map held to the tree; every
+  module edge one way, off rust-analyzer; each crate's dependencies, what an
+  embedder may name, and each root's stance on `unsafe`.
+
+## The round's check
+
+Every check a round ends on, run once, logged whole and summarized short, the
+tree it tested stamped beside it ([`decisions.md`](decisions.md), "D110").
+
+- **scripts** — `check.py`: `mise run check`, and the suite the release
+  image runs.
+
+## The release
+
+The image `pgdt` is built in, the archives built there and published, and the
+window its Debian pin must sit in ([`decisions.md`](decisions.md), "D104",
+"D109", "D110"; [`release-invariants.md`](release-invariants.md)).
+
+- **scripts** — `release.py`, `release_ci.py`, `debian_window.py`: the image,
+  the builds and the suite run in it; what the two release workflows do with
+  them; and the pin against the window.
+
+## The apparatus
+
+What a reading is taken under: the memory-limited container, where everything
+is on this machine, the machine's state and the contention a reading is refused
+over, and what is refused before the first reading
+([`measurements.md`](measurements.md), "The apparatus").
+
+- **scripts** — `contained.py`, `measurement/config.py`,
+  `measurement/host.py`, `measurement/machine_state.py`,
+  `measurement/contention.py`, `measurement/preflight.py`: the container a
+  top-level script, since a hand run, a hook and the recipes run through it
+  as the harness does; the rest the bottom of the harness's package.
+
+## A reading
+
+What a timed run printed, read, and the numbers a table prints of it.
+
+- **scripts** — `measurement/parsing.py`, `measurement/formatting.py`:
+  `time`, the resident-set wrapper, the instruction counter, an instrument
+  build's report, the OOM killer and criterion read; medians and spreads in
+  the document's units.
+
+## The register's inputs
+
+Each file a figure reads: generated, stamped, staged where its regime reads
+it, and compared across two revisions when a generator changes
+([`measurements.md`](measurements.md), "The apparatus").
+
+- **scripts** — `measurement/inputs.py`, `measurement/staging.py`,
+  `measurement/verify_additive.py`, `generate_perf_data.py`,
+  `generate_block_count_bench.py`, `generate_dynamic_filter_bench.py`,
+  `generate_insert_run_bench.py`, `generate_large_object_bench.py`,
+  `generate_long_lines.py`, `generate_pruning_bench.py`,
+  `generate_repeated_rows.py`, `generate_xz_input.py`,
+  `generate_gzip_input.py`: the generators top-level scripts, a hand run and
+  a crate's tests running them as the harness does.
+
+## The memory model
+
+The library's memory charge, modelled from its constants: what a budget
+affords, what each reader, pool, block and gzip first pass holds, and the bands
+a reading refutes it by ([`decisions.md`](decisions.md), "I/O, memory and
+parallelism").
+
+- **scripts** — `measurement/memory_model.py`, `measurement/gzip_charge.py`.
+
+## The harness's builds
+
+Each binary a figure times, built in the release image once a sitting and asked
+which it is before it is timed, and the gate's twin beside the shipped build.
+
+- **scripts** — `measurement/builds/`, `measurement/gating.py`: the image
+  and its build the release script's, imported, never transcribed.
+
+## The figures
+
+What a figure runs and borrows, its declaration, and how it is taken and
+rendered: one figure, one table ([`measurements.md`](measurements.md), "The
+apparatus").
+
+- **scripts** — `measurement/runspec.py`, `measurement/shapes.py`,
+  `measurement/borrowing.py`, `measurement/figures/`: a timed command, a
+  borrowed reading and a subtraction; every named shape's in-container shell,
+  held to the harness's rules; what a re-take drags with it; the register in
+  run order; and a module a family, bound to its id in `figures.runners`.
+  A family spans the package's layering — its shapes below the session, its
+  declaration below the session and the stager, which read it by id, its
+  taking and rendering above both.
+
+**Not in one place.** A family's dry-run stand-in answers are branches of
+`Session.time_run` on seven families' command prefixes, and the prebuilt
+parallel scan's cache is `Session.prebuild`'s, with its mount in the run
+(`measurement/timing.py`): the session is generic, and a family's declaration,
+below it, could carry both.
+
+## The session
+
+A sitting run: every timed command, the sweeps interleaving them, and what it
+keeps of each run.
+
+- **scripts** — `measurement/timing.py`: readings, resident sets,
+  instruction counts and kills, kept for the families above it to render.
+
+## Staleness
+
+Which figures a change has invalidated, and what excuses a commit that touched
+a figure's paths and moved no reading ([`measurements.md`](measurements.md), "A
+stale figure does not oblige a sweep").
+
+- **scripts** — `measurement/staleness/`, `measurement/git.py`,
+  `acknowledged.py`: each figure's declared paths against what git says
+  changed, the document's markers, the sections outside the register; the
+  acknowledgement register a top-level script, so an entry stales no figure,
+  `session-drift` declaring the package.
+
+## A sitting's record
+
+A sitting emitted into [`measurements.md`](measurements.md), re-rendered from
+its raw readings, the register reconciled against the document, and two
+sittings differenced.
+
+- **scripts** — `measurement/emit.py`, `measurement/replay.py`,
+  `measurement/check.py`, `measurement/consumers.py`, `measurement/drift.py`:
+  the stamp and each figure's section, `--render`, `--check`, who repeats a
+  figure, and `--drift`.
+
+## Instruments outside the register
+
+What is not a figure: a profile, a heap recording, a callgrind count and the
+koji run printed rather than run, and a change's instructions counted against
+its parent ([`roadmap.md`](roadmap.md), "Attribution is introspective; only
+the gate is blind"; [`decisions.md`](decisions.md), "D108").
+
+- **scripts** — `measurement/recipes/`, `measurement/count_pair.py`.
+
+## The harness's command line
+
+`measure.py`'s flags, each dispatched to the package beside it.
+
+- **scripts** — `measure.py`: the package's root holds its doc alone.

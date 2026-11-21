@@ -29,6 +29,11 @@ Prose naming `a/b.rs` and `other/` claims nothing.
 
 - **lib-a** — `stats.rs`: gathering.
 - **bin-b** — `report.rs`: printing.
+- **scripts** — `density.py`: measured.
+
+## The harness
+
+- **scripts** — `run.py`, `harness/`: the command line and its package.
 """
 
 TREE = {
@@ -44,6 +49,12 @@ TREE = {
     "crates/bin-b/Cargo.toml": "",
     "crates/bin-b/src/main.rs": "mod report;\nfn main() {}\n",
     "crates/bin-b/src/report.rs": "fn r() {}\n",
+    "scripts/density.py": "def d(): pass\n",
+    "scripts/test_density.py": "def test_d(): pass\n",
+    "scripts/run.py": "import harness\n",
+    "scripts/harness/__init__.py": '"""The package."""\n',
+    "scripts/harness/session.py": "def s(): pass\n",
+    "scripts/harness/test_session.py": "def test_s(): pass\n",
 }
 
 
@@ -58,7 +69,11 @@ class Reading(unittest.TestCase):
         )
         self.assertEqual(
             [(c, p) for c, p, _ in found["Statistics"]],
-            [("lib-a", "stats.rs"), ("bin-b", "report.rs")],
+            [("lib-a", "stats.rs"), ("bin-b", "report.rs"), ("scripts", "density.py")],
+        )
+        self.assertEqual(
+            [(c, p) for c, p, _ in found["The harness"]],
+            [("scripts", "run.py"), ("scripts", "harness/")],
         )
 
     def test_a_directory_claims_its_files_and_the_file_beside_it(self):
@@ -78,7 +93,35 @@ class Checking(unittest.TestCase):
     def test_a_map_matching_the_tree_passes(self):
         code, out = self.run_check()
         self.assertEqual(code, 0, out)
-        self.assertIn("2 concepts claim 5 files once each; 1 span crates, 1 not in one place", out)
+        self.assertIn(
+            "3 concepts claim 9 files once each, 4 of them scripts; 1 span crates, "
+            "2 reach the scripts, 1 not in one place",
+            out,
+        )
+
+    def test_an_unclaimed_script_is_caught(self):
+        code, out = self.run_check(tree=TREE | {
+            "scripts/tools/__init__.py": '"""A package no claim names."""\n',
+            "scripts/tools/lint.py": "def l(): pass\n",
+        })
+        self.assertEqual(code, 1)
+        self.assertIn("scripts/tools/lint.py is claimed by no concept", out)
+        self.assertNotIn("scripts/tools/__init__.py", out)
+
+    def test_a_package_root_claimed_twice_is_caught(self):
+        code, out = self.run_check(MAP.replace("`density.py`:", "`density.py`, `harness/__init__.py`:"))
+        self.assertEqual(code, 1)
+        self.assertIn("scripts/harness/__init__.py is claimed by 'Statistics' and 'The harness'", out)
+
+    def test_a_test_script_is_not_claimable(self):
+        code, out = self.run_check(MAP.replace("`density.py`:", "`density.py`, `test_density.py`:"))
+        self.assertEqual(code, 1)
+        self.assertIn("`test_density.py` names no production file", out)
+
+    def test_a_script_path_under_a_crate_is_caught(self):
+        code, out = self.run_check(MAP.replace("`stats.rs`: gathering", "`stats.rs`, `density.py`"))
+        self.assertEqual(code, 1)
+        self.assertIn("lib-a's `density.py` names no production file", out)
 
     def test_an_unclaimed_file_is_caught(self):
         code, out = self.run_check(tree=TREE | {"crates/lib-a/src/new.rs": "fn n() {}\n"})

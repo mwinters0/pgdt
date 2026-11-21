@@ -33,7 +33,7 @@ cd scripts && uv run repoint.py       # the record's caps, and its growth since 
 cd scripts && uv run file_limits.py   # every .rs and every .py under scripts/ against the size limits (`docs/process.md`, "Seams"); red means /seams
 cd scripts && uv run layering.py     # the crate graph (D68, D74) off `cargo metadata`, what an embedder may name, each root on `unsafe` (D27)
 cd scripts && uv run module_graph.py [--design <doc>] [--docs]  # every module edge one-way, off rust-analyzer; a design's moves checked before a cut
-cd scripts && uv run concepts.py     # every production .rs claimed by one concept in `docs/design/concepts.md`
+cd scripts && uv run concepts.py     # every production .rs and script claimed by one concept in `docs/design/concepts.md`
 cd scripts && uv run oracle_register.py && uv run floor_mapping.py && uv run oracle_differences.py
 cd scripts && uv run emitter_register.py [--extract]   # the emitter register; --extract reads the upstream checkouts
 cd scripts && uv run python -m unittest test_<script>   # one script's own tests; the harness's: discover -s measurement -t .
