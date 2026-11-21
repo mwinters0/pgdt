@@ -49,8 +49,9 @@ format change, and no behaviour moved but what the pair prices.
   contract stays one trait. A row-level trait for pieces under a block-level
   one would say this in the types, but 43.6's `Recorder` is one concrete type
   holding a block's observer or a piece's, which two traits would make
-  generic or two types. STATUS's "Decisions worth another look" carries the
-  call.
+  generic or two types. 43.6 splits it, the `Recorder` generic over its
+  observer (`roadmap-P43-block-model.md`, "One recorder, a held row split
+  once").
 - **The checker keeps a `Charge` that charges nothing.** It counts the
   checker among the observers the account may be short of. Without it, a
   strict parse's table of checks, which is attributed to statistics and

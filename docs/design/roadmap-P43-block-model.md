@@ -69,14 +69,27 @@ which refuses a sampled profile for placing a rise.
 **`Recorder` is pgdt-model's, under `internal`, on the derived side**: what a pass
 records of a block's rows is model's concept, read by every pass above it
 (`concepts.md`, "What a pass records of a block's rows"; D74), and it names only
-model and core. One concrete type holding an optional census and its fold, an
-optional observer, optional recorded rows and the row count. A held row is
+model and core. One type holding an optional census and its fold, an optional
+observer, optional recorded rows and the row count. A held row is
 `row(offset, raw)`; a streamed row is `begin_row`/`fold`/`end_row`, pgdt-dump's
 `FieldFold` implemented for it in place of `RowFold`; an interior piece is
 `piece()` and `absorb()` in file order; and `finish` is the shared half of today's
 close — ignored refusals taken, `checks_every_field`, the observer finished, a
 refusal answered — into a fresh `BlockRecord`. The longest line stays the
 scanner's, handed over in `CopyEnd`.
+
+**A piece's role is in the types, at both levels.** The observer contract splits
+in two: `RowObserver`, the row methods and `into_any`, and `BlockObserver:
+RowObserver`, adding `close`, `piece` returning a `Box<dyn RowObserver>` and
+`absorb` taking one. `Recorder<O: ?Sized>` is generic over its observer, with
+two instantiations, `Recorder<dyn BlockObserver>` and `Recorder<dyn RowObserver>`:
+the row methods and `FieldFold` are on every `O: RowObserver`, `piece`, `absorb`
+and `finish` on the block's alone, so neither a piece observer nor a piece's
+recorder carries a close it cannot answer. A piece splits no further, the
+checker's pieces included. Rejected: one trait, its piece answering the block
+methods with a panic that a one-type `Recorder` would carry up a level; two
+recorder types composing a shared row part, unless a piece's recorder turns out
+to hold a field differently from a block's.
 
 **The pass holds the recorder; `map::Builder` takes the record.** `Builder` loses
 `on_row`, its `pending_*` fields, `count_block`, `observe_block`, `record_rows`
@@ -191,7 +204,8 @@ then the row path one mechanism at a time, each priced on its own.
 5. **43.5** The observer contract's one-call close, and the `Gatherer` as three
    types. `--count-pair` on a data-level parse.
 6. **43.6** The `Recorder`: a held row split once, `RowFold` replaced, the three
-   hosts fed through it; `Builder` recording nothing, `on_copy_end` taking the
+   hosts fed through it; the observer contract split into its row and block
+   traits; `Builder` recording nothing, `on_copy_end` taking the
    record. `--count-pair` on a data-level parse.
 7. **43.7** The one open under per-pass policies, and the one close, the
    back-fill merging through `BlockRecord`; `map_forward`'s `CopyStart` arm
