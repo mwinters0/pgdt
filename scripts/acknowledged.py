@@ -2,15 +2,12 @@
 """The acknowledgement register: commits that touched a figure's declared paths
 without moving a reading.
 
-**This file exists so that acknowledging a commit is not self-defeating.** The
-register used to live in `measure.py`, which `session-drift` declares — so the
-very commit that added an entry marked that figure stale, and no entry can name
-its own sha. Chasing it with a follow-up commit moves the problem by one and
-never terminates. Nothing here is on any timing path, so no figure declares
-this file, and an ack-only commit now touches no measured path.
-
-`measure.py` re-exports both names, so `measure.ACKNOWLEDGED` and
-`measure.Acknowledged` still resolve.
+**This file exists so that acknowledging a commit is not self-defeating.**
+`session-drift` declares the harness's source, so a register kept there would
+mark that figure stale by the very commit adding an entry, and no entry can
+name its own sha. Chasing it with a follow-up commit moves the problem by one
+and never terminates. Nothing here is on any timing path, so no figure
+declares this file, and an ack-only commit touches no measured path.
 """
 
 from __future__ import annotations
@@ -66,7 +63,7 @@ class Acknowledged:
     #: Any spelling `git rev-parse` resolves. Normalised before comparison, so
     #: the short sha that `--stale` prints is what gets recorded.
     commit: str
-    #: The ids this excuses: figures, and the declared sections `measure.NOT_OURS`
+    #: The ids this excuses: figures, and the declared sections `measurement.staleness.outside_sections.NOT_OURS`
     #: holds, which the same register discharges. Empty means **every figure and
     #: no declared section** — right only for a change no figure's subject can
     #: see, and rare enough to be suspicious. A declared section is reached only
@@ -90,7 +87,7 @@ class Acknowledged:
 #: spent, and `--check` names it so it is deleted rather than kept as sediment.
 #:
 #: **It is also the state comment-only entries no longer reach.** That oracle
-#: is syntactic, so `measure.comment_only_commit` decides it per commit and per
+#: is syntactic, so `measurement.staleness.comments.comment_only_commit` decides it per commit and per
 #: path and `--stale` skips the commit without being told — which is what the
 #: three entries that used to stand here were doing by hand, at one extra
 #: commit apiece.

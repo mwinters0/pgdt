@@ -6,7 +6,7 @@
 #
 # The targets are the ones a checkout builds beyond its own: the release's
 # second, and the static one `peak-rss` and `count-instructions` are built
-# for on an x86-64 host (`scripts/measure.py`, `peak_rss_target`).
+# for on an x86-64 host (`scripts/measurement/builds/image.py`, `peak_rss_target`).
 # `rust-analyzer` is what `scripts/module_graph.py` reads the code's
 # references with, the release of it this compiler ships, and `rust-src` is
 # what it resolves the standard library through: without it every reference

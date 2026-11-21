@@ -190,7 +190,7 @@ fn the_registered_projection_widths_are_executable() {
     }
 }
 
-/// `PROJECTION_WIDTHS` and the flags `measure.py` derives for each, read out
+/// `PROJECTION_WIDTHS` and the flags `scripts/measurement/shapes.py` derives for each, read out
 /// of the harness rather than restated — a width added there is then run here
 /// without anyone remembering to.
 fn registered_widths() -> Vec<(usize, String)> {
@@ -199,9 +199,9 @@ fn registered_widths() -> Vec<(usize, String)> {
             "run",
             "python",
             "-c",
-            "import measure\n\
-             for w in measure.PROJECTION_WIDTHS:\n\
-             \x20   print(f'{w}\\t{measure.projection_flags(w)}')",
+            "from measurement import shapes\n\
+             for w in shapes.PROJECTION_WIDTHS:\n\
+             \x20   print(f'{w}\\t{shapes.projection_flags(w)}')",
         ])
         .current_dir(scripts_dir())
         .output()

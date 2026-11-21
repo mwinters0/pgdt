@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Every Rust file and every `scripts/*.py` against the size limits; red
-means a seams round.
+"""Every Rust file and every Python file under `scripts/` against the size
+limits; red means a seams round.
 
 The rule is `docs/process.md`, "Seams"; this is its check, and the one place
 the numbers are stated. The harness is code as the workspace is, so a script
@@ -291,10 +291,15 @@ def read_script(path: Path, rel: str, is_test: bool) -> Reading:
 
 
 def script_readings(repo: Path) -> list[Reading]:
-    """Every `scripts/*.py`, a `test_*.py` as a test file."""
+    """Every Python file under `scripts/`, a package's modules as much as a
+    top-level script's, a `test_*.py` as a test file. A directory whose name
+    starts with a dot or an underscore holds no source of ours (`.venv`,
+    `__pycache__`)."""
+    scripts = repo / "scripts"
     return [
         read_script(path, path.relative_to(repo).as_posix(), path.name.startswith("test_"))
-        for path in sorted((repo / "scripts").glob("*.py"))
+        for path in sorted(scripts.rglob("*.py"))
+        if not any(part.startswith((".", "_")) for part in path.relative_to(scripts).parts[:-1])
     ]
 
 

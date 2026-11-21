@@ -115,11 +115,11 @@ the gate is blind").
 - **pgdt** — `introspect.rs`: what the process says about its memory and the
   factor its query planned, in an `introspect` build alone; `introspect/blocks.rs`
   its block tracker, the large blocks resident at each of those moments.
-- **peak-rss** — `main.rs`: the peak resident set `scripts/measure.py` reads.
+- **peak-rss** — `main.rs`: the peak resident set the measurement harness reads.
 - **count-instructions** — `main.rs`: the user-space instructions
-  `scripts/measure.py`'s `release-profile` figure reads beside its wall clock.
+  the harness's `release-profile` figure reads beside its wall clock.
 - **gzip-inflate** — `main.rs`: one gzip member inflated serially through a
-  named deflate backend, `scripts/measure.py`'s `inflate-throughput`
+  named deflate backend, the harness's `inflate-throughput`
   instrument; a member of its own because its zlib-ng leg builds under CMake
   (D111).
 

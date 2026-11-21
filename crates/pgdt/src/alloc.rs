@@ -207,7 +207,7 @@ pub use purge::RETAINED_BOUND;
 
 /// What `pgdt --version` names of the purge delay mimalloc runs under, so the
 /// harness asks the binary rather than trusting the variable it set
-/// (`scripts/measure.py`, `binary_purge_delay`); `MIMALLOC_VERBOSE` prints
+/// (`scripts/measurement/builds/leg_binaries.py`, `binary_purge_delay`); `MIMALLOC_VERBOSE` prints
 /// the options as the process loads, before `pgdt` sets its default. Empty on
 /// a build linking another allocator.
 ///
@@ -240,7 +240,7 @@ pub use purge::marker as purge_delay_marker;
 pub const MARKERS: &str = "(allocator: mimalloc)";
 /// The instrumented build says so **beside** the allocator rather than in
 /// place of it: it is mimalloc, with a counter in front of it.
-/// `scripts/measure.py`'s `binary_allocator` refuses a binary whose
+/// `scripts/measurement/builds/leg_binaries.py`'s `binary_allocator` refuses a binary whose
 /// `--version` carries this marker, keeping an instrumented build out of every
 /// timed table by construction.
 #[cfg(all(feature = "introspect", not(feature = "jemalloc"), not(feature = "system")))]

@@ -116,7 +116,7 @@ first of the other three rules it meets gives it:
 - **`docs/`, `.claude/` or a Markdown file** runs nothing. No Rust target
   names such a path or reads `docs/` or `.claude/` whole, a Markdown file in
   a data directory documenting it; the one Rust test reaching one does so
-  through a `test_*` module the scripts' `unittest` runs already, and the
+  through a package the scripts' `unittest` runs already, and the
   other scripts Rust tests run read none (`test_check` pins the first two).
 - **Anything else no test reads** -- the workspace manifest, the lockfile,
   `vendor/`, a tool's config -- runs every check, as without the flag.

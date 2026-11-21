@@ -2,7 +2,7 @@
 """Unit tests for comparison_oracle.py, run with
 `uv run python -m unittest test_comparison_oracle`.
 
-Stdlib `unittest`, no dependency added, same as test_measure.py.
+Stdlib `unittest`, no dependency added, same as the measurement harness's.
 
 Two halves, and the second is the one that decays. The unit tests below pin
 the parts a silent mistake would corrupt without failing anything -- a

@@ -23,7 +23,7 @@ the host may need a newer glibc than the image's; build it in the image
 handing it a Bash command, which it refuses when the command runs a built
 binary, `cargo run`, `cargo bench` or a profiler outside a container
 (`uncontained`). The printed recipes are held to the same classifier in
-`test_measure.py`.
+`scripts/measurement/recipes/test_recipes.py`.
 
 Usage:
 
@@ -53,7 +53,7 @@ DEFAULT_MEMORY = "4g"
 
 #: The largest limit a run may state, as a fraction of the machine's memory: a
 #: limit near the machine's is no limit. **The one ceiling**, a figure's own
-#: container held to it as this script's is (`measure.memory_preflight`).
+#: container held to it as this script's is (`measurement.preflight.memory_preflight`).
 MAX_FRACTION = 0.5
 
 #: The container runtime, as `release.py` names it.
@@ -92,7 +92,7 @@ def machine_bytes(meminfo: Path = Path("/proc/meminfo")) -> int:
 def check_memory(size: str, machine: int, what: str = "--memory") -> None:
     """Refuse a limit past `MAX_FRACTION` of the machine's memory: this
     script's `--memory`, and each container a figure's legs run in, which
-    `measure.memory_preflight` refuses before the first reading."""
+    `measurement.preflight.memory_preflight` refuses before the first reading."""
     if size_bytes(size) > machine * MAX_FRACTION:
         raise ValueError(
             f"{what} {size} is over {MAX_FRACTION:.0%} of this machine's "

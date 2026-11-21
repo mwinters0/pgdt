@@ -5,7 +5,7 @@
 brace-free `control`) into **one gzip member, the shape `pg_dump -Fp -Z`
 writes**: zlib's own deflate at `pg_dump`'s default level, with no flush point
 anywhere in it, behind the header every routine major writes
-(`PG_DUMP_HEADER`, which `test_measure.py` reads back off each major's
+(`PG_DUMP_HEADER`, which `measurement/figures/test_inflate.py` reads back off each major's
 `compress.sql.gz`) — no `FNAME`, `MTIME` 0, `XFL` 0, OS Unix. What the figure reads is how fast a
 first pass can inflate that shape serially, so a file of any other shape would
 be a reading of something `pg_dump` does not write.
@@ -16,7 +16,7 @@ at the parameters below, and Python's `zlib` is that `deflate` called with
 them. Which zlib it is decides the bytes — a zlib-ng
 build in compatibility mode would deflate the same plaintext into a different
 stream of blocks — so the version is checked against `ZLIB_VERSION` rather
-than recorded: the constant is in this file, which `measure.input_stamp`
+than recorded: the constant is in this file, which `measurement.inputs.input_stamp`
 hashes, so moving it regenerates the input and the figure reading it goes
 stale.
 

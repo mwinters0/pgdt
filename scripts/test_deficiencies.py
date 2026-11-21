@@ -2,7 +2,7 @@
 """Unit tests for deficiencies.py, run with
 `uv run python -m unittest test_deficiencies`.
 
-Stdlib `unittest`, no dependency added, same as test_measure.py. What is tested
+Stdlib `unittest`, no dependency added, same as the measurement harness's. What is tested
 is the half where a silent failure would be worst: not that a well-formed
 register passes -- the repo's own does that on every run -- but that each way of
 breaking it is *caught*. A reconciliation that quietly passes on a broken

@@ -34,7 +34,7 @@
 //!
 //! The container must let the call through: the runtime's default seccomp
 //! profile refuses `perf_event_open` without `CAP_PERFMON`, which the harness
-//! grants the counted legs alone (`measure.COUNT_INSTRUCTIONS_CAPS`).
+//! grants the counted legs alone (`measurement.parsing.COUNT_INSTRUCTIONS_CAPS`).
 
 use std::ffi::OsString;
 use std::io::{self, ErrorKind};

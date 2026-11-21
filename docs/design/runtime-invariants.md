@@ -611,7 +611,7 @@ has the file and reads all zeros.
 **Relied on by:** [`measurements.md`](measurements.md), "The apparatus" — the
 harness's kill oracle, which decides whether a killed leg is a censored reading
 or an apparatus failure, and bars a figure from publication either way; and
-`scripts/measure.py`, `_censored_constraint`, which states a killed leg as the
+`scripts/measurement/figures/reserve.py`, `_censored_constraint`, which states a killed leg as the
 constraint it proves and takes its wording from the fourth scope limit above.
 
 **Re-verify:**
@@ -691,7 +691,7 @@ behind every figure.
 
 ```sh
 getconf GNU_LIBC_VERSION                                   # the host's
-docker run --rm "$(cd scripts && uv run python -c 'import measure; print(measure.Config().image)')" \
+docker run --rm "$(cd scripts && uv run python -c 'from measurement import config; print(config.Config().image)')" \
   getconf GNU_LIBC_VERSION                                 # the figures', as pinned
 curl -sfL 'https://sourceware.org/git/?p=glibc.git;a=blob_plain;f=malloc/arena.c;hb=glibc-2.44' \
   | grep -n -A16 'static size_t narenas_limit'

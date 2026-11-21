@@ -30,17 +30,17 @@ cd scripts && uv run seam_register.py # the `S<k>` register vs the `seam: S<k>` 
 cd scripts && uv run pg_refuses.py && uv run timescaledb_invariants.py  # each `pg-refuses: I<n>`, `timescaledb: TS<n>` marker vs its entry's "Relied on by"
 cd scripts && uv run major_differences.py  # the `VD<n>` register, and no `VD<n>` cited outside it
 cd scripts && uv run repoint.py       # the record's caps, and its growth since the last blind read; red means /repoint
-cd scripts && uv run file_limits.py   # every .rs and scripts/*.py against the size limits (`docs/process.md`, "Seams"); red means /seams
+cd scripts && uv run file_limits.py   # every .rs and every .py under scripts/ against the size limits (`docs/process.md`, "Seams"); red means /seams
 cd scripts && uv run layering.py     # the crate graph (D68, D74) off `cargo metadata`, what an embedder may name, each root on `unsafe` (D27)
 cd scripts && uv run module_graph.py [--design <doc>] [--docs]  # every module edge one-way, off rust-analyzer; a design's moves checked before a cut
 cd scripts && uv run concepts.py     # every production .rs claimed by one concept in `docs/design/concepts.md`
 cd scripts && uv run oracle_register.py && uv run floor_mapping.py && uv run oracle_differences.py
 cd scripts && uv run emitter_register.py [--extract]   # the emitter register; --extract reads the upstream checkouts
-cd scripts && uv run python -m unittest test_<script>   # one script's own tests
+cd scripts && uv run python -m unittest test_<script>   # one script's own tests; the harness's: discover -s measurement -t .
 ```
 
-Every `scripts/*.py` has a `--help` and a `test_*.py`; the harness's own rules
-are asserted there, not remembered here.
+Every `scripts/*.py` has a `--help` and a `test_*.py`, `measure.py`'s beside its package's
+modules; the harness's own rules are asserted there, not remembered here.
 
 ## Long-running processes
 
@@ -52,7 +52,7 @@ act. Past it, **never waited on or monitored** — that expires the prompt cache
 Then record the launch and its log in today's history entry. Stop it by process
 group (`pkill -g <pgid>`); nothing else builds or tests while a sweep runs.
 `measure.py --koji-recipe` prints the koji invocation with every path filled
-in; its load-bearing details are asserted by `scripts/test_measure.py`.
+in; its load-bearing details are asserted by `scripts/measurement/recipes/test_koji.py`.
 Never edit a `runs/` orchestration script while it is running.
 
 ## Where things are, and when to read them

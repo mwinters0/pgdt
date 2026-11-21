@@ -853,7 +853,7 @@ class ThisRepo(unittest.TestCase):
     def test_a_profile_leg_is_the_release_build_under_another_profile(self):
         # Cargo refuses `--release` beside `--profile`, so the one replaces the
         # other and nothing else moves; the binary lands in the profile's own
-        # directory, which is where `measure.ensure_profile_binary` copies from.
+        # directory, which is where `measurement.builds.leg_binaries.ensure_profile_binary` copies from.
         shipped = release.Build().cargo_argv()
         leg = release.Build(profile="release-fat").cargo_argv()
         at = shipped.index("--release")

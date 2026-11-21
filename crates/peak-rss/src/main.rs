@@ -9,7 +9,7 @@
 //! convention — so a kill stays a kill to whatever reads the exit status —
 //! unless `getrusage` itself fails, when it exits 1 with neither line. The
 //! cgroup's `memory.events` still says whether the kill was the OOM reaper's,
-//! which no exit status can (`measure.OOM_ORACLE`). A command that cannot be
+//! which no exit status can (`measurement.parsing.OOM_ORACLE`). A command that cannot be
 //! started exits 127 where it was not found and 126 otherwise, writing no
 //! `maxrss_kib` line, since nothing ran.
 //!

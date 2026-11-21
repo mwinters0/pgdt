@@ -327,7 +327,7 @@ pub(crate) enum Reach {
 /// through the block's [`Recorder`](crate::internal::Recorder).
 ///
 /// What it costs a scan is read off a profile of a data-level `parse`
-/// (`scripts/measure.py`, `PROFILE_SHAPES`), not off a build without it.
+/// (`scripts/measurement/recipes/profile.py`, `PROFILE_SHAPES`), not off a build without it.
 pub(crate) struct CensusFold {
     census: BlockCensus,
     width: usize,

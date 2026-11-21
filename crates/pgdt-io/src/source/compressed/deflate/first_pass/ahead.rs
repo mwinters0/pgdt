@@ -53,7 +53,7 @@ const CHUNK_BYTES: NonZeroU64 = NonZeroU64::new(4 << 20).unwrap();
 
 /// The input chunk every gzip decode pulls in place of the shipped length,
 /// the limit held: the `gzip-first-pass` figure's chunk-length leg, which is
-/// never shipped (`scripts/measure.py`, `GZPASS_CHUNK_LEG`).
+/// never shipped (`scripts/measurement/builds/leg_binaries.py`, `GZPASS_CHUNK_LEG`).
 #[cfg(feature = "gzip-1mib-chunks")]
 const CHUNK_BYTES: NonZeroU64 = NonZeroU64::new(INPUT_CHUNK).unwrap();
 

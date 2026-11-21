@@ -3,7 +3,7 @@
 //! [`MARKER`] is read from outside the process as `alloc::MARKERS` is: the
 //! `release-profile` figure builds one leg per profile and asks each binary
 //! which it is before timing it, rather than trusting the flag it passed
-//! (`scripts/measure.py`, `binary_profile`). The name comes from
+//! (`scripts/measurement/builds/leg_binaries.py`, `binary_profile`). The name comes from
 //! `build.rs`, which says how it is found.
 
 /// `(profile: <name>)`: `release` for the shipped build, a leg's own profile

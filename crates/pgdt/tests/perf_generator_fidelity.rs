@@ -137,7 +137,7 @@ fn the_perf_generator_writes_what_pgdt_reads_back() {
 /// `v_smallint` bounded in every group with no dictionary in any, so the
 /// figure's filter on it consults every group's bounds and skips none.
 ///
-/// At the figure's own group size, `measure.GATHER_STATISTICS`'s, because the
+/// At the figure's own group size, `measurement.shapes.GATHER_STATISTICS`'s, because the
 /// last of those rests on how many rows a group holds: a group of at most a
 /// dictionary's cap in rows keeps one, and a dictionary lacking the literal
 /// skips the group. A whole number of MiB, so the last group is full.
@@ -185,7 +185,7 @@ fn the_pruning_generator_writes_the_statistics_its_figure_prices() {
     assert!(smallint.contains("unsorted"), "{smallint}");
     assert!(smallint.contains(&format!("bounds in {groups} of {groups} group(s)")), "{smallint}");
     assert!(smallint.contains("dictionary in 0 of"), "{smallint}");
-    // The filter `measure.PRUNING_FILTERS` states, consulted and skipping
+    // The filter `measurement.shapes.PRUNING_FILTERS` states, consulted and skipping
     // nothing: the note is printed only where statistics were consulted.
     let query = |cache: &str| {
         let queried = run(&[

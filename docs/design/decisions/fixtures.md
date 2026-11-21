@@ -44,7 +44,8 @@ adopts the refusal by its spec. Rejected: one count a leg; determinized shapes (
 profile placing it (line tables move the code); a materiality floor; rework resting on codegen
 (`ChunkEvents::end_pass`), a moved test spelled back as the parent had it among them (`FieldCount::tier`'s `Held`); a
 new row for a rise placed off its row's code (the row owns it). Code: `cmd_count_pair`, `callgrind_recipe`. Evidence:
-`test_measure.py`'s `CountPair` and `CallgrindRecipe`.
+`scripts/measurement/test_count_pair.py`'s `CountPair` and `recipes/test_callgrind.py`'s
+`CallgrindRecipe`.
 
 ### D155 A run of landed commits is counted as an account by a flag of its own, never priced
 `--count-span <base>..<tip>` counts the shipped build at both ends of a run of landed commits as D108's pair counts
@@ -54,7 +55,7 @@ commits sum to, never a price, though a rise its residual places is reworked or 
 Rejected: `--count-pair` relaxed, or given a span modifier (a pricing run handed a span by a typo); spans refused
 (pairs summed with nothing checking they are the whole); a pair's refusal naming `--count-span` (a mistyped price
 re-run as an account); a residual named and left unjudged (a cost accepted by nobody). Code: `count_span_named`,
-`cmd_count_pair`. Evidence: `test_measure.py`'s `CountPair`.
+`cmd_count_pair`. Evidence: `scripts/measurement/test_count_pair.py`'s `CountPair`.
 
 ### D130 A table read with its descendants is checked against the server's answers over a restore of its dump
 Each flag set's dump of `inheritance`, `partitions` and `timescaledb` is restored into a fresh database, TimescaleDB's

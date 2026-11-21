@@ -684,7 +684,7 @@ class Build:
     profile: str = "release"
     #: `RUSTFLAGS` for this build alone, in a target directory of its own: the
     #: profile recipe's frame pointers, which no Cargo profile key states
-    #: (`scripts/measure.py`, `profile_recipe`).
+    #: (`scripts/measurement/recipes/profile.py`, `profile_recipe`).
     rustflags: str = ""
 
     def cargo_argv(self) -> list[str]:

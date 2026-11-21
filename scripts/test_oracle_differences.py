@@ -2,7 +2,7 @@
 """Unit tests for oracle_differences.py, run with
 `uv run python -m unittest test_oracle_differences`.
 
-Stdlib `unittest`, no dependency added, same as test_measure.py.
+Stdlib `unittest`, no dependency added, same as the measurement harness's.
 
 Two halves, as in test_comparison_oracle.py. The unit tests below pin the
 classification and the file's round trip against a synthetic tree, so a change

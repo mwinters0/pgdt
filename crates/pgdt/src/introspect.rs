@@ -96,7 +96,7 @@ mod blocks;
 ///
 /// **Unset means no report at all**, which is the only state a default build
 /// can be in. Shared in fact rather than in type with
-/// `measure.INSTRUMENT_OUT_VAR`; `scripts/test_measure.py` holds the two to
+/// `measurement.parsing.INSTRUMENT_OUT_VAR`; `scripts/measurement/figures/test_reserve.py` holds the two to
 /// each other.
 ///
 /// Compiled into both configurations; only the feature build reads it.
@@ -353,7 +353,7 @@ mod enabled {
     /// `planned_factor`, a plan's ratio rather than a heap's bytes, carries
     /// none — and [`SCOPE_NOTE`] follows the counter's lines; the note's
     /// lines carry no `=`, so
-    /// `measure.parse_reported` ignores them as it ignores the XML below.
+    /// `measurement.parsing.parse_reported` ignores them as it ignores the XML below.
     pub fn report_text() -> String {
         let mut out = String::from("instrument=counting-allocator\n");
         out.push_str("live_scope=rust-global-alloc\n");
@@ -415,7 +415,7 @@ mod enabled {
             out.push_str(&format!("{key}={value}\n"));
         }
         // Verbatim, after the keys: no line of it is `key=value`, so
-        // `measure.parse_reported` reads none of it.
+        // `measurement.parsing.parse_reported` reads none of it.
         out.push_str("# mi_stats_json\n");
         out.push_str(&json);
         if !json.ends_with('\n') {
@@ -461,7 +461,7 @@ mod enabled {
                 out.push_str(&format!("malloc_system_current={}\n", totals.system_current));
                 out.push_str(&format!("malloc_system_max={}\n", totals.system_max));
                 // Verbatim, after the keys: every line fails
-                // `measure.parse_reported`'s `key=value` match.
+                // `measurement.parsing.parse_reported`'s `key=value` match.
                 out.push_str("# malloc_info\n");
                 out.push_str(&xml);
                 if !xml.ends_with('\n') {
@@ -623,7 +623,7 @@ mod instrumented_tests {
     }
 
     /// Mimalloc's verbatim JSON, not one of the report's own readings, must be
-    /// invisible to `measure.parse_reported`, whose grammar is
+    /// invisible to `measurement.parsing.parse_reported`, whose grammar is
     /// `^[a-z_]+=\S+$`.
     #[test]
     fn only_the_readings_parse_as_readings() {
@@ -645,7 +645,7 @@ mod instrumented_tests {
         }
     }
 
-    /// A plan's factor is one `key=value` line `measure.parse_reported`
+    /// A plan's factor is one `key=value` line `measurement.parsing.parse_reported`
     /// reads, as `held/per`, and no line where nothing was planned.
     #[test]
     fn a_planned_factor_is_one_reading() {
@@ -656,7 +656,7 @@ mod instrumented_tests {
     }
 
     /// The note explaining the two scopes must not itself parse as a reading:
-    /// `measure.parse_reported` takes every `key=value` line in the file, so a
+    /// `measurement.parsing.parse_reported` takes every `key=value` line in the file, so a
     /// note line carrying one would enter the report as a fact.
     #[test]
     fn the_prose_lines_are_invisible_to_the_key_value_parse() {

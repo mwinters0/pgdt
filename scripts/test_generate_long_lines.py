@@ -140,7 +140,7 @@ class GenerateLongLines(unittest.TestCase):
                     gen.field_bytes(kind, line_bytes)
 
     def test_the_id_is_nullable_and_every_row_holds_one(self):
-        # `measure.LONG_LINE_SQL` filters on `id IS NOT NULL` so that its
+        # `measurement.shapes.LONG_LINE_SQL` filters on `id IS NOT NULL` so that its
         # `count(v)` reads every value: a column declared `NOT NULL` lets the
         # filter be simplified away, and the count be answered from the plan
         # node's statistics with no row read.

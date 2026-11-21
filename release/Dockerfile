@@ -38,7 +38,7 @@ RUN set -eu; \
 # glibc needs; `xz-utils`, `util-linux` (`unshare`), `procps` (`kill`), `git`
 # and `python3` are what the suite runs beside the binaries it builds. `make`
 # builds jemalloc for the register's `jemalloc` allocator leg
-# (`scripts/measure.py`, `ALLOCATOR_LEGS`), which is built here beside the
+# (`scripts/measurement/builds/leg_binaries.py`, `ALLOCATOR_LEGS`), which is built here beside the
 # shipped binary; no release artifact links it. Rejected: an image derived from
 # this one for that leg alone, a second image and build path guarding against a
 # build script in the shipped closure looking for `make`, of which there is none.

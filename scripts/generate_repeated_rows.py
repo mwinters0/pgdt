@@ -12,7 +12,7 @@ chunks packing tighter than its mean, and no reading over it can say whether
 the charge is a bound (`docs/design/decisions.md`, "D124"). A row repeated in a run is coded as matches into the copy
 before it, which deflate's window holds, `control`'s rows being far shorter
 than the window, so the member packs several times tighter; `REPEAT` is chosen
-so it does with room over the limit's ratio, which `measure.run_gzip_resident`
+so it does with room over the limit's ratio, which `measurement.figures.gzip_resident.run_gzip_resident`
 holds the generated file to before it reads a leg (`gzip_limit_ratio_problem`).
 
 **The plaintext stays the source's size, block by block.** A row is kept only
@@ -52,8 +52,8 @@ import generate_gzip_input as gz
 #: How many times each kept row is written: enough that `control`'s rows pack
 #: well past the speculation limit's ratio at `pg_dump`'s level 6, so every
 #: chunk's plaintext reaches the limit and not only the file's mean, which
-#: `measure.gzip_limit_ratio_problem` asks of the generated file. Moving it
-#: moves the bytes, which `measure.input_stamp` hashes.
+#: `measurement.figures.gzip_resident.gzip_limit_ratio_problem` asks of the generated file. Moving it
+#: moves the bytes, which `measurement.inputs.input_stamp` hashes.
 REPEAT = 8
 
 #: What opens a `COPY` block's data, and what ends it.

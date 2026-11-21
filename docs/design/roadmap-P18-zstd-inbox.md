@@ -102,7 +102,7 @@ the program holds unbilled (`KD111`), neither codec-specific, though on the
 shipped build's mimalloc the published `reserve` figure's 128 MiB-block cells
 at four and five readers overrun it where their `system` twins do not, and a
 re-take at `5629ecfa` holds them inside it — or re-derives it, which needs no new sitting if the phase's own resident readings cover more
-than one reader count. `scripts/measure.py`'s `charge_model_problem` is what
+than one reader count. `scripts/measurement/memory_model.py`'s `charge_model_problem` is what
 would report it: its inner fault line is exactly this constant.
 
 **Origin.** The margin constant's derivation, 2026-09-12

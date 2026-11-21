@@ -240,11 +240,17 @@ class Workspace(unittest.TestCase):
             self.assertFalse(found["a/src/m.rs"].is_test)
             self.assertEqual(found["a/src/m.rs"].fns, 1)
 
-    def test_scripts_are_the_top_level_py_files_and_test_ones_are_test_files(self):
+    def test_scripts_are_every_py_file_under_scripts_and_test_ones_are_test_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self.make(tmp)
+            (repo / "scripts/.venv/lib").mkdir(parents=True)
+            (repo / "scripts/.venv/lib/site.py").write_text("def h():\n    pass\n")
+            (repo / "scripts/sub/__pycache__").mkdir()
+            (repo / "scripts/sub/__pycache__/deep.py").write_text("def h():\n    pass\n")
             found = {r.path: r for r in fl.script_readings(repo)}
-            self.assertEqual(sorted(found), ["scripts/test_tool.py", "scripts/tool.py"])
+            self.assertEqual(
+                sorted(found), ["scripts/sub/deep.py", "scripts/test_tool.py", "scripts/tool.py"]
+            )
             self.assertTrue(found["scripts/test_tool.py"].is_test)
             self.assertEqual((found["scripts/tool.py"].code, found["scripts/tool.py"].fns), (2, 1))
 

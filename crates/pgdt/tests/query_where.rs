@@ -250,7 +250,7 @@ fn the_registered_predicate_shapes_are_executable() {
     }
 }
 
-/// `PREDICATE_SHAPES` and the expression `measure.py` derives for each, read
+/// `PREDICATE_SHAPES` and the expression `scripts/measurement/shapes.py` derives for each, read
 /// out of the harness rather than restated.
 fn registered_predicates() -> Vec<(String, String)> {
     let out = Command::new("uv")
@@ -258,9 +258,9 @@ fn registered_predicates() -> Vec<(String, String)> {
             "run",
             "python",
             "-c",
-            "import measure\n\
-             for s in measure.PREDICATE_SHAPES:\n\
-             \x20   print(f'{s}\\t{measure.predicate_expr(s)}')",
+            "from measurement import shapes\n\
+             for s in shapes.PREDICATE_SHAPES:\n\
+             \x20   print(f'{s}\\t{shapes.predicate_expr(s)}')",
         ])
         .current_dir(scripts_dir())
         .output()

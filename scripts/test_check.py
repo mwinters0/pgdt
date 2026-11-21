@@ -1188,11 +1188,16 @@ class RealWorkspace(unittest.TestCase):
             for t in p.targets
             for s in t.sources
             for lit in check.string_literals((check.REPO / s).read_text(encoding="utf-8"))
-            if lit.startswith("test_") and lit.isidentifier()
+            if (lit.startswith("test_") and lit.isidentifier())
+            or (lit.isidentifier() and (check.REPO / "scripts" / lit / "__init__.py").is_file())
         }
-        self.assertIn("test_measure", named)
+        self.assertIn("measurement", named)
         for module in named:
-            self.assertTrue((check.REPO / "scripts" / f"{module}.py").is_file(), module)
+            scripts = check.REPO / "scripts"
+            self.assertTrue(
+                (scripts / f"{module}.py").is_file() or (scripts / module / "__init__.py").is_file(),
+                module,
+            )
 
     def test_a_fixture_reaches_the_sweeps_and_a_binary_change_its_package(self):
         load = lambda _: self.packages  # noqa: E731

@@ -69,8 +69,8 @@ Eighteen standing rules for reading anything below:
   anything read off their reps subtracts one input's reading from another's,
   rep by rep or median against median — a table row, a sentence or heading,
   or another figure consuming them. Each such reading is declared by the
-  figure that reads it (`measure.Subtraction`), and `scripts/test_measure.py`
-  holds every declared pair to one of its source's sweeps. A reading
+  figure that reads it (`measurement.runspec.Subtraction`), and
+  `scripts/measurement/test_staging.py` holds every declared pair to one of its source's sweeps. A reading
   normalised within its own sweep — a shape against its own floor, a share
   against a seed floor — may be set beside another sweep's, never subtracted
   from it, and a raw absolute is quoted within its own sweep. Session-to-session level shifts of up
@@ -90,7 +90,7 @@ Eighteen standing rules for reading anything below:
   warm-set sweep below — against which a 3.00 GiB warm `parse` of the
   brace-free control is **0.409 s** timed by the container's own shell. So the
   timed command is `bash -c 'time /pgdt …'`, asked for six decimals and user
-  and sys beside them (`measure.TIME_FORMAT`), which the image's bash 5.2
+  and sys beside them (`measurement.parsing.TIME_FORMAT`), which the image's bash 5.2
   clamps to three: a reading resolves a millisecond, the precision every
   table quotes below two seconds. This does not license running a figure outside the
   container to avoid the cost — the cgroup limit is part of the apparatus, and
@@ -107,14 +107,14 @@ Eighteen standing rules for reading anything below:
   part of the apparatus** — its `malloc` the C dependencies', the Rust heap
   being mimalloc's in the default build and glibc's only in the `system` leg
   ("Which allocator a figure was taken under"). **The image is pinned by
-  digest** (`measure.Config.image`), a tag being free to move under the
+  digest** (`measurement.config.Config.image`), a tag being free to move under the
   register
   ([`../status/history/2026-09-26.md`](../status/history/2026-09-26.md), "The
   register's image has moved under it"). **Which
-  glibc a figure ran under is asked, not assumed**: `measure.glibc_of` runs
+  glibc a figure ran under is asked, not assumed**: `measurement.builds.leg_binaries.glibc_of` runs
   `getconf GNU_LIBC_VERSION` in whichever image a figure's program runs — the
   base, or the release image itself for `nested-decode-micro`'s `cargo bench`
-  (`measure.bench_in_image`) — and refuses an image answering with none. The
+  (`measurement.figures.micro.bench_in_image`) — and refuses an image answering with none. The
   session stamp names the base's, and a figure's marker names its own
   wherever the stamp does not speak for it: a program run under another
   glibc, and every figure of a sitting of its own. `--check` fails a stamp or a sitting marker naming
@@ -136,14 +136,14 @@ Eighteen standing rules for reading anything below:
   `allocator` leg, each `release-profile` leg, the instrument, the
   `xz_decode` example, the `gzip-inflate` member and each engine leg of
   `pgdt-gzip-seek`'s `gz_read` example — is built in
-  the release image (`measure.build_in_image`), so a figure's two builds
+  the release image (`measurement.builds.image.build_in_image`), so a figure's two builds
   differ by what it names and never by a compiler or a glibc; and the image
-  they run in is that image's base by its digest (`measure.register_image`),
+  they run in is that image's base by its digest (`measurement.config.register_image`),
   so one pin, `release/Dockerfile`'s, names the build's glibc, the floor a
   release promises and the runtime every figure stands on
   ([`decisions.md`](decisions.md), "D104").
   The pin moves only through `upgrade-deps`, and the next stamp names its
-  glibc. Before the first reading `measure.apparatus_preflight` starts `pgdt
+  glibc. Before the first reading `measurement.preflight.apparatus_preflight` starts `pgdt
   --version` in the image and refuses a sweep whose binary does not load —
   one built anywhere else, which `PGDT_MEASURE_BIN` can name.
 
@@ -189,10 +189,10 @@ Eighteen standing rules for reading anything below:
   provider legs state it as `target_partitions`,
   `parallel-peak-rss`, and `xz-decode-scaling` in its instrument's `--workers`),
   the `reserve` figure's stated legs, which hold the count at
-  `measure.RESERVE_JOBS` and vary the budget, and that figure's flagless legs,
+  `measurement.shapes.RESERVE_JOBS` and vary the budget, and that figure's flagless legs,
   whose reading is the count a run stating nothing resolves. The `dd` floor
   states no count because it is not a run of `pgdt`, and neither do the
-  `gzip-inflate` and `gz_read` instruments, serial by construction (`measure._NO_WORKERS`). koji is
+  `gzip-inflate` and `gz_read` instruments, serial by construction (`measurement.shapes._NO_WORKERS`). koji is
   the one invocation that takes the count as a parameter (`--koji-jobs`),
   because what it checks is a leg at some count against a serial one rather
   than a table. **1 is what the published sitting measured**, every shape here
@@ -200,7 +200,7 @@ Eighteen standing rules for reading anything below:
   the apparatus rather than replacing it; raising it
   is an apparatus change and obliges a re-sweep, exactly as changing the
   allocator would.
-- **Every `parse` states the metadata level (`measure.NO_STATISTICS`), for
+- **Every `parse` states the metadata level (`measurement.shapes.NO_STATISTICS`), for
   the same reason.** `parse` records at the data level by default, reading
   every value of every column, so a shape inheriting that default would time
   the gathering rather than the scan its figure names. Stamps before
@@ -213,10 +213,10 @@ Eighteen standing rules for reading anything below:
   `statistics-pruning`, and the dynamic-filter figures, whose untimed builder
   leaves the statistics their scans prune by — and they are the one
   exemption, with the query figures' untimed builder
-  (`measure.DATA_LEVEL_QUERIES`): each of their `pgdt query` runs reads a
+  (`measurement.shapes.DATA_LEVEL_QUERIES`): each of their `pgdt query` runs reads a
   data-level cache written ahead of its timer and states `--statistics none`,
   so it times neither a mapping pass nor pruning. A `parse` of theirs that gathers states
-  `measure.GATHER_STATISTICS`, the request and the group size alike, and
+  `measurement.shapes.GATHER_STATISTICS`, the request and the group size alike, and
   `--check` holds them to that rather than to nothing.
 - **Never quote a standard error or a *t* from one sweep — give the median and
   the observed spread.** Within-sweep dispersion measures the *reps*, not the
@@ -494,12 +494,12 @@ whose glibc binaries built there are held to and which carries `perf`,
 its own path. Its limit guards the machine and is no figure's budget, so a
 shape stating no allowance discovers it. **Half the machine is the one ceiling**
 (`contained.MAX_FRACTION`): `contained.py` refuses a `--memory` past it, and
-`measure.memory_preflight` a sweep with any figure's container past it, before
+`measurement.preflight.memory_preflight` a sweep with any figure's container past it, before
 the first reading.
 **The rule is checked, not remembered**: a `PreToolUse` hook
 (`.claude/settings.json`) refuses a Bash command running a built binary, `cargo
-run`, `cargo bench` or a profiler outside a container, and `test_measure.py`'s
-`ReadingsContained` holds every printed recipe line to that classifier.
+run`, `cargo bench` or a profiler outside a container, and
+`measurement/recipes/test_recipes.py`'s `ReadingsContained` holds every printed recipe line to that classifier.
 *Rejected:* a profile on the host, the cgroup changing no proportion it reads;
 a heaptrack recording on the host, its bookkeeping meeting the limit, which its
 figure's own container plus a stated heaptrack term does not, each recording
@@ -531,7 +531,7 @@ no number under it. The harness's own tests assert that none of its commands
 does this; the trap is recorded because a hand-run one still can.
 
 **The worker count is in that line because it is stated rather than inherited**
-— `measure.SWEEP_JOBS`, carried by every shape `_script` builds outside the
+— `measurement.shapes.SWEEP_JOBS`, carried by every shape `_script` builds outside the
 exemptions below, by the profile recipe's argv, and by the two untimed
 invocations that publish numbers all the same: the host `parse` the per-row
 divisors come from and the `strace`d save count the quadratic table quotes.
@@ -541,9 +541,9 @@ against the harness's, so raising one without the other fails.
 **A figure whose *axis* is the worker count is the first of three exemptions,
 and it is declared rather than inferred.** Such a figure's rows are the counts,
 so it cannot state one for all of them; its command shapes are named in
-`measure.JOBS_AXIS` and take theirs from `measure.PARALLEL_JOBS`, and the decode
-instrument's take their `--workers` from `measure.DECODE_WORKERS` and the gzip
-first pass's their `--jobs` from `measure.GZPASS_JOBS`, each family exempted by
+`measurement.shapes.JOBS_AXIS` and take theirs from `measurement.shapes.PARALLEL_JOBS`, and the decode
+instrument's take their `--workers` from `measurement.shapes.DECODE_WORKERS` and the gzip
+first pass's their `--jobs` from `measurement.shapes.GZPASS_JOBS`, each family exempted by
 its own prefix; each such figure's own table states what it varied. That is an exemption from the *constant*, never from stating a count:
 `worker_count_problems` still refuses a shape that pins nothing, and
 `pinned_count_problems` refuses one that pins some third number without
@@ -551,14 +551,14 @@ declaring itself an axis.
 
 **The second is a figure that holds the count fixed and varies something else:
 the `reserve` figure's stated-budget axis and its path step**
-(`measure.RESERVE_FAMILY`, `measure.RESERVE_STEP_FAMILY`), which state
-`measure.RESERVE_JOBS` — the top of `PARALLEL_JOBS` — on every shape, and are
+(`measurement.shapes.RESERVE_FAMILY`, `measurement.shapes.RESERVE_STEP_FAMILY`), which state
+`measurement.shapes.RESERVE_JOBS` — the top of `PARALLEL_JOBS` — on every shape, and are
 exempted from `SWEEP_JOBS` by prefix in `pinned_count_problems` exactly as an
 axis is. They still state a count, so `worker_count_problems` holds them.
 
 **The third exemption is from stating a count at all, and it is the only
 `pgdt` family that has one: the flagless legs of the `reserve` figure**
-(`measure.RESERVE_FLAGLESS`, named in `measure._NO_FLAGS`), black-box and
+(`measurement.shapes.RESERVE_FLAGLESS`, named in `measurement.shapes._NO_FLAGS`), black-box and
 instrument legs alike. There the count *is* the reading — a flagless run's
 arrangement is what the allocation it was given resolves to, so a shape that
 pinned one would measure an arrangement the shipped default never produces — and
@@ -589,7 +589,7 @@ own `/sys/fs/cgroup/memory.events` — read inside it, after the timed command a
 outside every timer, so no figure's recorded shape carries it. What that buys is
 in two halves:
 
-- **A kill inside `measure.KILL_TOLERANT` is a censored reading.** Only the
+- **A kill inside `measurement.timing.KILL_TOLERANT` is a censored reading.** Only the
   `reserve` figure's flagless family is in it, because that family's whole
   subject is a rule aiming resident *at* the allocation, so a leg sitting
   against its own ceiling is the arrangement under test. The kill is recorded,
@@ -609,7 +609,7 @@ the apparatus failing — `parallel-peak-rss` once measured 3067 MiB inside a
 and says in those words that the kernel did it.
 
 **Every reading taken against a memory limit is read on the `system` build
-too, in the same sitting** (`measure.GATE_LEG`): `reserve`'s flagless legs and
+too, in the same sitting** (`measurement.gating.GATE_LEG`): `reserve`'s flagless legs and
 `parallel-peak-rss`'s legs each sweep a twin differing by the allocator alone,
 beside it in the interleave, and each figure prints the pair and a verdict per
 leg; a kill anywhere else runs its leg once on that build before the error is
@@ -644,10 +644,10 @@ a row would silently take every reading it was handed.
 
 **Measurement's RAM is bounded by design, and the harness stages within it**,
 evicting what no later sweep wants.
-The tmpfs budget is a constant of the apparatus, `measure.warm_bound`: two
+The tmpfs budget is a constant of the apparatus, `measurement.staging.warm_bound`: two
 full-size inputs, which is what one paired cross-file difference needs, plus
 64 MiB for a generator's few-KB overshoot — 6.06 GiB at 3.00 GiB inputs.
-`scripts/test_measure.py` holds every figure's warm set to it. A figure that
+`scripts/measurement/test_staging.py` holds every figure's warm set to it. A figure that
 outgrows it is split (`Figure.warm_groups`), one sweep per input except where
 a declared subtraction pairs two ("Re-take a comparison table whole" above),
 and an input two sweeps' subtractions both need is measured in each, as
@@ -728,20 +728,20 @@ edge could go red, and stayed a megabyte wrong for a whole slice.
 
 **Registering an instrument and publishing its table are two moments.** A
 figure can have an id, a `depends` set and a computed consumer set before any
-reading this harness took, and it waits in `measure.UNTAKEN` until there is
+reading this harness took, and it waits in `measurement.figures.register.UNTAKEN` until there is
 one, because a figure marker asserts the stamp's first clause — *taken by
 `scripts/measure.py`*. An untaken figure that shares a reading cannot be caught
 up by a sitting of its own either, the rule above admitting such a figure only
 from a stamped sweep, so the `Shared` edge is declared in the change that
 launches the sweep: declared earlier it refuses the sharing figure's own
 standalone sitting, a table this document carries, with no sweep in between to
-cure it. `scripts/test_measure.py` holds the two halves together, so an
+cure it. `scripts/measurement/figures/test_blocks.py` holds the two halves together, so an
 `rss-attribution` in `FIGURES` without the borrow fails.
 
 **The register's boundary is declared, not inferred.** A section this harness
 does not own carries an `<!-- outside-register: <id> -->` marker of its own —
 `koji` and `benches` — and `--check` resolves each one against
-`measure.NOT_OURS` in both directions, so a declaration naming nothing and a
+`measurement.staleness.outside_sections.NOT_OURS` in both directions, so a declaration naming nothing and a
 disowned section declaring nothing both fail. A declared section carrying a
 figure marker fails too: a section is one or the other, and the figure's
 apparatus line would contradict the declaration. A figure announces itself with
@@ -750,7 +750,7 @@ as well, rather than in a sentence some paragraphs from the numbers.
 
 **A declaration carries an invalidation edge**, so that being outside says the
 harness cannot *re-take* the readings and not that nothing is told when they go
-wrong. `measure.Outside` declares `depends` exactly as a figure does, one
+wrong. `measurement.staleness.outside_sections.Outside` declares `depends` exactly as a figure does, one
 predicate (`declared_hits`) answers for both, and `--stale` prints the declared
 sections in a stanza of their own — apart, because the two ask different things
 of the reader: a stale figure names a sweep, and a stale section names a run
@@ -817,7 +817,7 @@ unexamined commit on a path holds it red, and spent a round's commit on each
 ([`../status/history/2026-10-03.md`](../status/history/2026-10-03.md), "Red is
 the resting state").
 
-So `measure.ACKNOWLEDGED` — the register in `scripts/acknowledged.py`, which no
+So `acknowledged.ACKNOWLEDGED` — the register in `scripts/acknowledged.py`, which no
 figure declares, so that adding an entry does not mark stale the figure it
 excuses — records commits that touched a declared path without moving a reading
 and that no oracle below settles by itself: the commit, the figures it excuses,
@@ -869,7 +869,7 @@ often. The grep is over what runs, not over flag names: no command shape passes
 **Comment-only is the third, and the harness decides it rather than being
 told.** A diff whose every hunk falls inside a `//`, `///`, `//!`, `#`, a
 docstring or a whole Markdown file changes nothing a build emits, which is a
-syntactic property — so `measure.comment_only_commit` reads it per commit and
+syntactic property — so `measurement.staleness.comments.comment_only_commit` reads it per commit and
 per path, and `--stale` prints the commit under *comment-only, skipped* instead
 of reddening the figure. It is by far the widest of the three in practice: a
 wrap, a keystone, a fold-in and a decision closure all retarget citations and
@@ -879,7 +879,7 @@ quoted numbers across the files the register declares.
 be trusted is worth less than the red it clears. A merge, a file added, deleted
 or renamed, a suffix it does not read, a block delimiter sharing a line with
 code, an assigned `"""` literal: each of those is *not* comment-only, and the
-figure stays red. What is left for `measure.ACKNOWLEDGED` is the two oracles a
+figure stays red. What is left for `acknowledged.ACKNOWLEDGED` is the two oracles a
 diff cannot settle on its own — reachability and `--verify-additive` — so the
 register is empty whenever nobody has had to make one of those claims.
 
@@ -1086,7 +1086,7 @@ written for.
 
 **Staging the binaries on tmpfs is the apparatus, in every regime; pinning a
 leg to L3 groups is an experiment's arm.** `measure.py --stage-binaries` is on
-and `--pin-cpus` off (`measure.Arm`'s defaults), any other value marks a
+and `--pin-cpus` off (`measurement.machine_state.Arm`'s defaults), any other value marks a
 sitting unpublishable, and `alternate` takes every leg under both arrangements
 in turn: the recorded arm goes first and is what the tables render, and every
 arm's readings go to `raw.json`'s `arms`, read by `--arms` within a sitting
@@ -1227,7 +1227,7 @@ rather than a correction to it.
 
 **Six of its details decide whether the report describes what it claims to**,
 and every one of them fails by returning a plausible report of something else,
-so `scripts/test_measure.py` asserts them rather than leaving them to be
+so `scripts/measurement/recipes/test_heaptrack.py` asserts them rather than leaving them to be
 remembered: the **`system` build**, without which the report reads as though
 Rust allocated nothing, **in a target directory of its own**, without which it
 overwrites the profile recipe's binary; the **`profiling`
@@ -1577,9 +1577,9 @@ the apparatus rather than the mechanism. The arithmetic is a division over
 published tables, so the question is answerable before a sitting is spent.
 
 **A regime the harness does not declare is refused, not defaulted.** Admitting
-one means a `measure.REGIMES` row naming the staging area it reads from and
+one means a `measurement.machine_state.REGIMES` row naming the staging area it reads from and
 whether the page cache is dropped, and a `CONTENTION_LIMITS` row saying what
-disqualifies one of its readings; `scripts/test_measure.py` reconciles both
+disqualifies one of its readings; `scripts/measurement/test_machine_state.py` reconciles both
 against the regimes the registered figures' own `stage` declarations name, in
 both directions, so a regime cannot land in one of the three and not the other.
 What that is against is a plausible table rather than a crash: a dispatch that
@@ -1876,7 +1876,7 @@ helper in the workspace that the harness builds for musl and mounts beside
 `getrusage(RUSAGE_CHILDREN)`, needing nothing of the image
 (`crates/peak-rss/src/main.rs` says why `getrusage` and not `/proc`). **The reading
 can carry the wrapper's own share**: at `exec` the kernel folds the outgoing
-address space's high-water mark into the child's, so `measure.apparatus_preflight`
+address space's high-water mark into the child's, so `measurement.preflight.apparatus_preflight`
 runs it around `/bin/true` in the pinned image before every sweep and logs
 that floor, which bounds the share rather than proving it absent. koji's
 recipe polls
@@ -2068,9 +2068,9 @@ sudo nerdctl run --rm -m 512m --memory-swap 512m \
   <image> bash -c '/peak-rss /pgdt <command> >/dev/null'
 ```
 
-where `<binary>` is the shipped build (`measure.REGISTER_BIN`) or one of the
+where `<binary>` is the shipped build (`measurement.config.REGISTER_BIN`) or one of the
 `allocator` figure's legs — borrowed by name through `ensure_allocator_binary` — `<image>` is
-`measure.Config.image`, and the wrapper is the `peak-rss` helper, the same one
+`measurement.config.Config.image`, and the wrapper is the `peak-rss` helper, the same one
 the `peak-rss` figure is taken through. The `info` leg builds its cache inside
 its own container, untimed and unwrapped.
 
@@ -2531,7 +2531,7 @@ same rows, the same bytes, five widths of one file — so it was deleted from th
 register unpublished and its apparatus went with it: `generate_perf_data.py
 --weak-composite`, the `composite_text` input and the
 `perf_generator_fidelity.rs` case holding the pair byte-identical. Keeping
-generator support after deleting the register entry is what `measure.UNTAKEN`
+generator support after deleting the register entry is what `measurement.figures.register.UNTAKEN`
 exists against: a built-and-unrun instrument is *named* rather than latent.
 
 **`typed` and `strings` agree byte for byte on all three inputs**, as they do
@@ -2569,7 +2569,7 @@ Each sweep stages two 3.00 GiB inputs, inside the warm-set bound ("The
 apparatus"), so the loop runs once per nested file with its own control; the
 floor reading is the same loop, six reps, over `control` and `control43`
 (`--seed 43`). The `parse` before each timed `query` is the harness's untimed
-builder (`measure.DATA_LEVEL_BUILDER`), and `&&` keeps a failed one from
+builder (`measurement.shapes.DATA_LEVEL_BUILDER`), and `&&` keeps a failed one from
 leaving the `query` to map inside the timer.
 
 ## What a column costs: five projection widths over one file
@@ -3518,7 +3518,7 @@ output buffer, one unit long and past the last-level cache at the larger
 spacings, a cost a unit-sized block buffer shares with xz, which a profile at
 both ends would name.
 
-**The premise holds**: none of `measure.run_gzseek_spacing`'s falsifying
+**The premise holds**: none of `measurement.figures.gzseek.run_gzseek_spacing`'s falsifying
 results appears — the first pass does not move by more than its spread; no
 row resolves a resume's fixed cost, so none shows it varying; and its bound
 times the unit count is small beside the unit decodes even at 1 MiB. Within
@@ -3607,7 +3607,7 @@ speedup over its own leg's one-worker row, so the two sittings' ratios are set
 side by side and never subtracted.
 
 - **The plain count of seven is computed, not reported.** It is
-  `measure.QUERY_SUBSTREAM_CAP`'s hand derivation, which an `EXPLAIN` by hand
+  `measurement.figures.parallel.QUERY_SUBSTREAM_CAP`'s hand derivation, which an `EXPLAIN` by hand
   matched on 2026-10-01 ([`../status/history/2026-10-01.md`](../status/history/2026-10-01.md),
   "`M187`: the provider legs"). No run in this sitting reports it: on a
   provider leg `raw.json`'s resolution comes from the untimed builder's
@@ -4107,7 +4107,7 @@ Apparatus over every run in this table: CPU stall ≤1.21%, I/O stall ≤4.29%, 
 
 **`MEMORY_UNPOOLED_BOUND` holds for gzip on every leg, at the shipped 4 MiB
 chunk** ([`decisions.md`](decisions.md), "D121"). That was the hypothesis
-under test, and `measure.run_gzip_resident`'s docstring names what would have
+under test, and `measurement.figures.gzip_resident.run_gzip_resident`'s docstring names what would have
 falsified it. No cell's remainder is past the bound. On the block path the
 worst is 185.8 MiB, at `--jobs 24`; on either first pass no cell holds what
 it was charged. The bound needs no re-derivation for gzip
@@ -4223,7 +4223,7 @@ Apparatus over every run in this table: CPU stall ≤46.28%, I/O stall ≤8.38%,
 **The physical cap holds, and D2 is unchanged** ([`decisions.md`](decisions.md),
 "D2"; `RT27`). The verdict reads the default, the physical count, as the
 incumbent, and it reopens only where an upper count beats it on a file either
-lifts (`measure.gzpass_outcome`). None does. Each level-6 writer's file reads
+lifts (`measurement.figures.gzip_first_pass.gzpass_outcome`). None does. Each level-6 writer's file reads
 `level`: the physical count lifts it about threefold over serial, in seven
 pairs of seven, and is level with the logical count, by medians within 5%
 either way. On zlib-ng-compat's file the physical count beats the count one
@@ -4238,7 +4238,7 @@ twenty-four-job rows 11–13% faster than that sitting's. Nothing here
 attributes the change in the upper rows.
 
 **The shipped 4 MiB chunk stands** ([`decisions.md`](decisions.md), "D121"),
-by the bar fixed before the sitting (`measure.gzpass_chunk_verdict`): the
+by the bar fixed before the sitting (`measurement.figures.gzip_first_pass.gzpass_chunk_verdict`): the
 1 MiB leg beats it on none of the level-6 writers' files, and is beaten on
 zlib's, in six pairs of seven by 5.9%. On zlib-ng-compat's and GNU gzip's
 files the 4 MiB chunk is faster by medians of 4.2% and 5.1%, in four pairs of
@@ -4445,7 +4445,7 @@ Per-rep readings (peak RSS):
 
 Apparatus over every run in this table: CPU stall ≤0.42%, I/O stall ≤5.62%, machine ≤12% busy, steal ≤0.00%, busiest core ≥3.49 GHz, ≤73°C.
 
-**It is read twice**: against the falsifiers `measure.run_long_line_resident`
+**It is read twice**: against the falsifiers `measurement.figures.long_line.run_long_line_resident`
 states at `543e5877`, and against the account the spec's "What a held line
 costs" gives — a parse streaming its line, a query holding its line and what
 its plan's factor bounds. The previous sitting, at `4cb97fd4`, is
@@ -5643,7 +5643,7 @@ count, so the series is not pricing saves (below).
 
 **The harness takes that row rather than a reader running it by hand**, because
 a control nothing runs is one that goes stale without anyone noticing.
-`scripts/test_measure.py` asserts that every declared input is consumed by some
+`scripts/measurement/figures/test_register.py` asserts that every declared input is consumed by some
 figure, which is the check that catches one sitting unread.
 
 **The series roughly doubles per doubling, 1.7× to 2.4×, rather than quadrupling**, which

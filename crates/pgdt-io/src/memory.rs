@@ -122,7 +122,7 @@ pub const MEMORY_MARGIN_PERCENT: u64 = 20;
 /// **What it is, is attributed only in bulk**: on the platform allocator,
 /// glibc's retained free memory at exit (`fordblks`) is most of it, and no term
 /// table sums to it.
-/// `scripts/measure.py`'s `charge_model_problem` faults a cell whose remainder
+/// `scripts/measurement/memory_model.py`'s `charge_model_problem` faults a cell whose remainder
 /// exceeds this, which is the finding that would move it, and on the shipped
 /// build it has faulted (`KD34`, whose owner moves it). It is not
 /// [`MEMORY_RESERVE`] because the reserve is what an allowance hands back
