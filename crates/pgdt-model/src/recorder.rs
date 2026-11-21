@@ -98,6 +98,10 @@ impl Recorder {
     /// The observer is closed, inside a statistics scope as what it frees was
     /// allocated (`pgdt_core::instrument`).
     ///
+    /// **A gathered block's groups hold its `row_count` rows**, asserted in a
+    /// debug build: a row the scanner counted and no host handed here fails
+    /// every host's tests (`docs/design/decisions.md`, "D169").
+    ///
     /// **A block whose observer met a field PostgreSQL refuses fails**, with
     /// [`pgdt_core::Error::FieldRefused`] naming `header`'s table and column,
     /// so a pass pushes no span for it (`roadmap.md`, "A literal is
@@ -125,6 +129,12 @@ impl Recorder {
             let observed = observer.close(terminator_offset - self.data_offset);
             match observed.gathered {
                 BlockGathered::Gathered(statistics) => {
+                    debug_assert_eq!(
+                        statistics.groups.iter().map(|group| group.rows).sum::<u64>(),
+                        row_count,
+                        "{}: a gathered block's groups hold every row its scanner counted",
+                        header.table
+                    );
                     record.statistics = Some(Arc::new(statistics));
                 }
                 BlockGathered::Declined { allowance } => {

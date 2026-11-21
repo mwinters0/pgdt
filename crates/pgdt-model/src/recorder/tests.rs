@@ -7,7 +7,9 @@ use super::Recorder;
 use crate::block::{CensusFold, FieldCount, Kept};
 use crate::internal::BlockCensusExt;
 use crate::statistics::{BlockObserved, BlockObserver, RowObserver};
-use crate::{BlockCensus, BlockGathered, UnrepresentableTier};
+use crate::{
+    BlockCensus, BlockGathered, BlockStatistics, GroupSizing, RowGroup, UnrepresentableTier,
+};
 
 /// Counts a first column's `inf` past the format, from a head as long,
 /// and a second's fields holding `inf` anywhere past the engine, whole.
@@ -197,4 +199,80 @@ fn a_recorded_row_undoes_copy_escapes() {
     let record = recorder.finish(&header(), 1, 0, None).expect("nothing refuses");
     let rows = record.recorded_rows.expect("rows recorded").rows;
     assert_eq!(rows, [vec![Some("a\tb".to_owned()), None, Some("c\\d".to_owned())]]);
+}
+
+/// An observer gathering one group holding every row it is handed.
+#[derive(Default)]
+struct Counts {
+    rows: u64,
+}
+
+impl RowObserver for Counts {
+    fn holds(&self, _column: usize) -> bool {
+        false
+    }
+
+    fn begin_row(&mut self, _offset: u64) {
+        self.rows += 1;
+    }
+
+    fn fold(&mut self, _column: usize, _bytes: &[u8], _ends: bool) {}
+
+    fn end_row(&mut self, _fields: usize) {}
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+impl BlockObserver for Counts {
+    fn close(self: Box<Self>, end: u64) -> BlockObserved {
+        let statistics = BlockStatistics {
+            group_size: end.max(1),
+            sizing: GroupSizing::Stated,
+            groups: vec![RowGroup { rows: self.rows, bytes: end }],
+            columns: vec![None; 3],
+        };
+        BlockObserved {
+            gathered: BlockGathered::Gathered(statistics),
+            ignored_refusals: None,
+            checked_in_full: false,
+        }
+    }
+
+    fn piece(&self) -> Box<dyn RowObserver> {
+        Box::new(Counts::default())
+    }
+
+    fn absorb(&mut self, later: Box<dyn RowObserver>) {
+        self.rows += later.into_any().downcast::<Counts>().expect("a piece of these counts").rows;
+    }
+}
+
+/// A recorder gathering the block, handed `ROWS` but the last.
+fn gathering_all_but_one() -> Recorder {
+    let mut recorder = Recorder::new(0).with_observer(Box::new(Counts::default()));
+    for raw in &ROWS[..ROWS.len() - 1] {
+        recorder.row(0, raw);
+    }
+    recorder
+}
+
+/// **A gathered block holds every row its scanner counted**: a recorder
+/// finishes the rows it was handed, and in a debug build fails one the
+/// scanner counted past them, a row no host handed on.
+#[test]
+fn a_gathered_block_holds_the_rows_it_was_handed() {
+    let handed = ROWS.len() as u64 - 1;
+    let record =
+        gathering_all_but_one().finish(&header(), handed, 0, None).expect("nothing refuses");
+    assert_eq!(record.statistics.expect("gathered").groups[0].rows, handed);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "a gathered block's groups hold every row its scanner counted")]
+fn a_row_counted_and_never_handed_fails_the_close() {
+    let counted = ROWS.len() as u64;
+    let _ = gathering_all_but_one().finish(&header(), counted, 0, None);
 }

@@ -115,8 +115,8 @@ array only to its tested columns; a streamed row's runs reach it as `FieldFold`.
 line machine's, as the extent is: pieces sum to the serial `CopyEnd` (D52), a re-read is checked against them. The
 observer contract is `RowObserver` and `BlockObserver` (close, pieces), `Recorder<O>` generic over them, so no piece
 carries a close. Rejected: a split per part; a held row's every field to the census (gate lost); the recorder counting
-rows, which checks only that a host hands each on; one trait, a piece answering close with a panic a one-type recorder
-carries up; the builder hosting the row path. Code: `pgdt_model::internal::Recorder`. Evidence:
+rows: a gathered block's groups check each is handed on; one trait, a piece answering close with a panic a one-type
+recorder carries up; the builder hosting the row path. Code: `pgdt_model::internal::Recorder`. Evidence:
 `a_row_held_whole_is_censused_as_one_folded_in_runs`, `pieces_absorbed_in_file_order_record_the_whole_block`.
 
 ### D170 A block is opened in one place under its pass's policy, and a re-read merged by the record's one rule
