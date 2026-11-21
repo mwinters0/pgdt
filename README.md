@@ -84,60 +84,45 @@ Otherwise, this bash snippet will download it to `$PWD`:
 
 ## Quickstart
 
-### `pgdt`
+1. **Parse:** You almost always start here.  This produces a `.pgdt` file.
+    ```sh
+    pgdt parse --source=mydump.xz
+    ```
+2. **Info:** Inspect what's in the dump: tables, roles, etc.
+    ```sh
+    pgdt info --json --source=mydump.xz | jq '.roles[]'
+    ```
+3. **Query:** Run simple queries, like if you want a single row.
+    ```sh
+    pgdt query --source=mydump.xz --table=mytable --where='mycolumn = bar'
+    ```
+4. **SQL:** When you want to run more complex queries or convert e.g. to Parquet.
+    ```sh
+    pgdt sql --source mydump=mydump.xz
+    ```
+    ```sql
+    SHOW TABLES;
 
-Use case: you have a dump and you want to know what's in it.
+    -- Export some hive-partitioned Parquet
+    COPY (
+      SELECT
+        *,
+        date_part('year', event_ts)  AS year,
+        date_part('month', event_ts) AS month
+      FROM foo.public.events
+    )
+    TO '/tmp/events_parquet'
+    STORED AS PARQUET
+    PARTITIONED BY (year, month)
+    OPTIONS (
+      'format.writer_version' '2.0',
+      'compression' 'zstd(3)'
+    );
 
-```bash
-# Parse a dump (builds foo.xz.pgdt)
-pgdt parse --source=foo.xz
+    INSERT INTO ...; -- Unsupported!
+    ```
 
-# Inspect what you parsed: tables, roles, etc
-pgdt info --detail --source=foo.xz
-# Or as JSON
-pgdt info --json --source=foo.xz | jq '.roles[]'
-
-# Run a simple query.  Look ma, no daemons!
-pgdt query --source=foo.xz --table=mytable --where='mycolumn = bar'
-```
-
-See: [dump inspection docs](docs/manual/dump-inspection.md) for more.
-
-### `pgdt sql`
-
-Use case: you want to query the data in your dump.
-
-```bash
-# Parse a dump (builds foo.xz.pgdt)
-pgdt parse --source=foo.xz
-
-# Then query it as catalog `foo`
-pgdt sql --source foo=foo.xz
-```
-
-```sql
-SHOW TABLES;
-
--- Export some hive-partitioned Parquet
-COPY (
-  SELECT
-    *,
-    date_part('year', event_ts)  AS year,
-    date_part('month', event_ts) AS month
-  FROM foo.public.events
-)
-TO '/tmp/events_parquet'
-STORED AS PARQUET
-PARTITIONED BY (year, month)
-OPTIONS (
-  'format.writer_version' '2.0',
-  'compression' 'zstd(3)'
-);
-
-INSERT INTO ...; -- Unsupported!
-```
-
-For more, see:
+For more SQL, see:
 - [Our `pgdt sql` docs](docs/manual/pgdt-sql.md)
 - Upstream's [`datafusion-cli` docs](https://datafusion.apache.org/user-guide/cli/index.html)
 - The [Datafusion SQL reference](https://datafusion.apache.org/user-guide/sql/index.html)
@@ -175,11 +160,13 @@ our API, CLI, or data until we reach v1.0.
     - [x] DataFusion provider + shell, in the one `pgdt` binary
     - [ ] Python
     - [ ] DuckDB
+    - [ ] Postgres via `pgrx`
     - [ ] Trino (?)
     - [ ] Spark (?)
 - Distribution
     - [x] Linux binaries for x86-64 and arm64 (see: [installing](docs/manual/installing.md))
-    - [ ] macOS
+    - [ ] macOS (Help wanted!)
+    - [ ] Windows (Help wanted!)
 - Metadata collection:
     - [x] A full file map and DDL object inventory.
     - [x] Row groups with per-column statistics.
@@ -202,8 +189,9 @@ our API, CLI, or data until we reach v1.0.
                 - [x] `time` `24:00:00`
         - [x] Any type that we don't parse is returned as `Utf8View` (aka string) so you can parse
         it yourself.
-        - [x] A value PostgreSQL would refuse fails the parse reading it, as a restore fails;
-        `--postgres-invalid-values strict` checks every field and names what it cannot (see: [type
+        - [x] We match the behavior of a PostgreSQL restore in refusing to parse values that
+        Postgres would refuse; `--postgres-invalid-values strict` checks every field and names what
+        it cannot parse (see: [type
         handling](docs/manual/type-handling.md#when-a-value-does-not-match-its-type))
         - [ ] Common extension types, e.g. PostGIS
     - Tables with descendants (see: [tables with descendants](docs/manual/descendants.md))
@@ -213,10 +201,9 @@ our API, CLI, or data until we reach v1.0.
         them all; each partition refuses.
     - TimescaleDB 2.x
         - [x] Hypertables over uncompressed chunks, under the hypertable's name
-        - [ ] Compressed and partially compressed chunks. Refused, naming them.
-        - [ ] Continuous aggregates under their view's name. Readable as their materialization
-        hypertable.
-        - TimescaleDB 1.x is untested: no fixture holds one.
+        - [ ] Compressed and partially compressed chunks.
+        - [ ] Continuous aggregates under their view's name.
+            - [X] Readable as their materialization hypertable.
     - Collation
         - [x] `C` / `POSIX`
         - [ ] Everything else.  Text compares bytewise, with a warning.  (See: KD7)
@@ -270,12 +257,6 @@ routinely hundreds of gigabytes, so the local-file reader aims to stay device-bo
 CPU-bound, with a flat RSS profile.
 
 ### Next
-
-Prior to v1.0 we must provide:
-- Support for all pg_dump formats and compression methods
-- Postgres-equivalent collation, at minimum for the common default of `en_US.utf8`
-- A Python library interface
-
 See:
 - [`docs/design/roadmap.md`](docs/design/roadmap.md) - Sketches of future phases (aka epics)
 - [`docs/status/deficiencies.md`](docs/status/deficiencies.md) - Known deficiencies (some TODO, some
