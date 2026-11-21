@@ -62,11 +62,12 @@ fn dump() -> Vec<u8> {
 }
 
 /// The longest line of `block`, read off `file` line by line: the first of
-/// the longest, each measured through its LF.
+/// the longest, each measured through its LF, where it starts relative to the
+/// block's data.
 fn expected(file: &[u8], block: &CopyBlock) -> Option<LongestLine> {
-    let data = &file[block.data_offset as usize..block.terminator_offset as usize];
+    let data = &file[block.address.data_offset as usize..block.address.terminator_offset as usize];
     let mut longest: Option<LongestLine> = None;
-    let mut offset = block.data_offset;
+    let mut offset = 0;
     for line in data.split_inclusive(|byte| *byte == b'\n') {
         let len = line.len() as u64;
         if longest.is_none_or(|l| len > l.len) {
@@ -81,7 +82,7 @@ fn blocks(spans: &[Span]) -> Vec<&CopyBlock> {
     spans
         .iter()
         .filter_map(|span| match &span.body {
-            SpanBody::Data(DataBlock::Copy(block)) => Some(&**block),
+            SpanBody::Data(DataBlock::Copy(block)) => Some(block),
             _ => None,
         })
         .collect()
@@ -94,10 +95,10 @@ fn check(file: &[u8], spans: &[Span], pass: &str) {
     assert_eq!(blocks.len(), 5, "{pass}");
     for block in &blocks {
         let table = block.header.qualified_name();
-        assert_eq!(block.longest_line, expected(file, block), "{pass}: {table}");
+        assert_eq!(block.record.longest_line, expected(file, block), "{pass}: {table}");
     }
     let lengths: Vec<Option<u64>> =
-        blocks.iter().map(|block| block.longest_line.map(|line| line.len)).collect();
+        blocks.iter().map(|block| block.record.longest_line.map(|line| line.len)).collect();
     let crlf = 2 * CHUNK as u64 + 2;
     let want = [
         Some(5 * CHUNK as u64 + 5),
@@ -109,7 +110,7 @@ fn check(file: &[u8], spans: &[Span], pass: &str) {
     assert_eq!(lengths, want, "{pass}");
     // Of two lines as long, the first.
     let tied = blocks[1];
-    assert_eq!(tied.longest_line.map(|line| line.offset), Some(tied.data_offset + 2), "{pass}");
+    assert_eq!(tied.record.longest_line.map(|line| line.offset), Some(2), "{pass}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

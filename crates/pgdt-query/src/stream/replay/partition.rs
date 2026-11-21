@@ -159,8 +159,10 @@ pub(super) fn plan_partitions(
     // A block's own advice is read once per block: the largest per-worker
     // charge among them decides the sub-stream count (`charge` below), the
     // widest footprint what the notes say.
-    let advice: Vec<Partitioning> =
-        matches.iter().map(|b| source.partitions(b.data_offset..b.end_offset)).collect();
+    let advice: Vec<Partitioning> = matches
+        .iter()
+        .map(|b| source.partitions(b.address.data_offset..b.address.end_offset))
+        .collect();
     let widest = advice.iter().max_by_key(|advice| advice.partition_bytes());
     let footprint = widest.map_or(0, Partitioning::partition_bytes);
     // What the notes below offer, read off the source's cost and the budget
@@ -281,16 +283,17 @@ pub(in crate::stream) fn cut_blocks(
         // A pruned block's runs are cut instead of its data, each into a
         // share of `want` proportional to its bytes, so the readers are
         // balanced over what remains to be read.
-        let Some(runs) = kept.get(&block.id()) else {
+        let Some(runs) = kept.get(&block.address.id()) else {
             // The **data** range is what is cut, not `[header_offset, …)`: a
             // cut inside the header line would give the first piece no rows.
             // The first piece is then extended back over the header, its
             // schema's source.
-            for (i, piece) in
-                cut(block.data_offset..block.end_offset, advice, want).into_iter().enumerate()
+            for (i, piece) in cut(block.address.data_offset..block.address.end_offset, advice, want)
+                .into_iter()
+                .enumerate()
             {
                 let (start, entry) = if i == 0 {
-                    (block.header_offset, SegmentEntry::Header)
+                    (block.address.header_offset, SegmentEntry::Header)
                 } else {
                     (piece.start, SegmentEntry::Interior)
                 };
@@ -304,7 +307,7 @@ pub(in crate::stream) fn cut_blocks(
             let share = usize::try_from(share).unwrap_or(want).clamp(1, want);
             // A run starting on the header's LF is cut from the first data
             // byte, for the reason the whole block's data range is.
-            let from = run.start.max(block.data_offset);
+            let from = run.start.max(block.address.data_offset);
             for piece in cut(from..run.end, advice, share) {
                 let start = if piece.start == from { run.start } else { piece.start };
                 segments.push(Segment::over(block, start..piece.end));

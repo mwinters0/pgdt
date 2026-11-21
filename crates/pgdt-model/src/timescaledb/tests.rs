@@ -9,7 +9,8 @@ use pgdt_core::CopyHeader;
 use super::catalog::{Catalog, regclass_name};
 use super::*;
 use crate::{
-    CopyBlock, DataBlock, DatabaseMetadata, DumpIndex, DumpMetadata, Extension, Span, SpanBody,
+    BlockAddress, BlockRecord, CopyBlock, DataBlock, DatabaseMetadata, DumpIndex, DumpMetadata,
+    Extension, Span, SpanBody,
 };
 
 /// A catalog block of `table` naming `columns`, holding `rows`, each row's
@@ -29,19 +30,18 @@ fn block(table: &str, columns: &str, rows: &[&str]) -> Span {
     });
     let block = CopyBlock {
         header,
-        header_offset: 0,
-        data_offset: 0,
-        terminator_offset: 0,
-        end_offset: 0,
-        row_count: rows.len() as u64,
         partition_root: None,
-        statistics: None,
-        statistics_declined: None,
-        ignored_refusals: None,
-        checked_in_full: false,
-        census: None,
-        recorded_rows,
-        longest_line: None,
+        address: BlockAddress {
+            header_offset: 0,
+            data_offset: 0,
+            terminator_offset: 0,
+            end_offset: 0,
+        },
+        record: Arc::new(BlockRecord {
+            row_count: rows.len() as u64,
+            recorded_rows,
+            ..BlockRecord::default()
+        }),
     };
     Span {
         start: 0,
@@ -50,7 +50,7 @@ fn block(table: &str, columns: &str, rows: &[&str]) -> Span {
         text: None,
         toc: None,
         toc_owned: false,
-        body: SpanBody::Data(DataBlock::Copy(Box::new(block))),
+        body: SpanBody::Data(DataBlock::Copy(block)),
     }
 }
 

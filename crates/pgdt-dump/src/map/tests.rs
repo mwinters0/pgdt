@@ -179,7 +179,7 @@ fn an_insert_run_absorbs_its_data_entry_and_owns_it() {
     match &spans[0].body {
         SpanBody::Data(DataBlock::InsertRun(run)) => {
             assert_eq!(run.table, "public.widgets");
-            assert_eq!(run.row_count, 2);
+            assert_eq!(run.record.row_count, 2);
         }
         other => panic!("expected an INSERT run, got {other:?}"),
     }
@@ -213,7 +213,7 @@ fn an_insert_run_folds_the_same_way_when_its_lines_take_the_slow_path() {
     match &spans[0].body {
         SpanBody::Data(DataBlock::InsertRun(run)) => {
             assert_eq!(run.table, "public.widgets");
-            assert_eq!(run.row_count, 4);
+            assert_eq!(run.record.row_count, 4);
         }
         other => panic!("expected an INSERT run, got {other:?}"),
     }
@@ -231,7 +231,9 @@ fn a_table_whose_name_extends_the_runs_own_starts_a_new_run() {
     let runs: Vec<_> = spans
         .iter()
         .filter_map(|s| match &s.body {
-            SpanBody::Data(DataBlock::InsertRun(run)) => Some((run.table.as_str(), run.row_count)),
+            SpanBody::Data(DataBlock::InsertRun(run)) => {
+                Some((run.table.as_str(), run.record.row_count))
+            }
             _ => None,
         })
         .collect();

@@ -447,7 +447,7 @@ pub enum Error {
     /// [`Self::FieldRefused`], read from the cache rather than the dump: a
     /// parse under [`pgdt_model::PostgresInvalidValues::Default`] whose cache
     /// records a field an earlier parse ignoring such fields went past
-    /// ([`pgdt_model::CopyBlock::ignored_refusals`]) fails with the first it
+    /// ([`pgdt_model::BlockRecord::ignored_refusals`]) fails with the first it
     /// records in a column its request tracks, before reading anything — the
     /// verdict being the dump's, not that of whichever run gathered the cache.
     /// `refused` is that refusal as a read of the dump would have raised it.

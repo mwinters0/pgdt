@@ -18,8 +18,7 @@ use pgdt_dump::{Event, ReadOptions, ScanOptions, scan as scan_events};
 use pgdt_io::{Arrangement, ByteRangeSource, Extent};
 use pgdt_model::internal::IgnoredRefusalsExt;
 use pgdt_model::{
-    BlockId, CopyBlock, Diagnostic, DumpIndex, DumpMetadata, PostgresInvalidValues, Span,
-    timescaledb,
+    BlockId, Diagnostic, DumpIndex, DumpMetadata, PostgresInvalidValues, Span, timescaledb,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -166,15 +165,16 @@ pub struct MapRun {
     pub backfilled: usize,
     /// **How many blocks the map already held that no strict parse had
     /// checked were re-read to check them**, under
-    /// [`PostgresInvalidValues::Strict`] ([`CopyBlock::checked_in_full`](pgdt_model::CopyBlock::checked_in_full)) —
-    /// zero under every other mode, and for a run interrupted before the map
+    /// [`PostgresInvalidValues::Strict`]
+    /// ([`BlockRecord::checked_in_full`](pgdt_model::BlockRecord::checked_in_full))
+    /// — zero under every other mode, and for a run interrupted before the map
     /// reached EOF, whatever it checked and banked before the interrupt.
     pub checked: usize,
     /// **How many blocks of the finished map declined to gather statistics**,
     /// under this run's allowance or an earlier, larger one, or under an
     /// earlier, smaller one where the statistics the block holds already cover
     /// this request, so nothing re-reads it
-    /// ([`pgdt_model::CopyBlock::statistics_declined`]) — zero for a run the
+    /// ([`pgdt_model::BlockRecord::statistics_declined`]) — zero for a run the
     /// interrupt reached before the back-fill finished, which is where the
     /// count is taken. A run stating no allowance declines nothing itself, so
     /// it counts only a block an earlier run declined whose held statistics
@@ -275,7 +275,7 @@ impl Mapped {
 /// being counted afresh. [`StatisticsRequest::default`] is the data level
 /// everywhere. **Under [`PostgresInvalidValues::Strict`] it checks every field
 /// it maps, and re-reads every block it holds that no strict parse checked**
-/// ([`CopyBlock::checked_in_full`](pgdt_model::CopyBlock::checked_in_full)) — in the back-fill, or before mapping on
+/// ([`BlockRecord::checked_in_full`](pgdt_model::BlockRecord::checked_in_full)) — in the back-fill, or before mapping on
 /// where it resumes short of EOF.
 ///
 /// **The three finishing steps are this function's.**
@@ -302,7 +302,7 @@ impl Mapped {
 /// bounds what the run's statistics hold alive, the cache's loaded ones
 /// included, a block whose gathering would pass it declining and recording
 /// the number it declined under
-/// ([`CopyBlock::statistics_declined`](pgdt_model::CopyBlock::statistics_declined);
+/// ([`BlockRecord::statistics_declined`](pgdt_model::BlockRecord::statistics_declined);
 /// `docs/design/decisions.md`, "D85"); its ledger ([`Arrangement::ledger`])
 /// is what every reader of the run draws a line held past its chunk from,
 /// and the statistics draw on first, its `held` being the statistics the
@@ -384,8 +384,11 @@ async fn map_file_watched(
     // Which statistics the *cache* supplied, by the one identity a block keeps
     // across the splice: what a back-fill replaces leaves this term, and what
     // this run gathered leaves `Term::Retained` instead.
-    let loaded: HashSet<BlockId> =
-        index.blocks().filter(|block| block.statistics.is_some()).map(CopyBlock::id).collect();
+    let loaded: HashSet<BlockId> = index
+        .blocks()
+        .filter(|block| block.record.statistics.is_some())
+        .map(|block| block.address.id())
+        .collect();
     // The diagnostics about the cache *file* rather than about the map — what
     // the load said about its identity; the rest are the derived ones,
     // recomputed below.
@@ -572,7 +575,7 @@ fn announce_statistics_held(account: &StatisticsAccount) -> StatisticsHeld {
 
 /// **Fail a parse refusing the fields PostgreSQL refuses at the first such
 /// field `index` records an earlier parse went past**
-/// ([`CopyBlock::ignored_refusals`](pgdt_model::CopyBlock::ignored_refusals)), in file order, in a column `statistics`
+/// ([`BlockRecord::ignored_refusals`](pgdt_model::BlockRecord::ignored_refusals)), in file order, in a column `statistics`
 /// tracks — before anything is read, the cache being as much the dump's
 /// account as a re-read of the block would be, so the verdict does not depend
 /// on which run gathered it. A column the request leaves at the metadata
@@ -595,9 +598,9 @@ fn refuse_recorded(
     // Only a cache read from a file can hold a record.
     let CacheMode::Enabled { path, .. } = cache else { return Ok(()) };
     let refused = index.blocks().find_map(|block| {
-        let recorded = block.ignored_refusals.as_deref()?;
+        let recorded = block.record.ignored_refusals.as_deref()?;
         let tracked = statistics.tracked_columns(&block.header)?;
-        recorded.error_for(&tracked, &block.header, block.data_offset, path)
+        recorded.error_for(&tracked, &block.header, block.address.data_offset, path)
     });
     refused.map_or(Ok(()), Err)
 }

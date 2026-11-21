@@ -278,7 +278,7 @@ fn literals(
     let mut stored = BTreeSet::new();
     let mut declared = None;
     for block in blocks {
-        let Some(statistics) = block.statistics.as_deref() else { continue };
+        let Some(statistics) = block.record.statistics.as_deref() else { continue };
         let Some(Some(column)) = statistics.columns.get(column) else { continue };
         declared = declared.or(column.declared_type.clone());
         if column.listed_groups(BoundsSet::Primary).is_some() {
@@ -567,7 +567,9 @@ async fn check_fixture(
     let gathered_cache = cache::colocated_path(&dump);
 
     let mut tables: BTreeMap<(Option<String>, String), Vec<&CopyBlock>> = BTreeMap::new();
-    for (database, block) in index.blocks_with_database().filter(|(_, b)| b.statistics.is_some()) {
+    for (database, block) in
+        index.blocks_with_database().filter(|(_, b)| b.record.statistics.is_some())
+    {
         tables
             .entry((database.map(str::to_owned), block.header.qualified_name()))
             .or_default()
@@ -709,7 +711,7 @@ async fn a_sorted_column_under_a_range_filter_skips_every_group_before_the_bound
         let (_dir, dump, index) =
             gathered(&statistics_fixture(version, "default"), SMALL_GROUP).await;
         let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
-        let statistics = block.statistics.as_deref().unwrap();
+        let statistics = block.record.statistics.as_deref().unwrap();
         let id = stored_bounds(statistics.columns[0].as_ref().unwrap(), BoundsSet::Primary);
         let below: u64 =
             id.iter().flatten().filter(|b| b.max.parse::<i64>().unwrap() < 990).count() as u64;
@@ -739,7 +741,7 @@ async fn a_sorted_column_under_a_range_filter_skips_every_group_before_the_bound
             let (skipped, groups, skipped_bytes, bytes) = pruned(&notes).unwrap();
             assert_eq!(groups, statistics.groups.len() as u64);
             assert_eq!(skipped, below, "pg_dump {version} at {jobs} job(s)");
-            assert_eq!(bytes, block.terminator_offset - block.data_offset);
+            assert_eq!(bytes, block.address.terminator_offset - block.address.data_offset);
             assert!(skipped_bytes > bytes * 9 / 10, "{skipped_bytes} of {bytes}");
         }
     }
@@ -760,7 +762,7 @@ async fn a_plan_bounds_its_rows_by_the_groups_its_pruning_kept() {
         let (_dir, dump, index) =
             gathered(&statistics_fixture(version, "default"), SMALL_GROUP).await;
         let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
-        let statistics = block.statistics.as_deref().unwrap();
+        let statistics = block.record.statistics.as_deref().unwrap();
         let id = stored_bounds(statistics.columns[0].as_ref().unwrap(), BoundsSet::Primary);
         let skipped: Vec<bool> = id
             .iter()
@@ -787,9 +789,9 @@ async fn a_plan_bounds_its_rows_by_the_groups_its_pruning_kept() {
         let table = opened.table(&selector).unwrap().unwrap();
         let filter = Expr::all([term("id", PredicateOp::Ge, "990")]);
         for (options, expected, kept) in [
-            (with(filter.clone(), true, SPLIT_JOBS), block.row_count - below, 1),
-            (with(filter.clone(), false, SPLIT_JOBS), block.row_count, 0),
-            (with(Expr::all(Vec::new()), true, SPLIT_JOBS), block.row_count, 0),
+            (with(filter.clone(), true, SPLIT_JOBS), block.record.row_count - below, 1),
+            (with(filter.clone(), false, SPLIT_JOBS), block.record.row_count, 0),
+            (with(Expr::all(Vec::new()), true, SPLIT_JOBS), block.record.row_count, 0),
         ] {
             let what = format!("pg_dump {version} under {:?}", options.options.filter);
             let Query { options, replay } = options;
@@ -821,7 +823,7 @@ async fn collated_text_prunes_by_its_bytewise_bounds_in_datafusion_semantics_alo
         let (_dir, dump, index) =
             gathered(&statistics_fixture(version, "default"), SMALL_GROUP).await;
         let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
-        let statistics = block.statistics.as_deref().unwrap();
+        let statistics = block.record.statistics.as_deref().unwrap();
         let bounds = stored_bounds(statistics.columns[11].as_ref().unwrap(), BoundsSet::Primary);
         let below = bounds.iter().flatten().filter(|b| b.max.as_str() < "a").count() as u64;
         assert!(below > 10, "pg_dump {version}: {below} group(s) below the bound");
@@ -865,7 +867,7 @@ async fn an_enum_is_pruned_by_the_set_of_bounds_in_the_order_asked_for() {
     for version in VERSIONS {
         let (_dir, dump, index) = gathered(&types_fixture(version, "default"), SMALL_GROUP).await;
         let block = index.blocks().find(|b| b.header.matches("public.t_enum_domain")).unwrap();
-        let statistics = block.statistics.as_deref().unwrap();
+        let statistics = block.record.statistics.as_deref().unwrap();
         assert_eq!(statistics.groups.len(), 1, "pg_dump {version}");
         let column = statistics.columns[1].as_ref().unwrap();
         let extremes = |set| {
@@ -927,7 +929,7 @@ async fn a_term_reads_the_set_gathering_stored_under_the_kind_it_compares_by() {
             let (_dir, dump, index) =
                 gathered(&types_fixture(version, flag_set), SMALL_GROUP).await;
             let block = index.blocks().find(|b| b.header.matches("public.t_enum_domain")).unwrap();
-            let statistics = block.statistics.as_deref().unwrap();
+            let statistics = block.record.statistics.as_deref().unwrap();
             assert_eq!(statistics.groups.len(), 1, "pg_dump {version} {flag_set}");
             let leaf = term(column, op, literal);
             let what = format!(
@@ -962,7 +964,7 @@ async fn a_dictionary_under_an_absent_literal_skips_every_group() {
         let (_dir, dump, index) =
             gathered(&statistics_fixture(version, "default"), SMALL_GROUP).await;
         let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
-        let groups = block.statistics.as_ref().unwrap().groups.len() as u64;
+        let groups = block.record.statistics.as_ref().unwrap().groups.len() as u64;
 
         let absent = Expr::all([term("low_card", PredicateOp::Eq, "bravo")]);
         for jobs in [1, SPLIT_JOBS] {
@@ -1005,10 +1007,10 @@ async fn statistics_gathered_under_another_declared_type_prune_nothing() {
         if let pgdt_model::SpanBody::Data(pgdt_model::DataBlock::Copy(block)) = &mut span.body
             && block.header.table == "ordered"
         {
-            let mut statistics = (**block.statistics.as_ref().unwrap()).clone();
+            let mut statistics = (**block.record.statistics.as_ref().unwrap()).clone();
             statistics.columns[8].as_mut().unwrap().declared_type =
                 Some("character varying".into());
-            block.statistics = Some(Arc::new(statistics));
+            Arc::make_mut(&mut block.record).statistics = Some(Arc::new(statistics));
         }
     }
     let source = LocalFileSource::open(&dump).unwrap();
@@ -1126,7 +1128,7 @@ impl pgdt_io::ByteRangeSource for Recording {
 async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
     let (_dir, dump, index) = gathered(&statistics_fixture(16, "default"), SMALL_GROUP).await;
     let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
-    let statistics = block.statistics.as_deref().unwrap();
+    let statistics = block.record.statistics.as_deref().unwrap();
     let id = stored_bounds(statistics.columns[0].as_ref().unwrap(), BoundsSet::Primary);
     let skipped: Vec<bool> = id
         .iter()
@@ -1137,10 +1139,13 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
         .collect();
     let n = statistics.group_size;
     let deep = |offset: u64| {
-        let k = offset.checked_sub(block.data_offset).map(|at| (at / n) as usize);
+        let k = offset.checked_sub(block.address.data_offset).map(|at| (at / n) as usize);
         k.is_some_and(|k| k >= 1 && (k - 1..=k + 1).all(|g| skipped.get(g) == Some(&true)))
     };
-    assert!((block.data_offset..block.terminator_offset).any(deep), "the fixture has a deep gap");
+    assert!(
+        (block.address.data_offset..block.address.terminator_offset).any(deep),
+        "the fixture has a deep gap"
+    );
 
     let filter = Expr::Or(vec![
         Expr::Term(term("id", PredicateOp::Lt, "40")),
@@ -1179,7 +1184,7 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
     // The last row starting in group 2 alone of the rows below 900: a stream
     // pausing on it pauses past its run's end, with a gap before the next.
     let bytes = std::fs::read(&dump).unwrap();
-    let data = &bytes[block.data_offset as usize..block.terminator_offset as usize];
+    let data = &bytes[block.address.data_offset as usize..block.address.terminator_offset as usize];
     let mut at = 0u64;
     let mut last_in_group_2 = None;
     for line in data.split_inclusive(|&b| b == b'\n') {
@@ -1218,8 +1223,8 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
 /// its LF.
 fn ordered_line_end(dump: &Path, block: &CopyBlock, id: u32) -> u64 {
     let bytes = std::fs::read(dump).unwrap();
-    let data = &bytes[block.data_offset as usize..block.terminator_offset as usize];
-    let mut at = block.data_offset;
+    let data = &bytes[block.address.data_offset as usize..block.address.terminator_offset as usize];
+    let mut at = block.address.data_offset;
     for line in data.split_inclusive(|&b| b == b'\n') {
         at += line.len() as u64;
         if line.starts_with(format!("{id}\t").as_bytes()) {
@@ -1263,7 +1268,7 @@ async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
     )
     .await;
     let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
-    assert_eq!(block.statistics.as_deref().unwrap().groups.len(), 1);
+    assert_eq!(block.record.statistics.as_deref().unwrap().groups.len(), 1);
     let source = Arc::new(Recording {
         inner: LocalFileSource::open(&dump).unwrap(),
         starts: std::sync::Mutex::new(Vec::new()),
@@ -1328,8 +1333,8 @@ async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
                 Stop::At(id) => {
                     let end = ordered_line_end(&dump, block, id);
                     let past = starts.iter().filter(|&&s| s >= end).count();
-                    let rest = block.terminator_offset - end;
-                    let reported = unread.get(&block.id()).copied().flatten();
+                    let rest = block.address.terminator_offset - end;
+                    let reported = unread.get(&block.address.id()).copied().flatten();
                     assert_eq!(unread.len(), 1, "{what}: {stops:?}");
                     if jobs == 1 {
                         assert_eq!(past, 0, "{what}: read at {last}, past {end}");
@@ -1343,12 +1348,12 @@ async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
                 }
                 Stop::Unreached | Stop::Unplanned => {
                     assert!(
-                        last + scan.read.chunk_size_bytes as u64 >= block.terminator_offset,
+                        last + scan.read.chunk_size_bytes as u64 >= block.address.terminator_offset,
                         "{what}: last read at {last}, the block ending at {}",
-                        block.terminator_offset
+                        block.address.terminator_offset
                     );
                     let entries = match stop {
-                        Stop::Unreached => BTreeMap::from([(block.id(), None)]),
+                        Stop::Unreached => BTreeMap::from([(block.address.id(), None)]),
                         _ => BTreeMap::new(),
                     };
                     assert_eq!(unread, entries, "{what}: {stops:?}");
@@ -1373,11 +1378,11 @@ async fn a_pruned_stop_reports_the_rest_of_its_run_beside_the_skipped_groups() {
         let (_dir, dump, index) =
             gathered(&statistics_fixture(version, "default"), SMALL_GROUP).await;
         let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
-        let n = block.statistics.as_deref().unwrap().group_size;
+        let n = block.record.statistics.as_deref().unwrap().group_size;
         let cache = cache::colocated_path(&dump);
         let filter = Expr::all([term("id", PredicateOp::Lt, "500")]);
         let end = ordered_line_end(&dump, block, 500);
-        let group_of = |offset: u64| (offset - block.data_offset) / n;
+        let group_of = |offset: u64| (offset - block.address.data_offset) / n;
         // The row 500 starts in: kept only where 499 starts there too.
         let start_of_500 = end - {
             let bytes = std::fs::read(&dump).unwrap();
@@ -1385,8 +1390,8 @@ async fn a_pruned_stop_reports_the_rest_of_its_run_beside_the_skipped_groups() {
             (line.len() - line.iter().rposition(|&b| b == b'\n').unwrap()) as u64
         };
         let stops_inside = group_of(start_of_500) == group_of(start_of_500 - 1);
-        let run_end =
-            (block.data_offset + (group_of(start_of_500) + 1) * n).min(block.terminator_offset);
+        let run_end = (block.address.data_offset + (group_of(start_of_500) + 1) * n)
+            .min(block.address.terminator_offset);
 
         let (rows, notes, _, serial) =
             answer(&dump, &cache, "public.ordered", with(filter.clone(), true, 1)).await.unwrap();
@@ -1394,19 +1399,23 @@ async fn a_pruned_stop_reports_the_rest_of_its_run_beside_the_skipped_groups() {
         let (_, _, skipped_bytes, bytes) = pruned(&notes).unwrap();
         let serial = unread_per_block(&serial);
         if !stops_inside {
-            assert_eq!(serial, BTreeMap::from([(block.id(), None)]), "pg_dump {version}");
+            assert_eq!(serial, BTreeMap::from([(block.address.id(), None)]), "pg_dump {version}");
             continue;
         }
         fired += 1;
         let unread = run_end - end;
-        assert_eq!(serial, BTreeMap::from([(block.id(), Some(unread))]), "pg_dump {version}");
-        let read = end - block.data_offset;
+        assert_eq!(
+            serial,
+            BTreeMap::from([(block.address.id(), Some(unread))]),
+            "pg_dump {version}"
+        );
+        let read = end - block.address.data_offset;
         let straddling = bytes - read - unread - skipped_bytes;
         assert!(straddling < n, "pg_dump {version}: {straddling} byte(s) in neither count");
 
         let (_, _, _, split) =
             answer(&dump, &cache, "public.ordered", with(filter, true, SPLIT_JOBS)).await.unwrap();
-        let split = unread_per_block(&split)[&block.id()].unwrap_or(0);
+        let split = unread_per_block(&split)[&block.address.id()].unwrap_or(0);
         assert!(split <= unread, "pg_dump {version}: {split} of {unread}");
     }
     assert!(fired > 0, "no fixture's stop fell inside a kept group");
@@ -1485,6 +1494,7 @@ async fn a_value_no_decoder_reads_raises_only_where_evaluation_reaches_it() {
             .blocks()
             .find(|b| b.header.matches("public.t"))
             .unwrap()
+            .record
             .statistics
             .as_deref()
             .unwrap()

@@ -92,7 +92,7 @@ pub async fn ungathered(dump: &Path) {
     let mut index = loaded.index;
     for span in &mut index.spans {
         if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
-            block.statistics = None;
+            Arc::make_mut(&mut block.record).statistics = None;
         }
     }
     mode.save(&opened.watch, source.as_ref(), &index).await.unwrap();

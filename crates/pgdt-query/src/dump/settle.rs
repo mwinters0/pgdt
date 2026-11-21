@@ -235,7 +235,7 @@ impl ColdPass<'_> {
         blocks: &mut [CopyBlock],
     ) -> Result<()> {
         let lacking: Vec<usize> =
-            (0..blocks.len()).filter(|&i| blocks[i].census.is_none()).collect();
+            (0..blocks.len()).filter(|&i| blocks[i].record.census.is_none()).collect();
         let Some(&first) = lacking.first() else { return Ok(()) };
         tracing::info!(
             table = blocks[first].header.qualified_name(),
@@ -249,9 +249,13 @@ impl ColdPass<'_> {
             let reported = &mut shortfall_reported;
             let census = reread_rows(read, path, metadata, database, &blocks[at], None, reported);
             let Some(census) = census.await? else {
-                return Err(Error::ScanCancelled { scanned_through: blocks[at].header_offset });
+                return Err(Error::ScanCancelled {
+                    scanned_through: blocks[at].address.header_offset,
+                });
             };
-            blocks[at].census = Some(census);
+            // The map's record is shared: this query's copy is its own
+            // (`docs/design/decisions.md`, "D168").
+            Arc::make_mut(&mut blocks[at].record).census = Some(census);
         }
         Ok(())
     }

@@ -584,7 +584,7 @@ async fn a_scale_past_the_precision_or_arrows_reach_reads_every_value() {
     .index;
     let mut blocks = 0;
     for block in index.blocks() {
-        let counts = block.unrepresentable().expect("a data-level block is counted");
+        let counts = block.record.unrepresentable().expect("a data-level block is counted");
         assert!(counts.iter().all(|c| c.is_zero()), "{counts:?}");
         blocks += 1;
     }
@@ -676,7 +676,7 @@ async fn a_negative_scale_zero_reads_as_zero_in_every_mode() {
     .index;
     let mut blocks = 0;
     for block in index.blocks() {
-        let counts = block.unrepresentable().expect("a data-level block is counted");
+        let counts = block.record.unrepresentable().expect("a data-level block is counted");
         assert!(counts.iter().all(|c| c.is_zero()), "{counts:?}");
         blocks += 1;
     }
@@ -811,7 +811,7 @@ async fn a_numeric_field_is_rounded_to_its_scale_and_refused_past_its_precision(
     .unwrap()
     .index;
     let block = index.blocks().find(|b| b.header.table == "t").unwrap();
-    let statistics = block.statistics.as_deref().unwrap();
+    let statistics = block.record.statistics.as_deref().unwrap();
     let sums = |at: usize| statistics.columns[at].as_ref().unwrap().sums.clone();
     assert_eq!(sums(1), Some(vec![201]), "v10_2 sums 1.01, 0.00 and 1.00");
     assert_eq!(sums(2), Some(vec![14]), "v2_5 sums 0.00013, 0 and 0.00001");
@@ -1250,7 +1250,7 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
         .await
         .unwrap();
         let block = mapped.index.blocks().find(|b| b.header.table == "t").unwrap();
-        let recorded = block.ignored_refusals.as_ref().expect("the NULL is recorded");
+        let recorded = block.record.ignored_refusals.as_ref().expect("the NULL is recorded");
         assert_eq!(
             (recorded.columns[0].first.value.as_deref(), recorded.columns[0].count),
             (None, 1)
@@ -1543,7 +1543,7 @@ async fn a_strict_parse_refuses_no_fixture_field_but_the_listed_ones() {
                     let unchecked: Vec<_> = run
                         .index
                         .blocks()
-                        .filter(|b| !b.checked_in_full)
+                        .filter(|b| !b.record.checked_in_full)
                         .map(|b| b.header.qualified_name())
                         .collect();
                     assert!(unchecked.is_empty(), "{}: {unchecked:?}", path.display());

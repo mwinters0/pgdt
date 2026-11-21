@@ -101,7 +101,11 @@ fn block<'a>(index: &'a DumpIndex, table: &str) -> &'a CopyBlock {
 }
 
 fn statistics(block: &CopyBlock) -> &BlockStatistics {
-    block.statistics.as_deref().unwrap_or_else(|| panic!("{} gathered nothing", block.header.table))
+    block
+        .record
+        .statistics
+        .as_deref()
+        .unwrap_or_else(|| panic!("{} gathered nothing", block.header.table))
 }
 
 /// One worker under no allowance: what [`backfill_block`] reads a block
@@ -157,7 +161,7 @@ struct FileRow {
 
 fn file_rows(dump: &Path, block: &CopyBlock) -> Vec<FileRow> {
     let bytes = std::fs::read(dump).unwrap();
-    let data = &bytes[block.data_offset as usize..block.terminator_offset as usize];
+    let data = &bytes[block.address.data_offset as usize..block.address.terminator_offset as usize];
     let mut offset = 0u64;
     let mut rows = Vec::new();
     for line in data.split_inclusive(|&b| b == b'\n') {
@@ -251,10 +255,10 @@ fn assert_describes_the_file(dump: &Path, block: &CopyBlock, label: &str) {
     let stats = statistics(block);
     let rows = file_rows(dump, block);
     let n = stats.group_size;
-    assert_eq!(stats.groups.iter().map(|g| g.rows).sum::<u64>(), block.row_count, "{label}");
+    assert_eq!(stats.groups.iter().map(|g| g.rows).sum::<u64>(), block.record.row_count, "{label}");
     assert_eq!(
         stats.groups.iter().map(|g| g.bytes).sum::<u64>(),
-        block.terminator_offset - block.data_offset,
+        block.address.terminator_offset - block.address.data_offset,
         "{label}: the groups' extents tile the data"
     );
     let last = rows.last().map_or(0, |r| r.offset / n + 1);
@@ -267,8 +271,9 @@ fn assert_describes_the_file(dump: &Path, block: &CopyBlock, label: &str) {
         start += members.len();
         assert_eq!(group.rows, members.len() as u64, "{label}: group {k}'s rows");
         if let Some(first) = members.first() {
-            let end =
-                rows.get(start).map_or(block.terminator_offset - block.data_offset, |r| r.offset);
+            let end = rows
+                .get(start)
+                .map_or(block.address.terminator_offset - block.address.data_offset, |r| r.offset);
             assert_eq!(group.bytes, end - first.offset, "{label}: group {k}'s extent");
         }
         for (c, column) in stats.columns.iter().enumerate() {
@@ -545,7 +550,7 @@ async fn a_selection_gathers_only_what_it_names() {
     assert!(ordered.columns[0].is_some());
     assert!(ordered.columns[1..].iter().all(Option::is_none));
     assert!(statistics(block(&index, "public.specials")).columns.iter().all(Option::is_some));
-    assert!(block(&index, "public.long_value").statistics.is_none());
+    assert!(block(&index, "public.long_value").record.statistics.is_none());
 }
 
 /// A request stating none gathers none — what a query's mapping pass always
@@ -553,7 +558,7 @@ async fn a_selection_gathers_only_what_it_names() {
 #[tokio::test]
 async fn a_request_stating_none_gathers_nothing() {
     let index = gathered(&statistics_fixture(16, "default"), &StatisticsRequest::METADATA).await;
-    assert!(index.blocks().all(|b| b.statistics.is_none()));
+    assert!(index.blocks().all(|b| b.record.statistics.is_none()));
 }
 
 /// Statistics persist in the one cache file and load back exactly, and a
@@ -577,7 +582,10 @@ async fn statistics_round_trip_through_the_cache() {
     .index;
     let clone = index.clone();
     for (a, b) in index.blocks().zip(clone.blocks()) {
-        assert!(Arc::ptr_eq(a.statistics.as_ref().unwrap(), b.statistics.as_ref().unwrap()));
+        assert!(Arc::ptr_eq(
+            a.record.statistics.as_ref().unwrap(),
+            b.record.statistics.as_ref().unwrap()
+        ));
     }
     let CacheStatus::Loaded(LoadedCache {
         index: loaded,
@@ -756,7 +764,7 @@ async fn a_summary_reads_no_column_whose_groups_disagree_with_the_block() {
         if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body
             && block.header.table == "ordered"
         {
-            let mut held = BlockStatistics::clone(block.statistics.as_deref().unwrap());
+            let mut held = BlockStatistics::clone(block.record.statistics.as_deref().unwrap());
             assert!(held.groups.len() > 1);
             let first = held.groups[0].rows;
             let c = block.header.columns.iter().position(|c| c == "id").unwrap();
@@ -768,7 +776,7 @@ async fn a_summary_reads_no_column_whose_groups_disagree_with_the_block() {
             parts.null_counts[0] = first;
             parts.null_counts.push(0);
             *column = ColumnStatistics::from_parts(parts);
-            block.statistics = Some(Arc::new(held));
+            Arc::make_mut(&mut block.record).statistics = Some(Arc::new(held));
         }
     }
     assert!(!summary(&index).await.bounds_complete);
@@ -849,7 +857,7 @@ impl RecordingSource {
 
     /// How many reads started at `block`'s first row.
     fn reads_of(&self, block: &CopyBlock) -> usize {
-        self.offsets.lock().unwrap().iter().filter(|&&at| at == block.data_offset).count()
+        self.offsets.lock().unwrap().iter().filter(|&&at| at == block.address.data_offset).count()
     }
 }
 
@@ -1006,8 +1014,8 @@ async fn an_unstated_size_keeps_the_size_a_block_was_gathered_at() {
     for table in ["public.long_value", "public.ordered", "public.specials"] {
         let expected = if table == "public.ordered" { &small } else { &default };
         assert_eq!(
-            block(&run.index, table).statistics,
-            block(expected, table).statistics,
+            block(&run.index, table).record.statistics,
+            block(expected, table).record.statistics,
             "{table}"
         );
     }
@@ -1068,8 +1076,8 @@ async fn a_backfill_never_drops_a_column_the_block_held() {
     for table in ["public.long_value", "public.ordered", "public.specials"] {
         let expected = if table == "public.ordered" { &whole_at_64 } else { &small };
         assert_eq!(
-            block(&run.index, table).statistics,
-            block(expected, table).statistics,
+            block(&run.index, table).record.statistics,
+            block(expected, table).record.statistics,
             "{table}"
         );
     }
@@ -1100,13 +1108,13 @@ async fn a_text_column_held_without_bounds_is_reread_for_them() {
         if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body
             && block.header.table == "ordered"
         {
-            let mut held = BlockStatistics::clone(block.statistics.as_deref().unwrap());
+            let mut held = BlockStatistics::clone(block.record.statistics.as_deref().unwrap());
             let column = held.columns[11].as_mut().unwrap();
             *column = ColumnStatistics::from_parts(ColumnStatisticsParts {
                 bounds: None,
                 ..stored(column)
             });
-            block.statistics = Some(Arc::new(held));
+            Arc::make_mut(&mut block.record).statistics = Some(Arc::new(held));
         }
     }
     // The block alone, back-filled, is what the pass below makes of it.
@@ -1162,7 +1170,7 @@ async fn an_undeclared_column_held_without_bounds_is_reread_for_them() {
     let mut blocks = 0;
     for span in &mut older.spans {
         if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
-            let Some(held) = block.statistics.as_deref() else { continue };
+            let Some(held) = block.record.statistics.as_deref() else { continue };
             let mut held = BlockStatistics::clone(held);
             for column in held.columns.iter_mut().flatten() {
                 let parts = stored(column);
@@ -1171,7 +1179,7 @@ async fn an_undeclared_column_held_without_bounds_is_reread_for_them() {
                 *column =
                     ColumnStatistics::from_parts(ColumnStatisticsParts { bounds: None, ..parts });
             }
-            block.statistics = Some(Arc::new(held));
+            Arc::make_mut(&mut block.record).statistics = Some(Arc::new(held));
             blocks += 1;
         }
     }
@@ -1217,8 +1225,8 @@ async fn a_backfill_rereads_only_the_blocks_its_request_tracks() {
     )
     .await;
     assert_eq!((run.lacking_statistics, run.backfilled), (1, 1));
-    assert!(block(&run.index, "public.specials").statistics.is_some());
-    assert!(block(&run.index, "public.ordered").statistics.is_none());
+    assert!(block(&run.index, "public.specials").record.statistics.is_some());
+    assert!(block(&run.index, "public.ordered").record.statistics.is_none());
 
     let none = mapped_into_cache(
         &dump,
@@ -1244,7 +1252,7 @@ async fn one_block_is_gathered_on_its_own() {
     let reference = gathered(&dump, &wanted).await;
     let source = LocalFileSource::open(&dump).unwrap();
     let mut ordered = block(&bare, "public.ordered").clone();
-    assert!(ordered.census.is_none(), "mapped at the metadata level");
+    assert!(ordered.record.census.is_none(), "mapped at the metadata level");
     let read =
         backfilled(&source, &serial(), &wanted, bare.metadata.as_deref(), &mut ordered).await;
     assert!(read.unwrap(), "it holds no statistics");
@@ -1789,7 +1797,7 @@ async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
             first(0, 701, "smallint", "70000"),
             first(1, 1501, "double precision", "1.79769313486232e+308"),
         ];
-        let recorded = block(index, "public.t").ignored_refusals.clone();
+        let recorded = block(index, "public.t").record.ignored_refusals.clone();
         assert_eq!(recorded.as_deref(), Some(&IgnoredRefusals { columns }), "{at}");
     };
     check(&gathered_with(&dump, serial, &arranged(1), ignoring, &wanted).await, "serial");
@@ -1848,7 +1856,7 @@ async fn a_parse_refusing_fields_fails_with_what_an_ignoring_parse_recorded() {
     )
     .await;
     let recorded = block(&mapped.index, "public.t").clone();
-    assert_eq!(recorded.ignored_refusals.as_ref().map(|r| r.columns[0].count), Some(1));
+    assert_eq!(recorded.record.ignored_refusals.as_ref().map(|r| r.columns[0].count), Some(1));
     let path = cache::colocated_path(&dump);
     let saved = std::fs::read(&path).unwrap();
 
@@ -1958,7 +1966,7 @@ async fn a_refused_field_is_quoted_by_its_head_as_a_restore_quotes_it() {
         &StatisticsRequest::DATA,
     )
     .await;
-    let recorded = block(&mapped.index, "public.t").ignored_refusals.clone().unwrap();
+    let recorded = block(&mapped.index, "public.t").record.ignored_refusals.clone().unwrap();
     assert_eq!(recorded.columns[0].first.value.as_deref(), Some(quoted.as_str()));
     let run = map_file(
         CacheMode::enabled(cache::colocated_path(&dump)).open_source(source).await.unwrap(),
@@ -2013,6 +2021,7 @@ async fn a_recorded_refusal_fails_exactly_the_parses_tracking_its_column() {
     .await;
     let recorded = block(&mapped.index, "public.t").clone();
     let counts: Vec<(usize, u64)> = recorded
+        .record
         .ignored_refusals
         .iter()
         .flat_map(|r| &r.columns)
@@ -2057,8 +2066,8 @@ async fn a_recorded_refusal_fails_exactly_the_parses_tracking_its_column() {
         let Some((column, line, value)) = expected else {
             let run = run.unwrap_or_else(|e| panic!("{columns:?}: tracks no refused column: {e}"));
             assert_eq!(
-                block(&run.index, "public.t").ignored_refusals,
-                recorded.ignored_refusals,
+                block(&run.index, "public.t").record.ignored_refusals,
+                recorded.record.ignored_refusals,
                 "{columns:?}: the record is kept"
             );
             continue;
@@ -2097,7 +2106,10 @@ async fn a_recorded_refusal_fails_exactly_the_parses_tracking_its_column() {
     assert!(recording.reads_of(reread) > 0, "the block was re-read");
     assert_eq!(statistics(reread).group_size, 128);
     assert!(statistics(reread).columns.iter().all(Option::is_some), "every held column kept");
-    assert_eq!(reread.ignored_refusals, recorded.ignored_refusals, "the record is renewed alike");
+    assert_eq!(
+        reread.record.ignored_refusals, recorded.record.ignored_refusals,
+        "the record is renewed alike"
+    );
     let refusing = map_file(
         mode.open_source(source.clone()).await.unwrap(),
         ReadOptions::default(),
@@ -2209,8 +2221,8 @@ async fn a_strict_parse_refuses_the_fields_a_default_one_leaves_to_a_query() {
             .await;
             let passed = passed.unwrap_or_else(|e| panic!("{at}: a default parse passes: {e}"));
             let held = block(&passed.index, "public.t");
-            assert!(!held.checked_in_full, "{at}");
-            assert_eq!(held.statistics_declined.is_some(), allowance.is_some(), "{at}");
+            assert!(!held.record.checked_in_full, "{at}");
+            assert_eq!(held.record.statistics_declined.is_some(), allowance.is_some(), "{at}");
             match map_file(
                 CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
                 scan,
@@ -2265,8 +2277,9 @@ async fn a_strict_parse_refuses_the_fields_a_default_one_leaves_to_a_query() {
             .unwrap();
             let (read, checked) =
                 (block(&read.index, "public.t"), block(&checked.index, "public.t"));
-            assert!(checked.checked_in_full, "{at}");
-            let unmarked = CopyBlock { checked_in_full: false, ..checked.clone() };
+            assert!(checked.record.checked_in_full, "{at}");
+            let mut unmarked = checked.clone();
+            Arc::make_mut(&mut unmarked.record).checked_in_full = false;
             assert_eq!(&unmarked, read, "{at}: a strict parse records what a default one does");
         }
     }
@@ -2297,7 +2310,7 @@ async fn a_strict_parse_checks_each_held_block_no_strict_parse_checked() {
             earlier,
         )
         .await;
-        assert!(!block(&held.index, "public.t").checked_in_full);
+        assert!(!block(&held.index, "public.t").record.checked_in_full);
         let source = Arc::new(RecordingSource::open(&dump));
         let run = map_file(
             mode.open_source(source.clone()).await.unwrap(),
@@ -2310,12 +2323,16 @@ async fn a_strict_parse_checks_each_held_block_no_strict_parse_checked() {
         .await
         .unwrap();
         let checked = block(&run.index, "public.t");
-        assert!(checked.checked_in_full, "{gathers}");
+        assert!(checked.record.checked_in_full, "{gathers}");
         assert_eq!(run.checked, 1, "{gathers}");
         assert_eq!(run.backfilled, usize::from(gathers), "{gathers}");
         assert_eq!(source.reads_of(checked), 1, "{gathers}: one read checks and gathers");
         let fresh = gathered(&dump, &data).await;
-        assert_eq!(checked.statistics, block(&fresh, "public.t").statistics, "{gathers}");
+        assert_eq!(
+            checked.record.statistics,
+            block(&fresh, "public.t").record.statistics,
+            "{gathers}"
+        );
 
         let source = Arc::new(RecordingSource::open(&dump));
         let again = map_file(
@@ -2337,7 +2354,7 @@ async fn a_strict_parse_checks_each_held_block_no_strict_parse_checked() {
             &data,
         )
         .await;
-        assert!(block(&default.index, "public.t").checked_in_full, "{gathers}: kept");
+        assert!(block(&default.index, "public.t").record.checked_in_full, "{gathers}: kept");
     }
 
     // An ignoring parse tracking `v` records the element it went past in row
@@ -2480,7 +2497,7 @@ async fn a_strict_parse_resuming_checks_what_the_cache_holds_first() {
             else {
                 panic!("the cache loads");
             };
-            assert!(block(&held.index, "public.t1").checked_in_full);
+            assert!(block(&held.index, "public.t1").record.checked_in_full);
         }
     }
 }
@@ -2675,7 +2692,7 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
     .unwrap()
     .index;
     let mapped_block = mapped.blocks().next().unwrap();
-    let header_offset = mapped_block.header_offset;
+    let header_offset = mapped_block.address.header_offset;
     std::fs::write(&dump, after).unwrap();
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let err = map_file(
@@ -2714,7 +2731,7 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
     // Cut short of the block's first row, which the per-block entry point is
     // the only one to reach: every scan entry point refuses the cache first,
     // by its stored size.
-    std::fs::write(&dump, &before[..mapped_block.data_offset as usize - 1]).unwrap();
+    std::fs::write(&dump, &before[..mapped_block.address.data_offset as usize - 1]).unwrap();
     let source = LocalFileSource::open(&dump).unwrap();
     let read = backfilled(&source, &serial(), &request, metadata, &mut moved).await;
     let err = read.expect_err("the block no longer ends where the map says");
@@ -2803,8 +2820,8 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
         assert!(!run.interrupted, "{at}");
         assert_eq!(run.declined_statistics, 1, "{at}");
         let declined = block(&run.index, "public.t");
-        assert_eq!(declined.statistics_declined, Some(allowance), "{at}");
-        assert!(declined.statistics.is_none(), "{at}");
+        assert_eq!(declined.record.statistics_declined, Some(allowance), "{at}");
+        assert!(declined.record.statistics.is_none(), "{at}");
         assert_eq!(run.statistics.now.total(), 0, "{at}: a declined pass holds nothing");
 
         // The same allowance re-reads nothing, and still says what it holds.
@@ -2820,7 +2837,11 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
         .unwrap();
         assert_eq!((again.lacking_statistics, again.backfilled), (0, 0), "{at}");
         assert_eq!(again.declined_statistics, 1, "{at}");
-        assert_eq!(block(&again.index, "public.t").statistics_declined, Some(allowance), "{at}");
+        assert_eq!(
+            block(&again.index, "public.t").record.statistics_declined,
+            Some(allowance),
+            "{at}"
+        );
 
         // No allowance re-reads it, into what the unbounded pass gave.
         let wider = map_file(
@@ -2836,7 +2857,7 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
         assert_eq!((wider.lacking_statistics, wider.backfilled), (1, 1), "{at}");
         assert_eq!(wider.declined_statistics, 0, "{at}");
         let filled = block(&wider.index, "public.t");
-        assert_eq!(filled.statistics_declined, None, "{at}");
+        assert_eq!(filled.record.statistics_declined, None, "{at}");
         assert_eq!(statistics(filled), &reference, "{at}");
     }
 }
@@ -2882,9 +2903,9 @@ async fn one_block_backfilled_past_its_allowance_declines_until_a_larger_one() {
     let source = source.as_ref();
     let read = backfilled(source, &tight, &wanted, metadata, &mut held).await;
     assert!(read.unwrap(), "it holds no statistics");
-    assert_eq!(held.statistics_declined, Some(allowance));
-    assert!(held.statistics.is_none());
-    assert_eq!(held.census, reference.census, "a declined read censuses the block");
+    assert_eq!(held.record.statistics_declined, Some(allowance));
+    assert!(held.record.statistics.is_none());
+    assert_eq!(held.record.census, reference.record.census, "a declined read censuses the block");
     let read = backfilled(source, &tight, &wanted, metadata, &mut held).await;
     assert!(!read.unwrap(), "the allowance it declined under reads nothing");
     let read = backfilled(source, &serial(), &wanted, metadata, &mut held).await;

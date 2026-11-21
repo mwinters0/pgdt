@@ -163,11 +163,11 @@ impl ReplayPlan {
     /// statistics keep: the run holding group 0 starts at the block's header,
     /// as a whole block does, and every other starts inside its data.
     pub(in crate::stream) fn segments(&self, block: &CopyBlock) -> Vec<Segment> {
-        let Some(kept) = self.kept.get(&block.id()) else {
+        let Some(kept) = self.kept.get(&block.address.id()) else {
             return vec![Segment::new(
                 block,
-                block.header_offset,
-                block.end_offset,
+                block.address.header_offset,
+                block.address.end_offset,
                 SegmentEntry::Header,
             )];
         };
@@ -230,16 +230,20 @@ pub(in crate::stream) fn held_line(
     let Pruned { kept, stops, .. } =
         prune_blocks(matches, blocks, query_options, metadata, database);
     let holds = |block: &&CopyBlock| {
-        let at = &block.id();
+        let at = &block.address.id();
         let reached = kept.get(at).is_none_or(|runs| !runs.iter().all(Range::is_empty));
         let reads = blocks.get(at).is_none_or(PlannedBlock::reads_fields) || stops.contains_key(at);
         reached && reads
     };
-    // The first of the longest, as a block's own record keeps its first.
-    let longest = matches.iter().filter(holds).filter_map(|block| block.longest_line);
-    let longest = longest.reduce(|first, line| if line.len > first.len { line } else { first })?;
-    (longest.len > chunk as u64)
-        .then(|| (longest.offset, charged(query_factor(blocks), longest.len)))
+    // The first of the longest, as a block's own record keeps its first,
+    // where the file holds it.
+    let longest = matches.iter().filter(holds).filter_map(|block| {
+        let line = block.record.longest_line?;
+        Some((block.address.data_offset + line.offset, line.len))
+    });
+    let (offset, len) =
+        longest.reduce(|first, line| if line.1 > first.1 { line } else { first })?;
+    (len > chunk as u64).then(|| (offset, charged(query_factor(blocks), len)))
 }
 
 /// What every plan of `matches`, the blocks a read of `table` in `database`
@@ -280,7 +284,7 @@ fn read_schema(
     metadata: Option<&DumpMetadata>,
 ) -> Result<ResolvedSchema> {
     let own = matches.iter().find(|b| b.header.qualified_name() == table.name);
-    if let Some(planned) = own.and_then(|own| blocks.get(&own.id())) {
+    if let Some(planned) = own.and_then(|own| blocks.get(&own.address.id())) {
         return Ok(planned.resolved.clone());
     }
     let Some(first) = matches.first() else { return Ok(ResolvedSchema::default()) };
@@ -289,7 +293,7 @@ fn read_schema(
         None => (None, table.name.clone()),
     };
     let header = CopyHeader { schema, table: name, columns: table.order.clone() };
-    let offset = first.header_offset;
+    let offset = first.address.header_offset;
     Ok(resolve_for_query(&header, offset, database, query_options, metadata, table, None)?.resolved)
 }
 
@@ -333,7 +337,7 @@ fn prune_blocks(
     let (mut consulted, mut groups, mut skipped_groups, mut skipped_bytes) = (false, 0, 0, 0);
     for block in matches {
         let pruning = blocks
-            .get(&block.id())
+            .get(&block.address.id())
             .filter(|planned| query_options.use_statistics && planned.filter.reads_fields())
             .and_then(|planned| {
                 prune_block(
@@ -345,12 +349,12 @@ fn prune_blocks(
                 )
             });
         let kept_groups = pruning.as_ref().map(|pruning| pruning.kept_groups.as_slice());
-        let block_bytes = field_value_bytes(block, blocks.get(&block.id()), kept_groups);
+        let block_bytes = field_value_bytes(block, blocks.get(&block.address.id()), kept_groups);
         for (field, held) in value_bytes.iter_mut().enumerate() {
             *held = held.zip(block_bytes.get(field).copied().flatten()).map(|(a, b)| a + b);
         }
         let Some(pruning) = pruning else {
-            rows += block.row_count;
+            rows += block.record.row_count;
             continue;
         };
         consulted = true;
@@ -359,13 +363,16 @@ fn prune_blocks(
         skipped_groups += pruning.skipped_groups;
         skipped_bytes += pruning.skipped_bytes;
         if let Some(stop) = pruning.stop {
-            stops.insert(block.id(), stop);
+            stops.insert(block.address.id(), stop);
         }
         if pruning.skipped_groups > 0 {
-            kept.insert(block.id(), pruning.kept);
+            kept.insert(block.address.id(), pruning.kept);
         }
     }
-    let bytes = matches.iter().map(|b| b.terminator_offset.saturating_sub(b.data_offset)).sum();
+    let bytes = matches
+        .iter()
+        .map(|b| b.address.terminator_offset.saturating_sub(b.address.data_offset))
+        .sum();
     let note = consulted.then_some(PlanNote {
         kind: PlanNoteKind::StatisticsPruned { skipped_groups, groups, skipped_bytes, bytes },
         levers: Vec::new(),
@@ -430,7 +437,7 @@ fn unrepresentable_values(matches: &[CopyBlock], name: &str, reach: Unrepresenta
         .iter()
         .filter_map(|block| {
             let c = block.header.columns.iter().position(|column| column == name)?;
-            let count = block.unrepresentable()?.get(c)?;
+            let count = block.record.unrepresentable()?.get(c)?;
             Some(
                 count.format()
                     + if reach == UnrepresentableTier::Engine { count.engine() } else { 0 },
@@ -475,7 +482,7 @@ fn field_value_bytes(
 ) -> Vec<Option<u64>> {
     let Some(planned) = planned else { return Vec::new() };
     let mut bytes = vec![None; planned.resolved.schema().fields().len()];
-    let Some(statistics) = block.statistics.as_deref() else { return bytes };
+    let Some(statistics) = block.record.statistics.as_deref() else { return bytes };
     if statistics.columns.len() != block.header.columns.len() {
         return bytes;
     }
@@ -674,14 +681,14 @@ fn plan_blocks(
         .map(|block| {
             let planned = resolve_for_query(
                 &block.header,
-                block.header_offset,
+                block.address.header_offset,
                 database,
                 query_options,
                 metadata,
                 table,
-                block.unrepresentable(),
+                block.record.unrepresentable(),
             )?;
-            Ok((block.id(), planned))
+            Ok((block.address.id(), planned))
         })
         .collect()
 }
@@ -768,8 +775,8 @@ impl TableColumns {
         };
         let disagree = |one: &CopyBlock, other: &CopyBlock| Error::TableColumnsDisagree {
             table: name.clone(),
-            header_offset: one.header_offset,
-            other_offset: other.header_offset,
+            header_offset: one.address.header_offset,
+            other_offset: other.address.header_offset,
         };
         let mut order = match matches.iter().find(own) {
             Some(founder) => {
@@ -886,7 +893,7 @@ fn refuse_metadata_level(matches: &[CopyBlock], query_options: &QueryOptions) ->
     if query_options.schema_mode != SchemaMode::Typed {
         return Ok(());
     }
-    match matches.iter().find(|block| block.census.is_none()) {
+    match matches.iter().find(|block| block.record.census.is_none()) {
         Some(block) => Err(Error::TableAtMetadataLevel { table: block.header.qualified_name() }),
         None => Ok(()),
     }

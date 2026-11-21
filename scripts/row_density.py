@@ -217,10 +217,11 @@ def qualified(block: dict) -> str:
 def block_density(block: dict, min_rows: int) -> dict:
     """One block's row density: its distribution at every size and what the
     minimum chooses at each reported quantile."""
-    stats = block["statistics"]
+    stats = block["record"]["statistics"]
     rows = [group["rows"] for group in stats["groups"]]
     total = sum(rows)
-    data_bytes = block["terminator_offset"] - block["data_offset"]
+    address = block["address"]
+    data_bytes = address["terminator_offset"] - address["data_offset"]
     sizes = ladder(rows)
     choices = [choose(sizes, min_rows, q) for q in REPORTED_QUANTILES]
     median = next(c for c in choices if c.quantile == MIN_QUANTILE)
@@ -231,7 +232,7 @@ def block_density(block: dict, min_rows: int) -> dict:
     reasonable = width is not None and width <= REASONABLE_ROW_BYTES
     return {
         "table": qualified(block),
-        "header_offset": block["header_offset"],
+        "header_offset": address["header_offset"],
         "rows": total,
         "data_bytes": data_bytes,
         "mean_row_bytes": mean_row,
@@ -262,9 +263,10 @@ def density(info: dict, min_rows: int) -> dict:
     that hold rows and no statistics listed rather than dropped."""
     blocks, untracked = [], []
     for block in copy_blocks(info):
-        stats = block.get("statistics")
+        record = block["record"]
+        stats = record.get("statistics")
         if stats is None or not stats.get("groups"):
-            if block.get("row_count"):
+            if record.get("row_count"):
                 untracked.append(qualified(block))
             continue
         blocks.append(block_density(block, min_rows))

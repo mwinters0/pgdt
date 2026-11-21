@@ -221,11 +221,11 @@ impl StatisticsRequest {
     /// its record (`docs/design/decisions.md`, "D34").
     ///
     /// **A block that declined is re-read only under a larger allowance**
-    /// ([`CopyBlock::statistics_declined`]): `allowance` is this pass's, and
-    /// `None` — an embedder that stated none — declines nothing and so retries
-    /// everything. Without the record a `parse` at the same allocation would
-    /// re-read and re-decline the same block every run
-    /// (`docs/design/decisions.md`, "D85").
+    /// ([`BlockRecord::statistics_declined`](pgdt_model::BlockRecord::statistics_declined)):
+    /// `allowance` is this pass's, and `None` — an embedder that stated none —
+    /// declines nothing and so retries everything. Without the record a `parse`
+    /// at the same allocation would re-read and re-decline the same block every
+    /// run (`docs/design/decisions.md`, "D85").
     ///
     /// **A block still at the size it gathered from also lacks a stated
     /// maximum its groups break** ([`BlockStatisticsExt::breaks_max_rows`]): no
@@ -262,12 +262,12 @@ impl StatisticsRequest {
         bounded: impl FnOnce() -> Vec<bool>,
     ) -> Option<StatisticsBackfill> {
         let requested = self.tracked_columns(&block.header)?;
-        if let (Some(declined), Some(allowance)) = (block.statistics_declined, allowance)
+        if let (Some(declined), Some(allowance)) = (block.record.statistics_declined, allowance)
             && allowance <= declined
         {
             return None;
         }
-        let Some(held) = block.statistics.as_deref() else {
+        let Some(held) = block.record.statistics.as_deref() else {
             return Some(self.gathering(requested.clone(), requested));
         };
         let resized = match self.sizing {

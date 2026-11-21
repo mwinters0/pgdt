@@ -103,7 +103,7 @@ async fn saved(path: &Path, source: &LocalFileSource, index: &DumpIndex) {
 async fn block_frontier(dump: &Path, n: usize) -> u64 {
     let source = LocalFileSource::open(dump).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    index.blocks().nth(n).expect("the fixture has this many blocks").end_offset
+    index.blocks().nth(n).expect("the fixture has this many blocks").address.end_offset
 }
 
 /// A timestamp opens `line`, loosely enough to survive a subsecond-precision
@@ -845,7 +845,7 @@ async fn a_query_s_passes_say_what_they_were_carved_around() {
         index
             .blocks()
             .filter(|b| b.header.matches("public.generated_column"))
-            .filter_map(|b| b.statistics.as_deref())
+            .filter_map(|b| b.record.statistics.as_deref())
             .map(BlockStatistics::heap_bytes)
             .sum()
     };
@@ -871,7 +871,7 @@ async fn a_query_s_passes_say_what_they_were_carved_around() {
     let whole = table_heap(&full);
     assert!(whole > 0, "the parse gathered the table's statistics");
     assert!(replay_line(&settled).contains(&format!("held_bytes={whole}")), "{settled}");
-    let frontier = full.blocks().nth(1).expect("the fixture has two blocks").end_offset;
+    let frontier = full.blocks().nth(1).expect("the fixture has two blocks").address.end_offset;
     let mut spans: Vec<Span> = full.spans.iter().filter(|s| s.start < frontier).cloned().collect();
     spans.last_mut().unwrap().end = frontier;
     spans.push(Span {

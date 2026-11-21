@@ -1,12 +1,13 @@
 use std::collections::BTreeMap;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use pgdt_core::Result;
 use pgdt_io::SCAN_CHUNK_DEFAULT_SIZE_BYTES;
 use pgdt_io::internal::worker_count;
 use pgdt_io::{ByteRangeSource, Parallelism, WorkerMemory};
-use pgdt_model::{CopyBlock, Finding};
+use pgdt_model::{BlockAddress, BlockRecord, CopyBlock, Finding};
 
 use super::{derived_source_span, distribute, plan_partitions};
 use crate::stream::replay::segment::{Segment, SegmentEntry};
@@ -139,19 +140,18 @@ fn a_plan_note_lists_only_the_levers_that_move_it() {
     let source = LocalFileSource::open(two_blocks(dir.path())).unwrap();
     let block = CopyBlock {
         header: pgdt_core::parse_copy_header(b"COPY public.t (a, b) FROM stdin;").unwrap(),
-        header_offset: 0,
-        data_offset: 33,
-        terminator_offset: 42,
-        end_offset: 45,
-        row_count: 2,
         partition_root: None,
-        statistics: None,
-        statistics_declined: None,
-        ignored_refusals: None,
-        checked_in_full: false,
-        census: Some(pgdt_model::BlockCensus::default()),
-        recorded_rows: None,
-        longest_line: None,
+        address: BlockAddress {
+            header_offset: 0,
+            data_offset: 33,
+            terminator_offset: 42,
+            end_offset: 45,
+        },
+        record: Arc::new(BlockRecord {
+            row_count: 2,
+            census: Some(pgdt_model::BlockCensus::default()),
+            ..BlockRecord::default()
+        }),
     };
     // Nothing is read: the plan prices the chunk the source was last told.
     let planned = |chunk: usize, parallelism, span| {
@@ -245,19 +245,18 @@ fn the_count_note_offers_the_chunk_only_where_the_span_sits_on_it() {
     }
     let block = CopyBlock {
         header: pgdt_core::parse_copy_header(b"COPY public.t (a, b) FROM stdin;").unwrap(),
-        header_offset: 0,
-        data_offset: 33,
-        terminator_offset: 42,
-        end_offset: 45,
-        row_count: 2,
         partition_root: None,
-        statistics: None,
-        statistics_declined: None,
-        ignored_refusals: None,
-        checked_in_full: false,
-        census: Some(pgdt_model::BlockCensus::default()),
-        recorded_rows: None,
-        longest_line: None,
+        address: BlockAddress {
+            header_offset: 0,
+            data_offset: 33,
+            terminator_offset: 42,
+            end_offset: 45,
+        },
+        record: Arc::new(BlockRecord {
+            row_count: 2,
+            census: Some(pgdt_model::BlockCensus::default()),
+            ..BlockRecord::default()
+        }),
     };
     let chunk = 1 << 20;
     let plan = |chunk: usize, budget: u64, span: usize| {
@@ -304,22 +303,21 @@ fn the_count_note_offers_the_chunk_only_where_the_span_sits_on_it() {
 fn sub_streams_get_contiguous_runs_balanced_by_bytes() {
     let block = CopyBlock {
         header: pgdt_core::parse_copy_header(b"COPY public.t (id) FROM stdin;").unwrap(),
-        header_offset: 0,
-        data_offset: 0,
-        terminator_offset: 0,
-        end_offset: 0,
-        row_count: 0,
         partition_root: None,
-        statistics: None,
-        statistics_declined: None,
-        ignored_refusals: None,
-        checked_in_full: false,
-        census: Some(pgdt_model::BlockCensus::default()),
-        recorded_rows: None,
-        longest_line: None,
+        address: BlockAddress {
+            header_offset: 0,
+            data_offset: 0,
+            terminator_offset: 0,
+            end_offset: 0,
+        },
+        record: Arc::new(BlockRecord {
+            census: Some(pgdt_model::BlockCensus::default()),
+            ..BlockRecord::default()
+        }),
     };
     let piece = |start: u64, limit: u64| Segment {
-        block: block.clone(),
+        header: block.header.clone(),
+        address: block.address,
         start,
         limit,
         entry: SegmentEntry::Interior,

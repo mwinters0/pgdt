@@ -48,7 +48,7 @@ async fn census_of(path: &Path, table: &str) -> Vec<(String, ArrayShape)> {
         .columns
         .iter()
         .cloned()
-        .zip(block.array_shapes().into_iter().flatten().copied())
+        .zip(block.record.array_shapes().into_iter().flatten().copied())
         .collect()
 }
 
@@ -154,7 +154,7 @@ async fn every_mapping_pass_censuses_whatever_its_extent() {
         let index = loaded.index;
         let block = index.blocks().find(|b| b.header.matches("public.t_array")).unwrap();
         assert_eq!(
-            block.array_shapes().map(<[_]>::len),
+            block.record.array_shapes().map(<[_]>::len),
             Some(block.header.columns.len()),
             "{extent:?}"
         );
@@ -165,7 +165,7 @@ async fn every_mapping_pass_censuses_whatever_its_extent() {
             .columns
             .iter()
             .cloned()
-            .zip(block.array_shapes().into_iter().flatten().copied())
+            .zip(block.record.array_shapes().into_iter().flatten().copied())
             .collect();
         assert_eq!(shape(&census, "v_empty").dims, Some((1, 1)), "{extent:?}");
     }
@@ -250,7 +250,7 @@ async fn a_metadata_level_table_is_censused_by_its_query_and_refused_by_a_held_p
     )
     .await
     .unwrap();
-    assert!(run.index.blocks().all(|block| block.census.is_none()));
+    assert!(run.index.blocks().all(|block| block.record.census.is_none()));
     let written = std::fs::read(&path).unwrap();
 
     let cold = Cold { cache: mode.clone(), ..Cold::default() };

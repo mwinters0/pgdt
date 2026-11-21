@@ -242,13 +242,13 @@ async fn a_held_column_lacks_bounds_only_where_gathering_keeps_them() {
     );
 
     let mut unbounded = ordered.clone();
-    let mut held = BlockStatistics::clone(unbounded.statistics.as_deref().unwrap());
+    let mut held = BlockStatistics::clone(unbounded.record.statistics.as_deref().unwrap());
     let column = held.columns[11].as_mut().unwrap();
     *column = ColumnStatistics::from_parts(ColumnStatisticsParts {
         bounds: None,
         ..column.clone().into_parts()
     });
-    unbounded.statistics = Some(Arc::new(held.clone()));
+    Arc::make_mut(&mut unbounded.record).statistics = Some(Arc::new(held.clone()));
     let backfill = request
         .backfill(&unbounded, metadata, None, None)
         .expect("a bounded column held without bounds lacks them");
@@ -366,5 +366,5 @@ async fn a_dropped_read_the_leader_dispatched_interrupts_the_backfill() {
         map_file(opened, read, &serial, invalid, &StatisticsRequest::DATA, &never).await.unwrap();
     assert!(!resumed.interrupted);
     assert_eq!((resumed.resumed_from, resumed.backfilled), (file.len() as u64, 1));
-    assert!(resumed.index.blocks().all(|block| block.statistics.is_some()));
+    assert!(resumed.index.blocks().all(|block| block.record.statistics.is_some()));
 }

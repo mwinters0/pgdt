@@ -403,7 +403,7 @@ async fn an_unmarked_target_still_stops_early_in_a_file_containing_marked_blocks
     };
     let index = loaded.index;
     let evt_m = index.blocks().find(|b| b.header.matches("public.evt_m")).unwrap();
-    assert_eq!(index.scanned_through, evt_m.end_offset);
+    assert_eq!(index.scanned_through, evt_m.address.end_offset);
     assert!(index.scanned_through < source.extent().await.unwrap().exact().unwrap());
 }
 

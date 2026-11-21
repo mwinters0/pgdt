@@ -98,7 +98,7 @@ pub(super) fn print_index_json(
         .map(|&(database, block, ref resolved)| BlockResolutionJson {
             database,
             table: block.header.qualified_name(),
-            header_offset: block.header_offset,
+            header_offset: block.address.header_offset,
             columns: resolved
                 .columns()
                 .iter()

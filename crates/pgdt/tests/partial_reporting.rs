@@ -89,7 +89,7 @@ async fn saved(path: &Path, source: &LocalFileSource, index: &DumpIndex) {
 async fn block_frontier(dump: &Path, n: usize) -> u64 {
     let source = LocalFileSource::open(dump).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    index.blocks().nth(n).expect("the fixture has this many blocks").end_offset
+    index.blocks().nth(n).expect("the fixture has this many blocks").address.end_offset
 }
 
 // ---------------------------------------------------------------------------
@@ -614,13 +614,16 @@ async fn info_states_each_blocks_longest_line() {
         .iter()
         .filter_map(|span| span["body"]["Data"]["Copy"].as_object())
         .filter_map(|block| {
-            let line = block["longest_line"].as_object()?;
+            let line = block["record"]["longest_line"].as_object()?;
             let header = &block["header"];
             let table = match header["schema"].as_str() {
                 Some(schema) => format!("{schema}.{}", header["table"].as_str().unwrap()),
                 None => header["table"].as_str().unwrap().to_owned(),
             };
-            Some((table, format!("longest line:  {} bytes at {}", line["len"], line["offset"])))
+            // The record's offset is from the block's data, `--detail`'s from
+            // the file's start.
+            let offset = block["address"]["data_offset"].as_u64()? + line["offset"].as_u64()?;
+            Some((table, format!("longest line:  {} bytes at {offset}", line["len"])))
         })
         .collect();
     let mut table = String::new();
@@ -748,7 +751,7 @@ async fn a_columns_unrepresentable_count_is_stated_beneath_it() {
         .find(|block| block["header"]["table"] == "t_date")
         .expect("t_date's block");
     assert_eq!(
-        block["census"]["unrepresentable"][1],
+        block["record"]["census"]["unrepresentable"][1],
         serde_json::json!({"format": 2, "engine": 0})
     );
     assert!(json["calendar_end"].is_i64(), "the calendar the counts were taken against");
@@ -890,7 +893,7 @@ async fn a_later_databases_blocks_report_metadata_not_scanned() {
         .blocks_with_database()
         .find(|(database, _)| *database == Some("pgdt_fixture_2"))
         .expect("the concatenated fixture has a second database with blocks");
-    let frontier = second_db.end_offset;
+    let frontier = second_db.address.end_offset;
     write_truncated_cache(&dump, frontier, 1).await;
 
     let json: serde_json::Value = serde_json::from_str(&stdout_of(&run(&[

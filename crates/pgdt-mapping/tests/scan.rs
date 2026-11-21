@@ -114,7 +114,7 @@ async fn generated_fixtures_have_the_expected_structure() {
 
         let summary: Vec<(String, String, u64)> = index
             .blocks()
-            .map(|b| (b.header.qualified_name(), b.header.columns.join(","), b.row_count))
+            .map(|b| (b.header.qualified_name(), b.header.columns.join(","), b.record.row_count))
             .collect();
 
         let expected: Vec<(String, String, u64)> = [
@@ -148,16 +148,19 @@ async fn recorded_offsets_address_the_right_bytes() {
         let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
         for block in index.blocks() {
-            let header = &bytes[block.header_offset as usize..block.data_offset as usize];
+            let header =
+                &bytes[block.address.header_offset as usize..block.address.data_offset as usize];
             assert!(header.starts_with(b"COPY "), "header_offset must land on `COPY `");
             assert!(header.ends_with(b"\n"), "data_offset must land just past the newline");
 
-            let terminator = &bytes[block.terminator_offset as usize..block.end_offset as usize];
+            let terminator =
+                &bytes[block.address.terminator_offset as usize..block.address.end_offset as usize];
             assert_eq!(terminator, b"\\.\n", "terminator_offset must land on the `\\.` line");
 
-            let data = &bytes[block.data_offset as usize..block.terminator_offset as usize];
+            let data = &bytes
+                [block.address.data_offset as usize..block.address.terminator_offset as usize];
             let rows = if data.is_empty() { 0 } else { data.split(|&b| b == b'\n').count() - 1 };
-            assert_eq!(rows as u64, block.row_count);
+            assert_eq!(rows as u64, block.record.row_count);
         }
     }
 }
@@ -298,7 +301,7 @@ async fn missing_trailing_newline_is_tolerated_but_after_the_terminator() {
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     let blocks: Vec<_> = index.blocks().collect();
     assert_eq!(blocks.len(), 1);
-    assert_eq!(blocks[0].row_count, 1);
+    assert_eq!(blocks[0].record.row_count, 1);
 
     std::fs::write(&path, b"COPY public.t (a) FROM stdin;\n1\n\\.").unwrap();
     let source = LocalFileSource::open(&path).unwrap();
@@ -382,7 +385,7 @@ async fn a_crlf_conversion_reads_alike_and_a_stray_ending_is_refused() {
     assert!(expected.iter().filter(|(_, rows)| rows.len() >= 2).count() > 5);
     assert_eq!(decoded_blocks(&crlf_path).await, expected);
     let counts = |index: &pgdt_model::DumpIndex| -> Vec<(String, u64)> {
-        index.blocks().map(|b| (b.header.qualified_name(), b.row_count)).collect()
+        index.blocks().map(|b| (b.header.qualified_name(), b.record.row_count)).collect()
     };
     let expected_counts: Vec<(String, u64)> =
         expected.iter().map(|(table, rows)| (table.clone(), rows.len() as u64)).collect();

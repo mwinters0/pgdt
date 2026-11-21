@@ -134,8 +134,8 @@ use pgdt_core::internal::StatisticsScope;
 use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
 use pgdt_model::timescaledb::RecordedRows;
 use pgdt_model::{
-    BlockCensus, BlockGathered, CopyBlock, DataBlock, InsertRun, LargeObjectRegion, Span, SpanBody,
-    TocHeader,
+    BlockAddress, BlockCensus, BlockGathered, BlockRecord, CopyBlock, DataBlock, InsertRun,
+    LargeObjectRegion, Span, SpanBody, TocHeader,
     internal::{BlockObserver, CensusFold, FieldCount},
 };
 
@@ -256,13 +256,13 @@ pub struct Builder {
     /// ([`Builder::row_fold`]), unioned into `pending_census` at its end:
     /// there for a censused block once it is counted.
     pending_fold: Option<CensusFold>,
-    /// The statistics observer for the open `COPY` block, when the mapping
-    /// pass asked for one ([`Builder::observe_block`]). Handed every row and
-    /// finished into [`CopyBlock::statistics`] at its `CopyEnd`.
+    /// The statistics observer for the open `COPY` block, when the mapping pass
+    /// asked for one ([`Builder::observe_block`]). Handed every row and
+    /// finished into [`BlockRecord::statistics`] at its `CopyEnd`.
     pending_observer: Option<Box<dyn BlockObserver>>,
     /// The open block's rows as text, where the mapping pass asked for them
-    /// ([`Builder::record_rows`]); its [`CopyBlock::recorded_rows`] at its
-    /// `CopyEnd`.
+    /// ([`Builder::record_rows`]); its
+    /// [`BlockRecord::recorded_rows`] at its `CopyEnd`.
     pending_rows: Option<RecordedRows>,
     /// The `standard_conforming_strings` the file last stated, which every
     /// statement's [`StatementScan`] lexes under, as the scanner does
@@ -914,17 +914,19 @@ impl Builder {
         RowFold::new(self.pending_fold.as_mut(), observer, data_offset)
     }
 
-    /// Record the rows of the `COPY` block [`on_copy_start`](Self::on_copy_start)
-    /// just opened as text: every row [`on_row`](Self::on_row) folds is
-    /// kept, as the block's [`CopyBlock::recorded_rows`]. Never for a block
-    /// whose rows interior workers read, which hand no row here.
+    /// Record the rows of the `COPY` block
+    /// [`on_copy_start`](Self::on_copy_start) just opened as text: every row
+    /// [`on_row`](Self::on_row) folds is kept, as the block's
+    /// [`BlockRecord::recorded_rows`]. Never for a block whose rows interior
+    /// workers read, which hand no row here.
     pub fn record_rows(&mut self) {
         self.pending_rows = Some(RecordedRows::default());
     }
 
-    /// Gather statistics for the `COPY` block [`on_copy_start`](Self::on_copy_start)
-    /// just opened: every row [`on_row`](Self::on_row) folds is handed to
-    /// `observer`, and its answer is the block's [`CopyBlock::statistics`].
+    /// Gather statistics for the `COPY` block
+    /// [`on_copy_start`](Self::on_copy_start) just opened: every row
+    /// [`on_row`](Self::on_row) folds is handed to `observer`, and its answer
+    /// is the block's [`BlockRecord::statistics`].
     pub fn observe_block(&mut self, observer: Box<dyn BlockObserver>) {
         self.pending_observer = Some(observer);
     }
@@ -998,33 +1000,37 @@ impl Builder {
         };
         let block = CopyBlock {
             header: copy_start.header,
-            header_offset: copy_start.header_offset,
-            data_offset: copy_start.data_offset,
-            terminator_offset: end.terminator_offset,
-            end_offset: end.end_offset,
-            row_count: end.row_count,
             partition_root,
-            statistics,
-            statistics_declined,
-            ignored_refusals,
-            checked_in_full,
-            census: self.pending_census.take().map(|mut census| {
-                if let Some(mut fold) = self.pending_fold.take() {
-                    census.merge(&fold.take());
-                }
-                census
+            address: BlockAddress {
+                header_offset: copy_start.header_offset,
+                data_offset: copy_start.data_offset,
+                terminator_offset: end.terminator_offset,
+                end_offset: end.end_offset,
+            },
+            record: Arc::new(BlockRecord {
+                row_count: end.row_count,
+                statistics,
+                statistics_declined,
+                ignored_refusals,
+                checked_in_full,
+                census: self.pending_census.take().map(|mut census| {
+                    if let Some(mut fold) = self.pending_fold.take() {
+                        census.merge(&fold.take());
+                    }
+                    census
+                }),
+                recorded_rows: self.pending_rows.take().map(Box::new),
+                longest_line: end.longest_line.map(|line| line.in_block(copy_start.data_offset)),
             }),
-            recorded_rows: self.pending_rows.take().map(Box::new),
-            longest_line: end.longest_line,
         };
         debug_assert!(
-            block.census.is_none() || self.pending_counter.is_some(),
+            block.record.census.is_none() || self.pending_counter.is_some(),
             "a censused block is counted too (D96)"
         );
         self.pending_counter = None;
         self.pending_fold = None;
         let owned = toc.is_some();
-        self.push_span(start, SpanBody::Data(DataBlock::Copy(Box::new(block))), toc, owned);
+        self.push_span(start, SpanBody::Data(DataBlock::Copy(block)), toc, owned);
         Ok(())
     }
 
@@ -1110,7 +1116,10 @@ impl Builder {
     ) {
         self.push_span(
             start,
-            SpanBody::Data(DataBlock::InsertRun(InsertRun { table, row_count })),
+            SpanBody::Data(DataBlock::InsertRun(InsertRun {
+                table,
+                record: BlockRecord { row_count, ..BlockRecord::default() },
+            })),
             toc,
             toc_owned,
         );

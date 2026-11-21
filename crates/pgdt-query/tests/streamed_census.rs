@@ -97,7 +97,7 @@ async fn loaded(cache: &Path, source: &dyn ByteRangeSource) -> DumpIndex {
 /// The census `index` holds of `table`'s first block.
 fn census(index: &DumpIndex, table: &str) -> BlockCensus {
     let block = index.blocks().find(|block| block.header.matches(table)).unwrap();
-    block.census.clone().expect("a query censuses every block it maps")
+    block.record.census.clone().expect("a query censuses every block it maps")
 }
 
 /// **A cold query's census holds only the fields it decodes**: a row
@@ -184,7 +184,7 @@ async fn a_streamed_census_is_the_census_held() {
                 let table = want.header.qualified_name();
                 let context = format!("{version}: {table}, chunk {chunk}, {jobs} jobs");
                 assert_eq!(got.header, want.header, "{context}");
-                assert_eq!(got.census, want.census, "{context}");
+                assert_eq!(got.record.census, want.record.census, "{context}");
             }
             assert_eq!(index.blocks().count(), reference.blocks().count(), "{version}");
         }

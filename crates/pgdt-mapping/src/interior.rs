@@ -21,12 +21,11 @@ use std::ops::Range;
 
 use pgdt_core::{Error, Result};
 use pgdt_dump::internal::{ChunkCarry, Drawing, FieldFold, draw_absorbing};
-use pgdt_dump::{CopyEnd, ScanOptions};
+use pgdt_dump::{CopyEnd, ScanOptions, ScannedLine};
 use pgdt_io::{
     ByteRangeSource, PartitionRead, Partitioning, WaitPolicy,
     internal::{cut, worker_count},
 };
-use pgdt_model::LongestLine;
 use pgdt_model::internal::BlockCensusExt;
 use pgdt_model::internal::BlockObserver;
 
@@ -453,14 +452,14 @@ async fn run_region(
                 census,
                 end: CopyEnd {
                     row_count: rows + interior.end.row_count,
-                    longest_line: LongestLine::fold(longest_line, interior.end.longest_line),
+                    longest_line: ScannedLine::fold(longest_line, interior.end.longest_line),
                     ..interior.end
                 },
             }));
         }
         for piece in &scans {
             rows += piece.rows;
-            longest_line = LongestLine::fold(longest_line, piece.longest_line);
+            longest_line = ScannedLine::fold(longest_line, piece.longest_line);
             census.merge(&piece.census);
         }
         // The last piece's `through` is where the window's last complete line

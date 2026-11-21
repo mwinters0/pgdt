@@ -157,7 +157,8 @@ async fn non_matching_cached_blocks_cost_zero_bytes() {
         .blocks()
         .find(|b| b.header.matches("public.empty_table"))
         .expect("empty_table was indexed");
-    let expected_bytes = empty_table_block.end_offset - empty_table_block.header_offset;
+    let expected_bytes =
+        empty_table_block.address.end_offset - empty_table_block.address.header_offset;
 
     let counting = Arc::new(CountingSource::wrap(LocalFileSource::open(&dump).unwrap()));
     let source: Arc<dyn ByteRangeSource> = counting.clone();
@@ -246,7 +247,10 @@ async fn a_cold_query_maps_up_to_its_target_and_stops() {
         .blocks()
         .find(|b| b.header.matches("public.widgets"))
         .expect("the queried block is mapped");
-    assert_eq!(index.scanned_through, widgets.end_offset, "stopped at the target, not at EOF");
+    assert_eq!(
+        index.scanned_through, widgets.address.end_offset,
+        "stopped at the target, not at EOF"
+    );
     assert!(index.scanned_through < source.extent().await.unwrap().exact().unwrap());
 }
 
@@ -352,7 +356,7 @@ async fn interrupted_scan_leaves_correct_partial_progress() {
         "the target block is mapped before any of its rows go out"
     );
     let widgets = index.blocks().find(|b| b.header.matches("public.widgets")).unwrap();
-    assert_eq!(index.scanned_through, widgets.end_offset);
+    assert_eq!(index.scanned_through, widgets.address.end_offset);
 
     // A second query against the same (partial) cache still finds
     // everything past where the first one stopped.
@@ -428,7 +432,7 @@ async fn no_duplication_on_repeat_queries() {
     let after_count = after.blocks().count();
     assert_eq!(before.blocks().count(), after_count);
     assert_eq!(before.spans, after.spans, "a fully-mapped file is not remapped at all");
-    let mut offsets: Vec<u64> = after.blocks().map(|b| b.header_offset).collect();
+    let mut offsets: Vec<u64> = after.blocks().map(|b| b.address.header_offset).collect();
     offsets.sort_unstable();
     offsets.dedup();
     assert_eq!(offsets.len(), after_count, "no duplicate header_offsets");

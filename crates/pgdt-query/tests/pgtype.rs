@@ -517,7 +517,7 @@ async fn a_bit_string_s_length_is_read_off_the_spelling_pg_dump_writes() {
                 .map(|c| (c.name.as_str(), c.declared_type.as_str()))
                 .collect();
             assert_eq!(declared, spelled, "{label}");
-            assert!(block.checked_in_full, "{label}");
+            assert!(block.record.checked_in_full, "{label}");
             let unchecked = strict_unchecked(block, Some(meta), db.name.as_deref());
             assert!(unchecked.is_empty(), "{label}: {unchecked:?}");
         }
@@ -756,7 +756,7 @@ async fn every_resolution_outcome_is_produced_by_a_real_fixture_column() {
                 index.metadata.as_deref(),
                 database,
                 SchemaMode::Typed,
-                block.array_shapes().unwrap_or_default(),
+                block.record.array_shapes().unwrap_or_default(),
             );
             let untyped = QueryOptions {
                 unrepresentable: UnrepresentableMode::Text,

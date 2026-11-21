@@ -1403,7 +1403,7 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
 /// The persisted format version and the digest of every fixture's persisted
 /// index it was pinned beside, re-pinned together
 /// (`persisted_index_is_pinned_to_the_format_version`).
-const PERSISTED_INDEX: (u32, u64) = (88, 12_390_613_669_624_987_143);
+const PERSISTED_INDEX: (u32, u64) = (89, 4_889_959_213_060_671_232);
 
 /// **Every fixture's persisted [`DumpIndex`](pgdt_model::DumpIndex)
 /// digests to the value pinned beside `CACHE_FORMAT_VERSION`.** A cache saved
@@ -1546,7 +1546,7 @@ mod encoding {
             assert!(
                 run.index.spans.iter().any(|span| matches!(
                     &span.body,
-                    SpanBody::Data(DataBlock::Copy(block)) if block.statistics.as_ref().is_some_and(
+                    SpanBody::Data(DataBlock::Copy(block)) if block.record.statistics.as_ref().is_some_and(
                         |statistics| statistics.columns.iter().flatten().any(|column| {
                             column.listed_groups(BoundsSet::Primary).is_some()
                                 && column.dictionary.is_some()
@@ -1668,7 +1668,10 @@ mod encoding {
         .await
         .unwrap();
         assert!(!run.interrupted);
-        assert!(run.index.blocks().any(|block| block.statistics.is_some()), "re-read at data");
+        assert!(
+            run.index.blocks().any(|block| block.record.statistics.is_some()),
+            "re-read at data"
+        );
 
         let opened = mode.open(&Origin::local(&dump)).await.unwrap();
         assert!(matches!(&opened.cache, Held::Loaded(loaded) if loaded.is_complete()));

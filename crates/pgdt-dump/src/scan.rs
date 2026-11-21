@@ -60,7 +60,7 @@ pub struct CopyStart {
 
 impl CopyStart {
     /// The identity of the block this header opens, as the map's own
-    /// [`CopyBlock::id`](pgdt_model::CopyBlock::id) derives it.
+    /// [`BlockAddress::id`](pgdt_model::BlockAddress::id) derives it.
     pub fn id(&self) -> BlockId {
         BlockId::at_header(self.header_offset)
     }
@@ -106,10 +106,44 @@ pub struct CopyEnd {
     pub end_offset: u64,
     /// Number of data rows in the block.
     pub row_count: u64,
-    /// The block's longest data line, `None` where it holds no row
-    /// ([`pgdt_model::CopyBlock::longest_line`]) — of the rows read since a
-    /// resume, for a scanner resumed inside the block.
-    pub longest_line: Option<LongestLine>,
+    /// The block's longest data line, `None` where it holds no row — of the
+    /// rows read since a resume, for a scanner resumed inside the block. What
+    /// its record keeps ([`pgdt_model::BlockRecord::longest_line`]) once made
+    /// relative to its data ([`ScannedLine::in_block`]).
+    pub longest_line: Option<ScannedLine>,
+}
+
+/// **A data line where the scanner found it**: its absolute file offset and
+/// its length, its line ending included — what a block's record keeps as a
+/// [`LongestLine`], relative to the block's first data byte
+/// (`docs/design/decisions.md`, "D140").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScannedLine {
+    /// Absolute file offset of the line's first byte.
+    pub offset: u64,
+    /// The line's bytes, its line ending included.
+    pub len: u64,
+}
+
+impl ScannedLine {
+    /// The longer of `earlier` and `later`, which follows it in the file, and
+    /// `earlier` where they are as long — so a block's pieces folded in file
+    /// order answer what one serial read of the block answers, which measures
+    /// each row as this folds it.
+    pub fn fold(earlier: Option<Self>, later: Option<Self>) -> Option<Self> {
+        match (earlier, later) {
+            (Some(earlier), Some(later)) if later.len <= earlier.len => Some(earlier),
+            (earlier, None) => earlier,
+            (_, later) => later,
+        }
+    }
+
+    /// This line as the record of the block whose data starts at
+    /// `data_offset` keeps it.
+    pub fn in_block(self, data_offset: u64) -> LongestLine {
+        debug_assert!(self.offset >= data_offset, "a data line starts in its block's data");
+        LongestLine { offset: self.offset - data_offset, len: self.len }
+    }
 }
 
 /// One line encountered outside a COPY block that is neither a COPY header
@@ -318,7 +352,7 @@ pub struct PieceEndings {
 pub trait CopyScannerExt {
     fn recording_endings(self) -> Self;
     fn piece_endings(&self) -> PieceEndings;
-    fn longest_line(&self) -> Option<LongestLine>;
+    fn longest_line(&self) -> Option<ScannedLine>;
 }
 
 impl CopyScannerExt for CopyScanner {
@@ -341,13 +375,13 @@ impl CopyScannerExt for CopyScanner {
     /// The longest row consumed since the scanner was resumed or entered the
     /// open block at its header — or the block it last closed, until another
     /// opens — which a piece of the interior folds into its block's.
-    fn longest_line(&self) -> Option<LongestLine> {
+    fn longest_line(&self) -> Option<ScannedLine> {
         self.longest()
     }
 }
 
 /// [`CopyScanner::longest`] before a block's first row.
-const NO_ROW: LongestLine = LongestLine { offset: 0, len: 0 };
+const NO_ROW: ScannedLine = ScannedLine { offset: 0, len: 0 };
 
 /// How a scanner holds a block's rows to the ending its first row fixed.
 #[derive(Debug)]
@@ -458,7 +492,7 @@ pub struct CopyScanner {
     /// never empty, its line ending or the file's end closing it, so a `len`
     /// of zero is no row yet, and each row is measured against the longest
     /// by its length alone ([`measure`](Self::measure)).
-    longest: LongestLine,
+    longest: ScannedLine,
 }
 
 impl Default for CopyScanner {
@@ -600,17 +634,17 @@ impl CopyScanner {
 
     /// Measure a row of the open block, `len` bytes at `offset`, against its
     /// longest so far: kept only where strictly longer, so the earliest of
-    /// the longest stands, as [`LongestLine::fold`] answers
+    /// the longest stands, as [`ScannedLine::fold`] answers
     /// (`docs/design/decisions.md`, "D140").
     fn measure(&mut self, offset: u64, len: u64) {
         debug_assert!(len > 0, "a row is never empty");
         if len > self.longest.len {
-            self.longest = LongestLine { offset, len };
+            self.longest = ScannedLine { offset, len };
         }
     }
 
     /// The open block's longest row so far, `None` before its first.
-    fn longest(&self) -> Option<LongestLine> {
+    fn longest(&self) -> Option<ScannedLine> {
         (self.longest.len > 0).then_some(self.longest)
     }
 

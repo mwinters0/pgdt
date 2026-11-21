@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use pgdt_codec::ResolvedSchema;
 use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_codec::internal::UnrepresentableRead;
+use pgdt_core::CopyHeader;
 use pgdt_core::internal::{RawRow, RowSplit};
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::{evaluated_row, timed_span};
@@ -18,7 +19,7 @@ use pgdt_core::{
     instrument::EvaluationPart,
     internal::{row_evaluated, timed},
 };
-use pgdt_model::{BlockId, BlockStatistics, CopyBlock, PostgresInvalidValues};
+use pgdt_model::{BlockAddress, BlockId, BlockRecord, PostgresInvalidValues};
 
 use super::plan::{ReplayPlan, query_reads, resolve_block};
 use super::segment::Segment;
@@ -77,12 +78,14 @@ pub enum RowEvaluation {
 }
 
 /// A [`DynamicFilter`] as one sub-stream's replay reads it: the filter, the
-/// statistics of the blocks it may prune, and the block being read.
+/// records of the blocks it may prune, and the block being read.
 pub(in crate::stream) struct DynamicRead {
     filter: Arc<dyn DynamicFilter>,
     /// Whether each row is evaluated against the state.
     evaluation: RowEvaluation,
-    statistics: Arc<BTreeMap<BlockId, Arc<BlockStatistics>>>,
+    /// The record of every block the read may enter, which holds the
+    /// statistics it prunes by where the query uses them.
+    records: Arc<BTreeMap<BlockId, Arc<BlockRecord>>>,
     /// The cut the sub-stream was handed, whose verdicts a state it read is
     /// read with again rather than asked of each group anew.
     cut: Arc<Cut>,
@@ -122,38 +125,42 @@ pub(in crate::stream) struct DynamicBlock {
 }
 
 impl DynamicBlock {
-    /// `block` of `plan`'s table, pruned by `statistics` where they answer —
-    /// or `None` where its schema does not resolve.
+    /// The block of `plan`'s table holding rows of `header` at `address`,
+    /// whose record is `record`, pruned by its statistics where the query
+    /// uses them and they answer — or `None` where its schema does not
+    /// resolve.
     pub(in crate::stream) fn new(
-        block: &CopyBlock,
-        statistics: Option<&Arc<BlockStatistics>>,
+        header: &CopyHeader,
+        address: &BlockAddress,
+        record: &BlockRecord,
         plan: &ReplayPlan,
     ) -> Option<Self> {
         let metadata = plan.metadata.as_deref();
-        let census = plan.table.census_for(&block.header.columns);
-        let text = plan.table.text_for(&block.header.columns);
+        let census = plan.table.census_for(&header.columns);
+        let text = plan.table.text_for(&header.columns);
         let (schema_mode, semantics) =
             (plan.query_options.schema_mode, plan.query_options.semantics);
         let database = plan.database.as_deref();
-        let full = resolve_block(
-            &block.header,
-            metadata,
-            database,
-            schema_mode,
-            &census,
-            &text,
-            semantics,
-        )
-        .ok()?;
-        let counts = block.unrepresentable();
+        let full =
+            resolve_block(header, metadata, database, schema_mode, &census, &text, semantics)
+                .ok()?;
+        let counts = record.unrepresentable();
         let unrepresentable =
-            query_reads(&block.header, metadata, database, &full, counts, &plan.query_options);
+            query_reads(header, metadata, database, &full, counts, &plan.query_options);
         let reading = plan.query_options.statistics_view();
+        let statistics = record.statistics.as_ref().filter(|_| plan.query_options.use_statistics);
         let pruning = statistics.and_then(|statistics| {
-            DynamicPruning::new(block, Arc::clone(statistics), metadata, database, reading)
+            DynamicPruning::new(
+                header,
+                address,
+                Arc::clone(statistics),
+                metadata,
+                database,
+                reading,
+            )
         });
         Some(Self {
-            header_offset: block.header_offset,
+            header_offset: address.header_offset,
             full,
             unrepresentable,
             invalid: plan.query_options.postgres_invalid_values,
@@ -199,29 +206,38 @@ pub(in crate::stream) enum Skip {
 }
 
 impl DynamicRead {
-    /// A sub-stream's read of `filter` under `evaluation`, pruning the blocks
-    /// `statistics` holds by `cut`, counting the groups it rules out into
-    /// `pruned` and the rows it drops into `rows` — no block yet entered.
+    /// A sub-stream's read of `filter` under `evaluation`, pruning each block
+    /// `records` holds by its statistics and `cut`, counting the groups it
+    /// rules out into `pruned` and the rows it drops into `rows` — no block yet
+    /// entered.
     pub(in crate::stream) fn new(
         filter: Arc<dyn DynamicFilter>,
         evaluation: RowEvaluation,
-        statistics: Arc<BTreeMap<BlockId, Arc<BlockStatistics>>>,
+        records: Arc<BTreeMap<BlockId, Arc<BlockRecord>>>,
         cut: Arc<Cut>,
         pruned: Arc<AtomicU64>,
         rows: Arc<AtomicU64>,
     ) -> Self {
-        Self { filter, evaluation, statistics, cut, block: None, pruned, rows }
+        Self { filter, evaluation, records, cut, block: None, pruned, rows }
     }
 
-    /// Make `block` the block being read, unless it already is. Its state is
-    /// first read at the first group it enters or chunk it takes.
-    pub(in crate::stream) fn enter(&mut self, block: &CopyBlock, plan: &ReplayPlan) {
-        let id = block.id();
+    /// Make the block holding rows of `header` at `address` the block being
+    /// read, unless it already is. Its state is first read at the first group
+    /// it enters or chunk it takes.
+    pub(in crate::stream) fn enter(
+        &mut self,
+        header: &CopyHeader,
+        address: &BlockAddress,
+        plan: &ReplayPlan,
+    ) {
+        let id = address.id();
         if self.block.as_ref().is_some_and(|(at, _)| *at == id) {
             return;
         }
-        let statistics = self.statistics.get(&id);
-        self.block = Some((id, DynamicBlock::new(block, statistics, plan)));
+        let record = self.records.get(&id);
+        debug_assert!(record.is_some(), "a sub-stream reads a matched block");
+        let block = record.and_then(|record| DynamicBlock::new(header, address, record, plan));
+        self.block = Some((id, block));
     }
 
     /// The block being read, where its schema resolves.

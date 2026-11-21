@@ -105,7 +105,7 @@ pub fn root_rows(index: &DumpIndex, database: Option<&str>, hypertable: &str) ->
     index
         .blocks_with_database()
         .filter(|(db, block)| *db == database && block.header.qualified_name() == hypertable)
-        .map(|(_, block)| block.row_count)
+        .map(|(_, block)| block.record.row_count)
         .sum()
 }
 

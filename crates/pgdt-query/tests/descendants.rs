@@ -125,7 +125,7 @@ fn through_root_findings(dump: &Dump) -> (BTreeMap<String, Vec<u64>>, BTreeSet<S
             .index()
             .blocks()
             .filter(|b| b.partition_root.is_some() && b.header.qualified_name() == *root)
-            .map(|b| b.header_offset)
+            .map(|b| b.address.header_offset)
             .collect();
         assert_eq!(*header_offsets, marked, "{root}");
         named.extend(partitions.clone().unwrap_or_else(|| panic!("{root}: a TOC names each")));

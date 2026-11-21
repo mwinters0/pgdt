@@ -137,7 +137,7 @@ async fn a_source_is_opened_and_mapped_with_statistics() {
     assert!(path.with_extension("sql.pgdt").is_file(), "the pass saves its cache");
     let table = ordered(&dump);
     assert!(!table.blocks().is_empty());
-    assert!(table.blocks().iter().all(|block| block.statistics.is_some()), "{table:?}");
+    assert!(table.blocks().iter().all(|block| block.record.statistics.is_some()), "{table:?}");
 }
 
 /// **2. The cache loaded and judged against the live source**: complete and

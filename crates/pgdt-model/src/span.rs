@@ -8,32 +8,18 @@ use std::collections::BTreeSet;
 
 use crate::diagnostic::DiagnosticExt;
 use crate::{
-    ArrayShape, BlockStatistics, CopyBlock, DataBlock, DatabaseMetadata, Diagnostic, DumpIndex,
-    LongestLine, SpanBody, Unrepresentable,
+    ArrayShape, BlockAddress, BlockRecord, BlockStatistics, CopyBlock, DataBlock, DatabaseMetadata,
+    Diagnostic, DumpIndex, SpanBody, Unrepresentable,
 };
 
 /// Per-span cap on stored text (`docs/design/decisions.md`, "D30") — a whole
 /// schema's DDL being small, it bites only on one enormous statement.
 pub const SPAN_STORED_TEXT_MAX_BYTES: usize = 64 * 1024;
 
-impl LongestLine {
-    /// The longer of `earlier` and `later`, which follows it in the file, and
-    /// `earlier` where they are as long — so a block's pieces folded in file
-    /// order answer what one serial read of the block answers, which measures
-    /// each row as this folds it.
-    pub fn fold(earlier: Option<Self>, later: Option<Self>) -> Option<Self> {
-        match (earlier, later) {
-            (Some(earlier), Some(later)) if later.len <= earlier.len => Some(earlier),
-            (earlier, None) => earlier,
-            (_, later) => later,
-        }
-    }
-}
-
 /// **A block's identity**: what every site keying, matching or ordering a
 /// block holds, in dump order, and nothing it prints — a display site prints
 /// the block's address (`docs/design/decisions.md`, "D167"). Derived from
-/// the address wherever one is held ([`CopyBlock::id`], and the scanner's
+/// the address wherever one is held ([`BlockAddress::id`], and the scanner's
 /// `CopyStart`), and never persisted: nothing holding one outlives its
 /// process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -53,12 +39,14 @@ impl BlockIdExt for BlockId {
     }
 }
 
-impl CopyBlock {
+impl BlockAddress {
     /// The block's identity ([`BlockId`]), derived from its address.
     pub fn id(&self) -> BlockId {
         BlockId::at_header(self.header_offset)
     }
+}
 
+impl BlockRecord {
     /// The census's array shapes, where the block holds one.
     pub fn array_shapes(&self) -> Option<&[ArrayShape]> {
         self.census.as_ref().map(|census| census.shapes.as_slice())
@@ -88,7 +76,7 @@ pub fn union_census<'a>(
 ) -> Vec<ArrayShape> {
     let mut out = vec![ArrayShape::default(); columns.len()];
     for block in blocks {
-        let census = block.array_shapes().into_iter().flatten();
+        let census = block.record.array_shapes().into_iter().flatten();
         for (name, shape) in block.header.columns.iter().zip(census) {
             let slot = columns.iter().position(|c| c == name);
             if let Some(slot) = slot.and_then(|slot| out.get_mut(slot)) {
@@ -159,7 +147,8 @@ impl ThroughRoot<'_> {
     /// they hold, each once in file order — `None` where a block's TOC entry
     /// names none, so any partition below the root may hold its rows.
     pub fn finding(&self) -> Diagnostic {
-        let header_offsets = self.blocks.iter().map(|(block, _)| block.header_offset).collect();
+        let header_offsets =
+            self.blocks.iter().map(|(block, _)| block.address.header_offset).collect();
         let mut partitions: Option<Vec<String>> = Some(Vec::new());
         for (_, held) in &self.blocks {
             let (Some(listed), Some(held)) = (partitions.as_mut(), held) else {
@@ -214,7 +203,7 @@ impl DumpIndex {
     /// (`docs/design/decisions.md`, "D34").
     pub fn blocks(&self) -> impl Iterator<Item = &CopyBlock> {
         self.spans.iter().filter_map(|s| match &s.body {
-            SpanBody::Data(DataBlock::Copy(block)) => Some(&**block),
+            SpanBody::Data(DataBlock::Copy(block)) => Some(block),
             _ => None,
         })
     }
@@ -224,7 +213,7 @@ impl DumpIndex {
     /// stored (`docs/design/decisions.md`, "D34").
     pub fn blocks_with_database(&self) -> impl Iterator<Item = (Option<&str>, &CopyBlock)> {
         self.spans.iter().filter_map(|s| match &s.body {
-            SpanBody::Data(DataBlock::Copy(block)) => Some((s.database.as_deref(), &**block)),
+            SpanBody::Data(DataBlock::Copy(block)) => Some((s.database.as_deref(), block)),
             _ => None,
         })
     }
@@ -249,7 +238,7 @@ impl DumpIndex {
                         schema: toc.schema.clone(),
                         table: toc.name.clone(),
                     });
-                Some((database, &**block, held))
+                Some((database, block, held))
             }
             _ => None,
         })
@@ -302,13 +291,13 @@ impl DumpIndex {
     /// map resident bills for keeping them.
     pub fn statistics_heap_bytes(&self) -> u64 {
         self.blocks()
-            .filter_map(|block| block.statistics.as_deref())
+            .filter_map(|block| block.record.statistics.as_deref())
             .map(BlockStatistics::heap_bytes)
             .sum()
     }
 
     pub fn total_rows(&self) -> u64 {
-        self.blocks().map(|b| b.row_count).sum()
+        self.blocks().map(|b| b.record.row_count).sum()
     }
 
     /// Whether this scan reached the end of a `size`-byte file — the test

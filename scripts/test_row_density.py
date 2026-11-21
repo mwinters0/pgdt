@@ -34,15 +34,19 @@ def block(rows, *, table="t", schema="public", group_size=1 << 20, data_bytes=No
     return {
         "header": {"schema": schema, "table": table, "columns": ["id"]},
         "database": database,
-        "header_offset": 100,
-        "data_offset": 200,
-        "terminator_offset": 200 + total_bytes,
-        "end_offset": 203 + total_bytes,
-        "row_count": sum(rows),
-        "statistics": None if rows is None else {
-            "group_size": group_size,
-            "groups": [{"rows": r, "bytes": spanned(r)} for r in rows],
-            "columns": [None],
+        "address": {
+            "header_offset": 100,
+            "data_offset": 200,
+            "terminator_offset": 200 + total_bytes,
+            "end_offset": 203 + total_bytes,
+        },
+        "record": {
+            "row_count": sum(rows),
+            "statistics": None if rows is None else {
+                "group_size": group_size,
+                "groups": [{"rows": r, "bytes": spanned(r)} for r in rows],
+                "columns": [None],
+            },
         },
     }
 
@@ -203,7 +207,7 @@ class Width(unittest.TestCase):
         # is as near the bound as the half-empty one.
         rows = [1024, 1] * 49 + [1024, 1024]
         groups = block(rows)
-        for g in groups["statistics"]["groups"]:
+        for g in groups["record"]["statistics"]["groups"]:
             g["bytes"] = (3 << 19) if g["rows"] == 1 else 1 << 20
         result = rd.block_density(groups, 1024)
         self.assertGreater(result["mean_row_bytes"], 1024)
@@ -237,11 +241,11 @@ class Density(unittest.TestCase):
 
     def test_blocks_with_rows_and_no_statistics_are_listed(self):
         empty = block([0], table="empty")
-        empty["statistics"] = None
-        empty["row_count"] = 0
+        empty["record"]["statistics"] = None
+        empty["record"]["row_count"] = 0
         untracked = block([0], table="untracked")
-        untracked["statistics"] = None
-        untracked["row_count"] = 5
+        untracked["record"]["statistics"] = None
+        untracked["record"]["row_count"] = 5
         result = rd.density(info(block([2000] * 3), empty, untracked), 1024)
         self.assertEqual([b["table"] for b in result["blocks"]], ["public.t"])
         self.assertEqual(result["untracked"], ["public.untracked"])

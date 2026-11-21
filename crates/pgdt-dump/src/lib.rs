@@ -14,7 +14,8 @@ pub use map::{attach_text, check_tiling};
 pub use preamble::preamble_only;
 pub use scan::{
     ChunkEvents, ChunkedScanner, CopyEnd, CopyScanner, CopyStart, DollarQuoteEnd, Event,
-    LargeObjectEnd, LargeObjectStart, Line, ReadOptions, Row, ScanOptions, StreamedRow, scan,
+    LargeObjectEnd, LargeObjectStart, Line, ReadOptions, Row, ScanOptions, ScannedLine,
+    StreamedRow, scan,
 };
 
 /// What a crate above reaches that is not this crate's API: public only

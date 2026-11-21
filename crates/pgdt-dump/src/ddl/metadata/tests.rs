@@ -1,7 +1,11 @@
 use super::*;
 use crate::ddl::parse_alter_type_drop_attribute_body;
 use crate::ddl::tests::parse_type;
-use pgdt_model::{CollationDef, ColumnDef, NotNull, TableDef, TableReference};
+use std::sync::Arc;
+
+use pgdt_model::{
+    BlockAddress, BlockRecord, CollationDef, ColumnDef, NotNull, TableDef, TableReference,
+};
 
 /// The `--binary-upgrade` fold (I6) is [`dump_metadata_from_spans`]'s
 /// job, not `classify`'s, needing an already-open `TypeDef` to
@@ -126,26 +130,24 @@ fn span(body: SpanBody) -> pgdt_model::Span {
 }
 
 fn dummy_data_span() -> pgdt_model::Span {
-    span(SpanBody::Data(pgdt_model::DataBlock::Copy(Box::new(pgdt_model::CopyBlock {
+    span(SpanBody::Data(pgdt_model::DataBlock::Copy(pgdt_model::CopyBlock {
         header: pgdt_core::CopyHeader {
             schema: None,
             table: "placeholder".to_string(),
             columns: Vec::new(),
         },
-        header_offset: 0,
-        data_offset: 0,
-        terminator_offset: 0,
-        end_offset: 0,
-        row_count: 0,
         partition_root: None,
-        statistics: None,
-        statistics_declined: None,
-        ignored_refusals: None,
-        checked_in_full: false,
-        census: Some(pgdt_model::BlockCensus::default()),
-        recorded_rows: None,
-        longest_line: None,
-    }))))
+        address: BlockAddress {
+            header_offset: 0,
+            data_offset: 0,
+            terminator_offset: 0,
+            end_offset: 0,
+        },
+        record: Arc::new(BlockRecord {
+            census: Some(pgdt_model::BlockCensus::default()),
+            ..BlockRecord::default()
+        }),
+    })))
 }
 
 #[test]

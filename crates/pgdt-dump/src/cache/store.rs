@@ -10,6 +10,7 @@
 //! `internal`.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use super::file::{
     CacheEnvelope, CacheFile, CacheFileRef, CacheStatus, CompressionShape, ContainerKind,
@@ -106,7 +107,7 @@ pub(super) fn drop_attributed(mut index: DumpIndex) {
     let _attributed = StatisticsScope::enter();
     for span in &mut index.spans {
         if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
-            block.statistics = None;
+            Arc::make_mut(&mut block.record).statistics = None;
         }
     }
 }

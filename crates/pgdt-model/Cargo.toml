@@ -17,8 +17,8 @@ chrono = { workspace = true }
 # `observe_row`'s one pass over a row holding no array and counting nothing.
 memchr = { workspace = true }
 pgdt-core = { path = "../pgdt-core" }
-# `rc` for `CopyBlock::statistics`, held by `Arc` so a map clone copies a
-# reference.
+# `rc` for `CopyBlock::record` and `BlockRecord::statistics`, each held by
+# `Arc` so a map clone copies a reference.
 serde = { workspace = true, features = ["derive", "rc"] }
 
 [lints]

@@ -144,7 +144,7 @@ async fn inserts_dump_with_an_embedded_newline_value_still_tiles() {
         ]
     );
     let escapes = runs.iter().find(|r| r.table == "public.escapes").unwrap();
-    assert_eq!(escapes.row_count, 132, "the same 132 codepoint rows tests/scan.rs checks");
+    assert_eq!(escapes.record.row_count, 132, "the same 132 codepoint rows tests/scan.rs checks");
 
     assert!(
         spans.iter().filter(|s| matches!(s.body, SpanBody::Unparsed)).count() < 20,
@@ -872,9 +872,11 @@ async fn an_insert_run_holding_a_dollar_pair_keeps_every_row() {
     let data: Vec<(String, u64)> = spans
         .iter()
         .filter_map(|s| match &s.body {
-            SpanBody::Data(DataBlock::InsertRun(run)) => Some((run.table.clone(), run.row_count)),
+            SpanBody::Data(DataBlock::InsertRun(run)) => {
+                Some((run.table.clone(), run.record.row_count))
+            }
             SpanBody::Data(DataBlock::Copy(block)) => {
-                Some((block.header.qualified_name(), block.row_count))
+                Some((block.header.qualified_name(), block.record.row_count))
             }
             _ => None,
         })
@@ -903,7 +905,7 @@ async fn a_dollar_outside_a_body_hides_no_block_on_any_routine_version() {
             let rows: Vec<u64> = index
                 .blocks()
                 .filter(|b| b.header.matches("objects.price$$list"))
-                .map(|b| b.row_count)
+                .map(|b| b.record.row_count)
                 .collect();
             assert_eq!(rows, [2], "pg_dump {version} {flavor}");
         }

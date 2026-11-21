@@ -212,7 +212,7 @@ pub(super) fn block_resolutions(
     index
         .blocks_with_database()
         .map(|(database, block)| {
-            let census: &[ArrayShape] = match block.array_shapes() {
+            let census: &[ArrayShape] = match block.record.array_shapes() {
                 Some(census) if complete => census,
                 _ => &[],
             };
@@ -244,10 +244,10 @@ pub(super) fn block_unchecked(
 pub(super) fn span_summary(span: &Span) -> String {
     match &span.body {
         SpanBody::Data(DataBlock::Copy(block)) => {
-            format!("COPY {} ({} rows)", block.header.qualified_name(), block.row_count)
+            format!("COPY {} ({} rows)", block.header.qualified_name(), block.record.row_count)
         }
         SpanBody::Data(DataBlock::InsertRun(run)) => {
-            format!("INSERT run: {} ({} statements)", run.table, run.row_count)
+            format!("INSERT run: {} ({} statements)", run.table, run.record.row_count)
         }
         SpanBody::Data(DataBlock::LargeObjects(_)) => "large objects".to_string(),
         SpanBody::Table { name, .. } => format!("TABLE {name}"),

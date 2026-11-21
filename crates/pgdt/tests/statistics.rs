@@ -67,7 +67,7 @@ fn blocks_of(json: &Value) -> Vec<(String, Value)> {
 /// A block's statistics for the column its header names `name`.
 fn column<'a>(block: &'a Value, name: &str) -> &'a Value {
     let at = block["header"]["columns"].as_array().unwrap().iter().position(|c| c == name);
-    &block["statistics"]["columns"][at.unwrap()]
+    &block["record"]["statistics"]["columns"][at.unwrap()]
 }
 
 fn array(value: &Value) -> &Vec<Value> {
@@ -83,7 +83,7 @@ fn parse_gathers_every_table_by_default_at_a_mebibyte() {
     let blocks = blocks_after(&[]);
     assert_eq!(blocks.len(), BLOCKS);
     for (table, block) in &blocks {
-        let statistics = &block["statistics"];
+        let statistics = &block["record"]["statistics"];
         let size = statistics["group_size"].as_u64().unwrap();
         match table.as_str() {
             "public.long_value" => assert!(size > 1 << 20, "{table}: {size}"),
@@ -94,7 +94,7 @@ fn parse_gathers_every_table_by_default_at_a_mebibyte() {
         assert!(array(&statistics["columns"]).iter().all(|c| !c.is_null()), "{table}");
     }
     for (table, block) in blocks_after(&["--row-group-min-rows", "0"]) {
-        let statistics = &block["statistics"];
+        let statistics = &block["record"]["statistics"];
         assert_eq!(statistics["group_size"], 1 << 20, "{table}");
         assert_eq!(statistics["sizing"]["Density"]["min_rows"], 0, "{table}");
         if table == "public.long_value" {
@@ -106,10 +106,14 @@ fn parse_gathers_every_table_by_default_at_a_mebibyte() {
 #[test]
 fn the_metadata_level_records_nothing_and_a_stated_size_is_recorded() {
     let metadata = blocks_after(&["--statistics-level", "metadata"]);
-    assert!(metadata.iter().all(|(_, b)| b["statistics"].is_null() && b["census"].is_null()));
+    assert!(
+        metadata
+            .iter()
+            .all(|(_, b)| b["record"]["statistics"].is_null() && b["record"]["census"].is_null())
+    );
     for (table, block) in blocks_after(&["--row-group-size", "4096"]) {
-        assert_eq!(block["statistics"]["group_size"], 4096, "{table}");
-        assert_eq!(block["statistics"]["sizing"], "Stated", "{table}");
+        assert_eq!(block["record"]["statistics"]["group_size"], 4096, "{table}");
+        assert_eq!(block["record"]["statistics"]["sizing"], "Stated", "{table}");
     }
 }
 
@@ -118,7 +122,7 @@ fn a_selection_gathers_its_tables_and_columns_alone() {
     let blocks =
         blocks_after(&["--statistics-level", "metadata,specials=data,public.ordered.id=data"]);
     for (table, block) in blocks {
-        let statistics = &block["statistics"];
+        let statistics = &block["record"]["statistics"];
         match table.as_str() {
             "public.specials" => {
                 assert!(array(&statistics["columns"]).iter().all(|c| !c.is_null()))
@@ -165,7 +169,8 @@ fn a_stated_maximum_rereads_the_dense_tables_and_says_where_they_still_miss() {
     );
 
     let ordered = blocks_of(&info_json(&dump));
-    let ordered = &ordered.iter().find(|(t, _)| t == "public.ordered").unwrap().1["statistics"];
+    let ordered =
+        &ordered.iter().find(|(t, _)| t == "public.ordered").unwrap().1["record"]["statistics"];
     assert_eq!(ordered["group_size"], 65536);
     assert_eq!(ordered["sizing"]["Density"]["min_rows"], 8);
     assert_eq!(ordered["sizing"]["Density"]["max_rows"], 100);
@@ -217,8 +222,8 @@ fn a_memory_allowance_too_small_declines_the_block_and_only_a_larger_one_rereads
     let blocks = blocks_of(&info_json(&dump));
     assert!(!blocks.is_empty());
     for (table, copy) in &blocks {
-        assert_eq!(copy["statistics"], Value::Null, "{table}");
-        assert_eq!(copy["statistics_declined"], 0, "{table}");
+        assert_eq!(copy["record"]["statistics"], Value::Null, "{table}");
+        assert_eq!(copy["record"]["statistics_declined"], 0, "{table}");
     }
 
     // The same allowance leaves them alone and says so again.
@@ -234,8 +239,8 @@ fn a_memory_allowance_too_small_declines_the_block_and_only_a_larger_one_rereads
     );
     assert!(!stderr.contains("statistics declined"), "{stderr}");
     for (table, copy) in &blocks_of(&info_json(&dump)) {
-        assert_ne!(copy["statistics"], Value::Null, "{table}");
-        assert_eq!(copy["statistics_declined"], Value::Null, "{table}");
+        assert_ne!(copy["record"]["statistics"], Value::Null, "{table}");
+        assert_eq!(copy["record"]["statistics_declined"], Value::Null, "{table}");
     }
 }
 
@@ -257,7 +262,7 @@ fn info_json_exports_every_groups_statistics_compact_and_unrolled() {
     let blocks = blocks_of(&json);
 
     let ordered = &blocks.iter().find(|(t, _)| t == "public.ordered").unwrap().1;
-    let groups = array(&ordered["statistics"]["groups"]);
+    let groups = array(&ordered["record"]["statistics"]["groups"]);
     assert!(groups.len() > 1, "several groups at 4 KiB");
     assert!(groups.iter().all(|g| g["rows"].as_u64().unwrap() > 0));
     assert_eq!(groups.iter().map(|g| g["rows"].as_u64().unwrap()).sum::<u64>(), 1000);
@@ -296,7 +301,7 @@ fn info_json_exports_every_groups_statistics_compact_and_unrolled() {
     );
 
     let long_value = &blocks.iter().find(|(t, _)| t == "public.long_value").unwrap().1;
-    let groups = array(&long_value["statistics"]["groups"]);
+    let groups = array(&long_value["record"]["statistics"]["groups"]);
     assert!(groups.iter().any(|g| g["rows"] == 0), "the long value leaves empty groups at 4 KiB");
     assert_eq!(array(&column(long_value, "id")["null_counts"]).len(), groups.len());
 }
@@ -318,7 +323,7 @@ fn the_detail_listing_rolls_up_the_exports_groups() {
     let mean = |total: u64, count: u64| (total + count / 2).checked_div(count).unwrap_or(0);
     let mut expected = Vec::new();
     for (name, block) in blocks_of(&json) {
-        let statistics = &block["statistics"];
+        let statistics = &block["record"]["statistics"];
         let groups = array(&statistics["groups"]);
         let with_rows: Vec<bool> = groups.iter().map(|g| g["rows"] != 0).collect();
         let occupied = with_rows.iter().filter(|&&r| r).count() as u64;
@@ -437,7 +442,7 @@ fn a_backfilling_parse_counts_the_blocks_it_rereads() {
     assert!(stderr.contains(&format!("statistics back-fill complete blocks={BLOCKS}")), "{stderr}");
     let sizes: Vec<u64> = blocks_of(&info_json(&dump))
         .iter()
-        .map(|(_, block)| block["statistics"]["group_size"].as_u64().unwrap())
+        .map(|(_, block)| block["record"]["statistics"]["group_size"].as_u64().unwrap())
         .collect();
     assert_eq!(sizes, vec![4096; BLOCKS]);
 
@@ -666,21 +671,21 @@ fn the_most_specific_entry_decides_a_columns_level() {
         "metadata,public.ordered=data,public.ordered.id=metadata,public.specials=metadata,long_value=data",
     ] {
         for (table, block) in blocks_after(&["--statistics-level", levels]) {
-            let statistics = &block["statistics"];
+            let statistics = &block["record"]["statistics"];
             match table.as_str() {
                 "public.ordered" => {
                     let columns = array(&statistics["columns"]);
                     assert!(columns[0].is_null(), "{levels}: `id` is at the metadata level");
                     assert!(columns[1..].iter().all(|c| !c.is_null()), "{levels}");
-                    assert!(!block["census"].is_null(), "{levels}: censused");
+                    assert!(!block["record"]["census"].is_null(), "{levels}: censused");
                 }
                 "public.specials" => {
                     assert!(statistics.is_null(), "{levels}");
-                    assert!(block["census"].is_null(), "{levels}: not censused");
+                    assert!(block["record"]["census"].is_null(), "{levels}: not censused");
                 }
                 "public.long_value" => assert!(!statistics.is_null(), "{levels}"),
                 _ if levels.starts_with("data") => assert!(!statistics.is_null(), "{table}"),
-                _ => assert!(block["census"].is_null(), "{levels}: {table}"),
+                _ => assert!(block["record"]["census"].is_null(), "{levels}: {table}"),
             }
         }
     }

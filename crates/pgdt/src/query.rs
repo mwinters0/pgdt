@@ -373,7 +373,7 @@ fn statistics_held(table: &Table) -> u64 {
     table
         .blocks()
         .iter()
-        .filter_map(|b| b.statistics.as_deref())
+        .filter_map(|b| b.record.statistics.as_deref())
         .map(BlockStatistics::heap_bytes)
         .sum()
 }

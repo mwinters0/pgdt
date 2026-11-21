@@ -189,7 +189,7 @@ fn pool(
     let mut out = BTreeSet::new();
     let mut declared = None;
     for block in blocks {
-        let Some(statistics) = block.statistics.as_deref() else { continue };
+        let Some(statistics) = block.record.statistics.as_deref() else { continue };
         let Some(Some(column)) = statistics.columns.get(column) else { continue };
         declared = declared.or(column.declared_type.clone());
         let (set, view) = (BoundsSet::Primary, StatisticsView::Representable);
@@ -346,7 +346,9 @@ async fn check_fixture(
     let caches = (dump.as_path(), plain.as_path(), gathered_cache.as_path());
 
     let mut tables: BTreeMap<(Option<String>, String), Vec<&CopyBlock>> = BTreeMap::new();
-    for (database, block) in index.blocks_with_database().filter(|(_, b)| b.statistics.is_some()) {
+    for (database, block) in
+        index.blocks_with_database().filter(|(_, b)| b.record.statistics.is_some())
+    {
         tables
             .entry((database.map(str::to_owned), block.header.qualified_name()))
             .or_default()

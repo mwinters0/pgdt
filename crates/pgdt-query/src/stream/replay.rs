@@ -148,7 +148,7 @@ pub(super) fn replay<'a>(
         {
             let mut early_stops = shared.early_stops.lock().unwrap();
             for segment in &segments {
-                let block = segment.block.id();
+                let block = segment.address.id();
                 if plan.stops.contains_key(&block)
                     && early_stops.last().is_none_or(|last| last.block != block)
                 {
@@ -161,15 +161,15 @@ pub(super) fn replay<'a>(
         // the filter keeps, re-entered ahead of the segments after it.
         let mut queue = VecDeque::from(segments);
         while let Some(segment) = queue.pop_front() {
-            let block = &segment.block;
-            let id = block.id();
+            let (header, address) = (&segment.header, segment.address);
+            let id = address.id();
             let seg_start = segment.start;
             let seg_limit = segment.limit;
-            let seg_end = block.end_offset;
+            let seg_end = address.end_offset;
             let block_database = plan.database.clone();
             let stop = plan.stops.get(&id);
             if let Some(dynamic) = dynamic.as_mut() {
-                dynamic.enter(block, &plan);
+                dynamic.enter(header, &address, &plan);
             }
 
             let resumes_here = paused_in.is_some_and(|(offset, paused)| {
@@ -218,13 +218,13 @@ pub(super) fn replay<'a>(
                         // comes off the map's own copy of it.
                         active = Some(activate(
                             id,
-                            block.header.clone(),
-                            block.header_offset,
+                            header.clone(),
+                            address.header_offset,
                             block_database.clone(),
                             &plan,
                             max_rows,
                         )?);
-                        CopyScanner::resume(row_start, Some((block.header_offset, 0)))
+                        CopyScanner::resume(row_start, Some((address.header_offset, 0)))
                     }
                 },
             };
@@ -282,7 +282,7 @@ pub(super) fn replay<'a>(
                 let mut chunk = chunked
                     .next_chunk_folding(source, None, Some(drawing))
                     .await
-                    .map_err(|e| e.in_copy_of(|| block.header.qualified_name()))?;
+                    .map_err(|e| e.in_copy_of(|| header.qualified_name()))?;
                 // The line this chunk's carry pass completes, where it was
                 // drawn for past its chunk term, and its charge: its row, the
                 // chunk's first, ends its batch.
@@ -554,7 +554,7 @@ pub(super) fn replay<'a>(
             holder.release();
 
             if let Some(stopped_at) = stopped_at {
-                let owned_end = seg_limit.saturating_add(1).min(block.terminator_offset);
+                let owned_end = seg_limit.saturating_add(1).min(address.terminator_offset);
                 let unread = owned_end.saturating_sub(stopped_at);
                 if unread > 0 {
                     let mut early_stops = shared.early_stops.lock().unwrap();

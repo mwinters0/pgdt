@@ -4,7 +4,7 @@ use pgdt_core::Error;
 use pgdt_dump::internal::Builder;
 use pgdt_dump::internal::ChunkCarry;
 use pgdt_dump::internal::with_line_bound;
-use pgdt_dump::{CopyScanner, Event};
+use pgdt_dump::{CopyScanner, Event, ScannedLine};
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_fixtures::{edge_cases, fixture};
 use pgdt_io::{ByteRangeSource, Ledger, PartitionRead};
@@ -92,17 +92,24 @@ fn reference(file: &[u8]) -> Vec<Reference> {
         .into_iter()
         .filter_map(|span| match span.body {
             SpanBody::Data(DataBlock::Copy(block)) => Some(Reference {
-                header_offset: block.header_offset,
-                data_offset: block.data_offset,
-                end_offset: block.end_offset,
+                header_offset: block.address.header_offset,
+                data_offset: block.address.data_offset,
+                end_offset: block.address.end_offset,
                 columns: Some(widths.next().expect("one header per block")),
                 interior: Interior {
-                    census: block.census.expect("every block is censused and counted here"),
+                    census: block
+                        .record
+                        .census
+                        .clone()
+                        .expect("every block is censused and counted here"),
                     end: CopyEnd {
-                        terminator_offset: block.terminator_offset,
-                        end_offset: block.end_offset,
-                        row_count: block.row_count,
-                        longest_line: block.longest_line,
+                        terminator_offset: block.address.terminator_offset,
+                        end_offset: block.address.end_offset,
+                        row_count: block.record.row_count,
+                        longest_line: block.record.longest_line.map(|line| ScannedLine {
+                            offset: block.address.data_offset + line.offset,
+                            len: line.len,
+                        }),
                     },
                 },
             }),

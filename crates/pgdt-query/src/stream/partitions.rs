@@ -15,7 +15,7 @@ use pgdt_core::{Error, Result};
 use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::SourceWatch;
 use pgdt_io::{Arrangement, ByteRangeSource, Ledger, Partitioning};
-use pgdt_model::{BlockId, BlockStatistics, CopyBlock, DumpMetadata, Sortedness, TableName};
+use pgdt_model::{BlockId, BlockRecord, CopyBlock, DumpMetadata, Sortedness, TableName};
 
 use super::merge;
 use super::note::PlanNote;
@@ -103,10 +103,12 @@ pub struct TablePartitions {
     plan_notes: Vec<PlanNote>,
     orders: Vec<Sortedness>,
     table: String,
-    statistics: Arc<BTreeMap<BlockId, Arc<BlockStatistics>>>,
-    /// Every matched block in file order, its statistics held where the query
-    /// uses them, and the advice the planned cut was made by: what a dynamic
-    /// filter's cut is made from again ([`Self::cut_under`]).
+    /// Every matched block's record, which a dynamic filter's read of a
+    /// block takes ([`DynamicRead`]): the map's own, shared.
+    records: Arc<BTreeMap<BlockId, Arc<BlockRecord>>>,
+    /// Every matched block in file order, its record shared with the map, and
+    /// the advice the planned cut was made by: what a dynamic filter's cut is
+    /// made from again ([`Self::cut_under`]).
     matches: Vec<CopyBlock>,
     advice: Vec<Partitioning>,
     /// What each sub-stream's held line draws on: its arrangement's.
@@ -167,18 +169,9 @@ impl TablePartitions {
             &block_runs(&groups),
             reading,
         );
-        let use_statistics = plan.query_options.use_statistics;
-        let matches: Vec<CopyBlock> = blocks
-            .iter()
-            .map(|block| match use_statistics {
-                true => block.clone(),
-                false => CopyBlock { statistics: None, ..block.clone() },
-            })
-            .collect();
-        let statistics = matches
-            .iter()
-            .filter_map(|block| Some((block.id(), Arc::clone(block.statistics.as_ref()?))))
-            .collect();
+        let matches = blocks.to_vec();
+        let records =
+            matches.iter().map(|block| (block.address.id(), Arc::clone(&block.record))).collect();
         Ok(Self {
             source,
             watch,
@@ -187,7 +180,7 @@ impl TablePartitions {
             plan_notes,
             orders,
             table: table.qualified_name(),
-            statistics: Arc::new(statistics),
+            records: Arc::new(records),
             matches,
             advice,
             ledger: arrangement.ledger().clone(),
@@ -324,7 +317,7 @@ impl TablePartitions {
         let segments: Vec<Segment> = self
             .matches
             .iter()
-            .filter(|block| block.end_offset > token.offset)
+            .filter(|block| block.address.end_offset > token.offset)
             .flat_map(|block| plan.segments(block))
             .filter_map(|segment| segment.resumed_at(token.offset))
             .collect();
@@ -407,14 +400,18 @@ impl TablePartitions {
         let semantics = self.plan.query_options.semantics;
         let mut kept = self.plan.kept.clone();
         let (mut ruled_out, mut verdicts) = (0, BTreeMap::new());
+        let use_statistics = self.plan.query_options.use_statistics;
         for block in &self.matches {
-            let Some(statistics) = block.statistics.as_ref() else { continue };
-            let Some(mut dynamic) = DynamicBlock::new(block, Some(statistics), &self.plan) else {
+            if !use_statistics || block.record.statistics.is_none() {
+                continue;
+            }
+            let (header, address, record) = (&block.header, &block.address, &block.record);
+            let Some(mut dynamic) = DynamicBlock::new(header, address, record, &self.plan) else {
                 continue;
             };
             dynamic.read(generation, &state, semantics, RowEvaluation::Off);
             let Some(pruning) = dynamic.pruning.as_mut() else { continue };
-            let id = block.id();
+            let id = block.address.id();
             let within = self.plan.kept.get(&id).map(Vec::as_slice);
             let (runs, out) = pruning.kept_within(within);
             verdicts.insert(id, pruning.verdicts().to_vec());
@@ -482,7 +479,7 @@ impl TablePartitions {
         let shared = StreamShared::new(ResumeToken::start(fingerprint));
         let settled = self.settled(self.plan_notes.clone());
         let planned = Arc::clone(&self.groups);
-        let statistics = Arc::clone(&self.statistics);
+        let records = Arc::clone(&self.records);
         let shared_for_stream = shared.clone();
         let source = Arc::clone(&self.source);
         let watch = Arc::clone(&self.watch);
@@ -497,7 +494,7 @@ impl TablePartitions {
                     let groups = Arc::clone(&cut.groups);
                     let (filter, evaluation) = (under.filter, under.evaluation);
                     let rows = Arc::clone(&shared_for_stream.dynamic_rows);
-                    let read = DynamicRead::new(filter, evaluation, statistics, cut, pruned, rows);
+                    let read = DynamicRead::new(filter, evaluation, records, cut, pruned, rows);
                     (groups, Some(read))
                 }
             };
@@ -527,7 +524,7 @@ impl TablePartitions {
 fn block_runs(groups: &[Vec<Segment>]) -> Vec<Vec<BlockId>> {
     groups
         .iter()
-        .map(|segments| segments.iter().map(|segment| segment.block.id()).collect())
+        .map(|segments| segments.iter().map(|segment| segment.address.id()).collect())
         .collect()
 }
 

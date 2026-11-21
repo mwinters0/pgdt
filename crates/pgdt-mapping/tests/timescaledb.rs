@@ -239,7 +239,7 @@ async fn each_root_holds_its_own_block_s_rows_as_restored() {
             let own: u64 = index
                 .blocks()
                 .filter(|b| b.header.qualified_name() == *root)
-                .map(|b| b.row_count)
+                .map(|b| b.record.row_count)
                 .sum();
             assert_eq!(rows.len() as u64, own, "{at}: {root}");
         }

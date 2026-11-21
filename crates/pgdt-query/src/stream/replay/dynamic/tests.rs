@@ -52,7 +52,7 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
     .await
     .unwrap();
     let block = run.index.blocks().find(|b| b.header.matches("public.t")).unwrap();
-    let statistics = Arc::clone(block.statistics.as_ref().unwrap());
+    let statistics = Arc::clone(block.record.statistics.as_ref().unwrap());
     let metadata = run.index.metadata.as_deref();
     let census = vec![ArrayShape::default(); block.header.columns.len()];
     let full = resolve_block(
@@ -67,10 +67,18 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
     .unwrap();
     let below = Expr::all([Predicate { column: "id".into(), op: PredicateOp::Lt("150".into()) }]);
     let filter =
-        resolve_expr(&below, &full, block.header_offset, ComparisonSemantics::Postgres).unwrap();
+        resolve_expr(&below, &full, block.address.header_offset, ComparisonSemantics::Postgres)
+            .unwrap();
     let reading = pgdt_model::StatisticsView::Every;
-    let mut pruning =
-        DynamicPruning::new(block, Arc::clone(&statistics), metadata, None, reading).unwrap();
+    let mut pruning = DynamicPruning::new(
+        &block.header,
+        &block.address,
+        Arc::clone(&statistics),
+        metadata,
+        None,
+        reading,
+    )
+    .unwrap();
     pruning.read(Arc::new(filter));
 
     let id = statistics.columns[0].as_ref().unwrap();

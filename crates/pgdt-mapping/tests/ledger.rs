@@ -101,8 +101,11 @@ async fn outcome_over(
 /// with no room leaves statistics no allowance, so every block declines them.
 fn rows_of(blocks: &[CopyBlock]) -> Vec<String> {
     let rows = |b: &CopyBlock| {
-        let checked = b.checked_in_full;
-        format!("{:?} {} {:?} {checked}", b.census, b.row_count, b.longest_line)
+        let checked = b.record.checked_in_full;
+        format!(
+            "{:?} {} {:?} {checked}",
+            b.record.census, b.record.row_count, b.record.longest_line
+        )
     };
     blocks.iter().map(rows).collect()
 }
@@ -157,7 +160,7 @@ async fn a_parse_holding_a_field_past_its_floor_is_refused_for_memory() {
     let (chunk, default) = (64, PostgresInvalidValues::Default);
 
     let read = outcome(&dump, chunk, &floored(8 << 10), default).await.unwrap();
-    assert_eq!(read.iter().map(|block| block.row_count).sum::<u64>(), 3);
+    assert_eq!(read.iter().map(|block| block.record.row_count).sum::<u64>(), 3);
 
     let floor = 1 << 10;
     let read = ReadOptions::default().with_chunk_size(chunk);
@@ -178,7 +181,7 @@ async fn a_parse_holding_a_field_past_its_floor_is_refused_for_memory() {
     let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
     let metadata = &StatisticsRequest::METADATA;
     let run = map_file(opened, read, &arrangement, default, metadata, &cancel).await.unwrap();
-    assert_eq!(run.index.blocks().map(|block| block.row_count).sum::<u64>(), 3);
+    assert_eq!(run.index.blocks().map(|block| block.record.row_count).sum::<u64>(), 3);
 
     // Its streamed row is drawn for nothing, not even as its carry starts
     // streaming it, so a floor below one read holds it too.
@@ -186,7 +189,7 @@ async fn a_parse_holding_a_field_past_its_floor_is_refused_for_memory() {
     let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
     let under = floored(1);
     let run = map_file(opened, read, &under, default, metadata, &cancel).await.unwrap();
-    assert_eq!(run.index.blocks().map(|block| block.row_count).sum::<u64>(), 3);
+    assert_eq!(run.index.blocks().map(|block| block.record.row_count).sum::<u64>(), 3);
 }
 
 /// A plain file stating that each of its workers holds [`PARKED_TERM`]
@@ -311,7 +314,7 @@ async fn a_back_fill_parking_its_readers_checks_every_block() {
         let dump_metadata = run.index.metadata.as_deref();
         for mut block in run.index.blocks().cloned() {
             let table = format!("{version}: {}", block.header.table);
-            assert!(!block.checked_in_full, "{table}");
+            assert!(!block.record.checked_in_full, "{table}");
             let request = &StatisticsRequest::DATA;
             let filled = pgdt_mapping::backfill_block(
                 source.as_ref(),
@@ -325,7 +328,7 @@ async fn a_back_fill_parking_its_readers_checks_every_block() {
             )
             .await;
             assert!(filled.is_ok_and(|read| read), "{table}");
-            assert!(block.checked_in_full, "{table}");
+            assert!(block.record.checked_in_full, "{table}");
         }
         assert!(source.most.load(Ordering::SeqCst) >= 1, "{version}: no reader parked");
         assert_eq!(source.parked.load(Ordering::SeqCst), 0, "{version}");

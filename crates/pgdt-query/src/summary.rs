@@ -147,8 +147,8 @@ pub(crate) fn table_summary(
         .collect();
     let mut rows = 0;
     for block in blocks {
-        rows += block.row_count;
-        let Some(statistics) = block.statistics.as_deref() else {
+        rows += block.record.row_count;
+        let Some(statistics) = block.record.statistics.as_deref() else {
             accumulators.iter_mut().for_each(Accumulator::uncounted);
             continue;
         };
@@ -435,7 +435,7 @@ fn column_order(
     // row has none, and orders nothing.
     let mut edges: HashMap<BlockId, (&Bounds, &Bounds)> = HashMap::new();
     for block in matches {
-        let statistics = block.statistics.as_deref()?;
+        let statistics = block.record.statistics.as_deref()?;
         if statistics.columns.len() != block.header.columns.len() {
             return None;
         }
@@ -480,7 +480,7 @@ fn column_order(
             (recorded, Some(held)) if recorded != held => return None,
             _ => {}
         }
-        edges.insert(block.id(), (first?, last?));
+        edges.insert(block.address.id(), (first?, last?));
     }
     // Where every block holding a row is constant, the edges alone decide a
     // direction, ascending first.

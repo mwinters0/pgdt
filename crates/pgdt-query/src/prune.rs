@@ -25,12 +25,13 @@ use std::sync::Arc;
 
 use crate::predicate::{GroupStatistics, PredicateOp, ResolvedExpr, ResolvedTerm, Truth};
 use pgdt_codec::compare::{CompareKind, bounds_set_keyed_by};
+use pgdt_core::CopyHeader;
 use pgdt_core::internal::{RawRow, RowSplit};
 use pgdt_mapping::internal::{believed_under, declared_column, stored_bounds_kinds};
 use pgdt_model::internal::ColumnStatisticsExt;
 use pgdt_model::{
-    BlockStatistics, BoundsSet, ColumnStatistics, CopyBlock, DumpMetadata, Sortedness,
-    StatisticsView, Unrepresentable,
+    BlockAddress, BlockStatistics, BoundsSet, ColumnStatistics, CopyBlock, DumpMetadata,
+    Sortedness, StatisticsView, Unrepresentable,
 };
 
 /// What one block's statistics let a filter skip.
@@ -130,9 +131,10 @@ pub(crate) fn prune_block(
     database: Option<&str>,
     reading: StatisticsView,
 ) -> Option<BlockPruning> {
-    let statistics = block.statistics.as_deref()?;
+    let statistics = block.record.statistics.as_deref()?;
     let last = statistics.groups.len().checked_sub(1)?;
-    let (believed, kinds) = believed_columns(block, statistics, metadata, database)?;
+    let (header, address) = (&block.header, &block.address);
+    let (believed, kinds) = believed_columns(header, address, statistics, metadata, database)?;
     let view = Believed { statistics, believed: &believed, kinds: &kinds, reading };
 
     let mut pruning = BlockPruning {
@@ -152,11 +154,15 @@ pub(crate) fn prune_block(
         }
         pruning.kept_rows += group.rows;
         pruning.kept_groups[index] = true;
-        let run =
-            group_run(block.data_offset..block.end_offset, statistics.group_size, index, last);
+        let run = group_run(
+            block.address.data_offset..block.address.end_offset,
+            statistics.group_size,
+            index,
+            last,
+        );
         push_run(&mut pruning.kept, run);
     }
-    pruning.kept = or_header_run(pruning.kept, block.data_offset);
+    pruning.kept = or_header_run(pruning.kept, block.address.data_offset);
     Some(pruning)
 }
 
@@ -194,33 +200,34 @@ fn or_header_run(mut runs: Vec<Range<u64>>, data_offset: u64) -> Vec<Range<u64>>
 /// (`pgdt_mapping`'s `stored_bounds_kinds`).
 type StoredKinds = Vec<[Option<CompareKind>; 2]>;
 
-/// Per column of `block`, whether `statistics` — its own — are believed
+/// Per column of the block holding rows of `header` at `address`, whether
+/// `statistics` — its own — are believed
 /// under the DDL `metadata` states now for `database`, and the kinds its stored sets of
 /// bounds are ordered by ([`prune_block`]); or `None` where the statistics
 /// answer nothing, not fitting the block's extent or column list, or the
 /// block recording a `data_offset` of zero, which a group's search start
 /// subtracts one from.
 fn believed_columns(
-    block: &CopyBlock,
+    header: &CopyHeader,
+    address: &BlockAddress,
     statistics: &BlockStatistics,
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
 ) -> Option<(Vec<bool>, StoredKinds)> {
-    let data = block.terminator_offset.saturating_sub(block.data_offset);
+    let data = address.terminator_offset.saturating_sub(address.data_offset);
     // The last group is the one the last row starts in, so no index reaches
     // past the data; a block whose statistics say otherwise describes other
     // bytes, and is read whole.
     if statistics.group_size == 0
         || statistics.groups.is_empty()
         || statistics.groups.len() as u64 > data.div_ceil(statistics.group_size)
-        || statistics.columns.len() != block.header.columns.len()
-        || block.data_offset == 0
+        || statistics.columns.len() != header.columns.len()
+        || address.data_offset == 0
     {
         return None;
     }
-    let qualified = block.header.qualified_name();
-    let believed: Vec<bool> = block
-        .header
+    let qualified = header.qualified_name();
+    let believed: Vec<bool> = header
         .columns
         .iter()
         .zip(&statistics.columns)
@@ -229,7 +236,7 @@ fn believed_columns(
             believed_under(column, declared_column(metadata, database, &qualified, name))
         })
         .collect();
-    let kinds = stored_bounds_kinds(&block.header, metadata, database);
+    let kinds = stored_bounds_kinds(header, metadata, database);
     Some((believed, kinds))
 }
 
@@ -308,24 +315,26 @@ pub(crate) struct DynamicPruning {
 }
 
 impl DynamicPruning {
-    /// `block`'s `statistics`, as far as they are believed under `metadata`
-    /// for `database` and read in `reading` — or `None` where they answer nothing
-    /// ([`prune_block`]'s conditions).
+    /// The `statistics` of the block holding rows of `header` at `address`,
+    /// as far as they are believed under `metadata` for `database` and read
+    /// in `reading` — or `None` where they answer nothing ([`prune_block`]'s
+    /// conditions).
     pub(crate) fn new(
-        block: &CopyBlock,
+        header: &CopyHeader,
+        address: &BlockAddress,
         statistics: Arc<BlockStatistics>,
         metadata: Option<&DumpMetadata>,
         database: Option<&str>,
         reading: StatisticsView,
     ) -> Option<Self> {
-        let (believed, kinds) = believed_columns(block, &statistics, metadata, database)?;
+        let (believed, kinds) = believed_columns(header, address, &statistics, metadata, database)?;
         let groups = statistics.groups.len();
         Some(Self {
             statistics,
             believed,
             kinds,
             reading,
-            extent: block.data_offset..block.end_offset,
+            extent: address.data_offset..address.end_offset,
             filter: Arc::new(ResolvedExpr::And(Vec::new())),
             verdicts: vec![None; groups],
             stop: None,

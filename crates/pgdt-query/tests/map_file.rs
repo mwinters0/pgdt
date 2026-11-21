@@ -65,7 +65,7 @@ fn without_statistics(index: &DumpIndex) -> DumpIndex {
     let mut index = index.clone();
     for span in &mut index.spans {
         if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
-            block.statistics = None;
+            Arc::make_mut(&mut block.record).statistics = None;
         }
     }
     index
@@ -277,7 +277,7 @@ async fn a_query_settles_on_a_late_block_and_banks_every_block_before_it() {
     assert_eq!(rows, 3, "the last table's rows");
 
     let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
-    let last_end = eager.blocks().last().expect("40 blocks").end_offset;
+    let last_end = eager.blocks().last().expect("40 blocks").address.end_offset;
     assert!(last_end < size, "sanity: the file does not end at the last block");
 
     let Some(banked) = saved(&mode, source.as_ref()).await else {
@@ -439,7 +439,7 @@ async fn an_interrupted_map_file_leaves_a_resumable_cache() {
     let mode = CacheMode::enabled(cache_path.clone());
 
     let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
-    let first_block_end = eager.blocks().next().expect("the fixture has blocks").end_offset;
+    let first_block_end = eager.blocks().next().expect("the fixture has blocks").address.end_offset;
     assert!(first_block_end < size, "sanity: there is a file left after the first block");
 
     let dying = FailsPast { inner: Arc::clone(&source), fail_at: first_block_end };
@@ -845,7 +845,7 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
     let mode = CacheMode::enabled(cache_path.clone());
 
     let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
-    let first_block_end = eager.blocks().next().expect("the fixture has blocks").end_offset;
+    let first_block_end = eager.blocks().next().expect("the fixture has blocks").address.end_offset;
     assert!(first_block_end < size, "sanity: there is a file left after the first block");
 
     let cancel = CancellationToken::new();
@@ -911,7 +911,7 @@ async fn a_dropped_read_is_the_same_interrupt_as_the_flag() {
     let mode = CacheMode::enabled(cache_path.clone());
 
     let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
-    let first_block_end = eager.blocks().next().expect("the fixture has blocks").end_offset;
+    let first_block_end = eager.blocks().next().expect("the fixture has blocks").address.end_offset;
 
     let cancel = CancellationToken::new();
     let dropping =
@@ -1031,7 +1031,7 @@ async fn a_dropped_read_inside_the_backfill_reports_the_backfills_counts() {
     .await
     .unwrap();
     let blocks = bare.index.blocks().count();
-    let second = bare.index.blocks().nth(1).unwrap().data_offset;
+    let second = bare.index.blocks().nth(1).unwrap().address.data_offset;
 
     let cancel = CancellationToken::new();
     let dropping = DropsPast { inner: Arc::clone(&source), trip: second, cancel: cancel.clone() };
@@ -1075,7 +1075,7 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
     .unwrap();
     let blocks = bare.index.blocks().count();
     assert!(blocks > 2, "sanity: blocks are left after the second");
-    let second = bare.index.blocks().nth(1).unwrap().data_offset;
+    let second = bare.index.blocks().nth(1).unwrap().address.data_offset;
 
     let cancel = CancellationToken::new();
     let tripping = CancelsPast { inner: Arc::clone(&source), trip: second, cancel: cancel.clone() };
@@ -1101,7 +1101,7 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
         panic!("a back-fill leaves the map complete, got {status:?}");
     };
     assert!(index.is_complete(total_size));
-    let gathered: Vec<bool> = index.blocks().map(|b| b.statistics.is_some()).collect();
+    let gathered: Vec<bool> = index.blocks().map(|b| b.record.statistics.is_some()).collect();
     assert_eq!(gathered.iter().filter(|g| **g).count(), 1, "{gathered:?}");
     assert!(gathered[0], "the first block is the one banked: {gathered:?}");
 
@@ -1232,7 +1232,7 @@ async fn an_interrupted_scans_banked_blocks_resolve_against_real_ddl() {
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
     let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
-    let trip = eager.blocks().nth(1).expect("the fixture has two blocks").end_offset;
+    let trip = eager.blocks().nth(1).expect("the fixture has two blocks").address.end_offset;
 
     let cancel = CancellationToken::new();
     let tripping = CancelsPast { inner: Arc::clone(&source), trip, cancel: cancel.clone() };
@@ -1289,6 +1289,7 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
         .find(|(database, _)| *database == Some(second))
         .unwrap_or_else(|| panic!("{label}: {second} has blocks"))
         .1
+        .address
         .end_offset;
 
     let cancel = CancellationToken::new();

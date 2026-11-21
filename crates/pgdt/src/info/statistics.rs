@@ -109,7 +109,7 @@ impl<'a> TableStatistics<'a> {
         self.blocks += 1;
         let indices: Vec<usize> =
             block.header.columns.iter().map(|name| self.column_index(name)).collect();
-        let Some(statistics) = &block.statistics else { return };
+        let Some(statistics) = &block.record.statistics else { return };
         self.gathered_blocks += 1;
         if let Err(at) = self.group_sizes.binary_search(&statistics.group_size) {
             self.group_sizes.insert(at, statistics.group_size);
@@ -251,8 +251,8 @@ mod tests {
 
     use pgdt_core::CopyHeader;
     use pgdt_model::{
-        BlockStatistics, Bounds, ColumnDictionary, ColumnStatistics, DataBlock, GroupSizing,
-        RowGroup, Span, SpanBody,
+        BlockAddress, BlockRecord, BlockStatistics, Bounds, ColumnDictionary, ColumnStatistics,
+        DataBlock, GroupSizing, RowGroup, Span, SpanBody,
     };
 
     use super::*;
@@ -311,22 +311,21 @@ mod tests {
             text: None,
             toc: None,
             toc_owned: false,
-            body: SpanBody::Data(DataBlock::Copy(Box::new(CopyBlock {
+            body: SpanBody::Data(DataBlock::Copy(CopyBlock {
                 header,
-                header_offset: 0,
-                data_offset: 0,
-                terminator_offset: 0,
-                end_offset: 0,
-                row_count: 0,
                 partition_root: None,
-                statistics: statistics.map(Arc::new),
-                statistics_declined: None,
-                ignored_refusals: None,
-                checked_in_full: false,
-                census: Some(pgdt_model::BlockCensus::default()),
-                recorded_rows: None,
-                longest_line: None,
-            }))),
+                address: BlockAddress {
+                    header_offset: 0,
+                    data_offset: 0,
+                    terminator_offset: 0,
+                    end_offset: 0,
+                },
+                record: Arc::new(BlockRecord {
+                    statistics: statistics.map(Arc::new),
+                    census: Some(pgdt_model::BlockCensus::default()),
+                    ..BlockRecord::default()
+                }),
+            })),
         }
     }
 

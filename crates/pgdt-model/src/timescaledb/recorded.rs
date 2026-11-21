@@ -1,5 +1,5 @@
 //! What a mapping pass records of TimescaleDB's catalog: which blocks, and
-//! their rows as text, persisted on each block's `CopyBlock::recorded_rows`
+//! their rows as text, persisted on each block's `BlockRecord::recorded_rows`
 //! (`docs/design/decisions.md`, "D133") as `crate::persisted::timescaledb`'s
 //! shape.
 

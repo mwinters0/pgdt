@@ -279,7 +279,7 @@ pub enum PlanNoteKind {
 /// its first row's start would give.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EarlyStop {
-    /// The block, by its [`CopyBlock::id`](pgdt_model::CopyBlock::id).
+    /// The block, by its [`BlockAddress::id`](pgdt_model::BlockAddress::id).
     pub block: BlockId,
     /// The bytes of rows the stop left unread in the pieces of the block this
     /// stream replayed, summed; `None` where it ended no piece before its last

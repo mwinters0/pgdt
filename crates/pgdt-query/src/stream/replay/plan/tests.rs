@@ -144,14 +144,15 @@ async fn a_block_prunes_in_the_view_its_query_reads() {
         let expr = Expr::all([term]);
         (
             block,
-            resolve_expr(&expr, &full, block.header_offset, ComparisonSemantics::Postgres).unwrap(),
+            resolve_expr(&expr, &full, block.address.header_offset, ComparisonSemantics::Postgres)
+                .unwrap(),
         )
     };
     // The values each view's pruning keeps a group of, in file order.
     let kept = |table: &str, op: PredicateOp, view: StatisticsView| {
         let (block, filter) = filter(table, op);
         let pruning = prune_block(block, &filter, metadata, None, view).unwrap();
-        let statistics = block.statistics.as_ref().unwrap();
+        let statistics = block.record.statistics.as_ref().unwrap();
         let values = ["2024-01-01", "infinity", "-infinity", "262143-01-01", "NULL"];
         let holding: Vec<usize> =
             (0..statistics.groups.len()).filter(|&g| statistics.groups[g].rows > 0).collect();

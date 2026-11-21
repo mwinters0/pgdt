@@ -188,12 +188,12 @@ pub(crate) fn print_index(
             continue;
         }
         headings.before(database);
-        println!("{} ({} rows)", block.header.qualified_name(), block.row_count);
+        println!("{} ({} rows)", block.header.qualified_name(), block.record.row_count);
         if let Some(folded) = folds.beneath(database, block) {
             println!("    {folded}");
         }
         println!("    level: {}", level_label(block));
-        if block.checked_in_full {
+        if block.record.checked_in_full {
             println!("    checked: every value, by a strict parse");
         }
         if unchecked {
@@ -201,7 +201,7 @@ pub(crate) fn print_index(
                 println!("    unchecked by a strict parse: {line}");
             }
         }
-        for column in block.ignored_refusals.iter().flat_map(|ignored| &ignored.columns) {
+        for column in block.record.ignored_refusals.iter().flat_map(|ignored| &ignored.columns) {
             println!("    refused by PostgreSQL: {}", ignored_refusals_line(block, column));
         }
         if block.header.columns.is_empty() {
@@ -242,7 +242,7 @@ pub(crate) fn print_index(
                     if let Some(labels) = enum_labels(column.comparison()) {
                         println!("        labels: {}", label_list(labels));
                     }
-                    let count = block.unrepresentable().and_then(|c| c.get(i));
+                    let count = block.record.unrepresentable().and_then(|c| c.get(i));
                     if let Some(count) = count.filter(|c| !c.is_zero())
                         && *data_type != DataType::Utf8View
                     {
@@ -254,12 +254,13 @@ pub(crate) fn print_index(
             total_unmapped += resolved.unmapped_count();
         }
         if detail {
-            println!("    header offset: {}", block.header_offset);
-            println!("    data offset:   {}", block.data_offset);
-            println!("    terminator:    {}", block.terminator_offset);
-            println!("    end offset:    {}", block.end_offset);
-            if let Some(line) = block.longest_line {
-                println!("    longest line:  {} bytes at {}", line.len, line.offset);
+            println!("    header offset: {}", block.address.header_offset);
+            println!("    data offset:   {}", block.address.data_offset);
+            println!("    terminator:    {}", block.address.terminator_offset);
+            println!("    end offset:    {}", block.address.end_offset);
+            if let Some(line) = block.record.longest_line {
+                let offset = block.address.data_offset + line.offset;
+                println!("    longest line:  {} bytes at {offset}", line.len);
             }
         }
     }
@@ -365,7 +366,7 @@ fn ignored_refusals_line(
          the first at COPY line {}: {value}, at offset {}",
         ignored.count,
         first.line,
-        block.data_offset + first.offset,
+        block.address.data_offset + first.offset,
     )
 }
 
@@ -373,7 +374,7 @@ fn ignored_refusals_line(
 /// where it holds a census, `metadata` where it holds nothing drawn from its
 /// rows (`docs/design/decisions.md`, "D35").
 fn level_label(block: &pgdt_model::CopyBlock) -> &'static str {
-    match block.census {
+    match block.record.census {
         Some(_) => "data",
         None => "metadata",
     }

@@ -76,23 +76,34 @@ second read of a source that may be fetched. Reopens: a catalog too large to hol
 `tests/timescaledb.rs`.
 
 ### D140 A block's longest line is recorded in the map, its start and length, by every pass mapping it
-Each `CopyBlock` keeps its longest data line (`LongestLine`): its start and its length as I71 measures one, ending
-included, the earliest of the longest. Every mapping pass records it at every level — the scanner measures each row,
-held or streamed (D138), the interior's pieces fold theirs in file order — finding each line's end whether or not it
-holds it. A fact of the dump's bytes, which a read over mapped blocks plans its charge from; a back-fill holds it to the
-record as it does the row count. Rejected: persisting the charge, which moves with the build; recording it at the data
-level only, which a metadata-level parse finds for free; showing it in `info`'s default listing, read to choose what to
-query: it is an offset, beside the four `--detail` adds, and a line refused names itself; folding an
-`Option<LongestLine>` per row, tested and rebuilt at each, where `CopyScanner` holds a row's length against the
-longest's. Evidence: `pgdt-mapping`'s `tests/longest_line.rs`, `runs/count-pair-33.26-20261112/`.
+A block's record keeps its longest data line (`LongestLine`): its start, from the block's data (D168), and its length
+as I71 measures one, ending included, the earliest of the longest. Every mapping pass records it at every level — the
+scanner measures each row, held or streamed (D138), as a `ScannedLine`, the interior's pieces fold theirs in file order
+— finding each line's end whether or not it holds it. A fact of the dump's bytes, which a read over mapped blocks plans
+its charge from; a back-fill holds it to the record as it does the row count. Rejected: persisting the charge, which
+moves with the build; recording it at the data level only, which a metadata-level parse finds for free; showing it in
+`info`'s default listing: it is an offset, beside the four `--detail` adds, and a line refused names itself; folding
+an `Option<ScannedLine>` per row, where `CopyScanner` holds a row's length against the longest's. Evidence:
+`pgdt-mapping`'s `tests/longest_line.rs`, `runs/count-pair-33.26-20261112/`.
 
 ### D167 A block's identity is derived from its address, ordered in dump order, and never persisted
 `BlockId` is what every site keying, matching or ordering a block holds: the replay plan's maps, a dynamic filter's,
 `EarlyStop`, `InCopyResume`, the back-fill's loaded set, the partition-order edges and the through-root sorts. It is
-derived wherever an address is held (`CopyBlock::id`, `CopyStart::id`), so the replay recognises a block by the header
+derived wherever an address is held (`BlockAddress::id`, `CopyStart::id`), so the replay recognises a block by the header
 it scans, with no lookup. Opaque, and `Ord` in dump order. A display site prints the address: an error is
 `pgdt-core`'s and names no model type (D68). Never persisted, since nothing holding one outlives its process (D49's
 token). Rejected: an ordinal, which needs an address-to-id map to recognise a scanned block and a renumbering on every
 append; the address as its own key, which orders an enum across arms once a block can be addressed by an archive entry.
 Reopens: an identity that must outlive its process. Code: `pgdt_model::BlockId`. Evidence: `pgdt-query`'s replay unit
 tests and `tests/pruning.rs`, which key on it.
+
+### D168 A block is its header, its address and its record, the record shared and copied on write
+`CopyBlock` holds what it holds rows of (`header`, `partition_root`), where it is (`BlockAddress`, the four offsets its
+`BlockId` derives from) and what a pass found (`BlockRecord`): count, census, statistics, refusals, recorded rows,
+longest line, each offset in it from the block's data, so a record means the same at any address. The record is behind
+an `Arc`: a map, a table's read or a plan copies a reference, and the two that change one, the back-fill and a query's
+census over a metadata-level table, copy it on write (`Arc::make_mut`). A replay's segment holds header and address
+alone; a dynamic filter takes the record of the block it enters from its plan, by id. An `INSERT` run holds one
+too. Rejected: one struct holding all three, which an address that is not a file offset, or a run's rows, would
+each have to carve; a record unshared, every clone copying its census; a segment holding the block, every cut
+copying it. Code: `pgdt_model::CopyBlock`. Evidence: `pgdt-query`'s `a_replay_holds_no_block_s_statistics`.

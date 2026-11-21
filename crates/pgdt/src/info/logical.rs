@@ -27,7 +27,7 @@ fn rows_by_table(index: &DumpIndex, database: Option<&str>) -> BTreeMap<String, 
     let mut rows = BTreeMap::new();
     for (_, block, held) in index.blocks_held().filter(|(db, ..)| *db == database) {
         let table = held.map_or_else(|| block.header.qualified_name(), |t| t.qualified_name());
-        *rows.entry(table).or_default() += block.row_count;
+        *rows.entry(table).or_default() += block.record.row_count;
     }
     rows
 }
@@ -306,11 +306,11 @@ impl Folds {
             match member {
                 Member::Chunk => {
                     tally.chunk_blocks += 1;
-                    tally.chunk_rows += block.row_count;
+                    tally.chunk_rows += block.record.row_count;
                 }
                 Member::CompressedRelation => {
                     tally.relation_blocks += 1;
-                    tally.relation_rows += block.row_count;
+                    tally.relation_rows += block.record.row_count;
                 }
             }
         }
@@ -318,7 +318,7 @@ impl Folds {
     }
 
     fn member(&self, database: Option<&str>, block: &CopyBlock) -> Option<(&str, Member)> {
-        if block.ignored_refusals.is_some() {
+        if block.record.ignored_refusals.is_some() {
             return None;
         }
         let key = (database.map(str::to_owned), block.header.qualified_name());

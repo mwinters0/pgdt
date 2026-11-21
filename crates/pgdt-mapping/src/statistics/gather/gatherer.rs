@@ -220,7 +220,7 @@ impl Gatherer {
     /// having passed its allowance: the block's groups and columns are freed,
     /// its charge goes to nothing in the same update, and the allowance it
     /// declined under is what the map records
-    /// (`pgdt_model::CopyBlock::statistics_declined`). Called with the
+    /// (`pgdt_model::BlockRecord::statistics_declined`). Called with the
     /// caller's [`StatisticsScope`] open, so what it frees is attributed as
     /// what allocated it was.
     ///

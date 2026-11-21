@@ -49,11 +49,12 @@ impl<'a> Catalog<'a> {
     pub(super) fn rows(&self, table: &str) -> impl Iterator<Item = Row<'a>> + '_ {
         self.tables.get(table).into_iter().flatten().flat_map(|block| {
             let columns = block.header.columns.as_slice();
-            block.recorded_rows.iter().flat_map(|recorded| &recorded.rows).map(move |fields| Row {
-                table: block.header.table.as_str(),
-                columns,
-                fields,
-            })
+            block
+                .record
+                .recorded_rows
+                .iter()
+                .flat_map(|recorded| &recorded.rows)
+                .map(move |fields| Row { table: block.header.table.as_str(), columns, fields })
         })
     }
 }

@@ -29,8 +29,8 @@ pub use persisted::catalog::{
     PartitionOf, TableDef, TableReference, TypeDef, TypeKind,
 };
 pub use persisted::span::{
-    CopyBlock, DataBlock, DumpIndex, InsertRun, LabelPlacement, LargeObjectRegion, LongestLine,
-    Span, SpanBody, SpanText, TocHeader,
+    BlockAddress, BlockRecord, CopyBlock, DataBlock, DumpIndex, InsertRun, LabelPlacement,
+    LargeObjectRegion, LongestLine, Span, SpanBody, SpanText, TocHeader,
 };
 pub use persisted::statistics::{
     BlockStatistics, Bounds, ColumnDictionary, ColumnRefusals, ColumnStatistics, FieldRefusal,
@@ -73,4 +73,4 @@ pub mod internal {
 /// `persisted_index_is_pinned_to_the_format_version` pins what every fixture
 /// persists beside this number, as `golden_order_is_pinned_to_the_format_version`
 /// pins the comparison order, and each fails until it is bumped.
-pub const CACHE_FORMAT_VERSION: u32 = 88;
+pub const CACHE_FORMAT_VERSION: u32 = 89;

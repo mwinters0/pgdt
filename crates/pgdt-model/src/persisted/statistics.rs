@@ -32,12 +32,13 @@ pub struct FieldRefusal {
 }
 
 /// **The fields PostgreSQL refuses — by its type's `*_in` or its column's
-/// `NOT NULL` — that a parse told to ignore them went past in one block** ([`crate::CopyBlock::ignored_refusals`]),
-/// **per column**: each column holding one keeps its first in the block's row
-/// order, quoted as [`FieldRefusal::value`] is, and how many. A fact about the dump, not the mode that met
-/// it, so a parse under [`crate::PostgresInvalidValues::Default`] over a cache
-/// holding one fails with it exactly where it tracks the column, re-reading
-/// nothing ([`pgdt_core::Error::FieldRefusedRecorded`]).
+/// `NOT NULL` — that a parse told to ignore them went past in one block**
+/// ([`crate::BlockRecord::ignored_refusals`]), **per column**: each column
+/// holding one keeps its first in the block's row order, quoted as
+/// [`FieldRefusal::value`] is, and how many. A fact about the dump, not the
+/// mode that met it, so a parse under [`crate::PostgresInvalidValues::Default`]
+/// over a cache holding one fails with it exactly where it tracks the column,
+/// re-reading nothing ([`pgdt_core::Error::FieldRefusedRecorded`]).
 ///
 /// **Only the fields gathering read**, as a parse under
 /// [`crate::PostgresInvalidValues::Default`] checks only those: a gathered
@@ -62,7 +63,7 @@ pub struct ColumnRefusals {
     pub count: u64,
 }
 
-/// One block's statistics, held by [`crate::CopyBlock::statistics`].
+/// One block's statistics, held by [`crate::BlockRecord::statistics`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockStatistics {
     /// `N`, the bytes of block data each group covers.
@@ -242,8 +243,8 @@ pub struct ColumnDictionary {
     pub groups: Vec<Option<Vec<u32>>>,
 }
 
-/// [`crate::CopyBlock::statistics`] as the cache decodes it, with what the decode
-/// allocates attributed to statistics where the instrument is built in
+/// [`crate::BlockRecord::statistics`] as the cache decodes it, with what the
+/// decode allocates attributed to statistics where the instrument is built in
 /// (`pgdt_core::instrument`) — and a plain decode where it is not.
 pub(crate) fn deserialize_block_statistics<'de, D>(
     deserializer: D,

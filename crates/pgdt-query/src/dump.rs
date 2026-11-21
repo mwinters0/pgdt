@@ -397,19 +397,20 @@ impl Table {
     }
 
     /// **The charge of the longest line a query of this table under
-    /// `options` will hold**, each piece read with `read`: the longest line
-    /// of the blocks whose rows it holds, as the map records it
-    /// ([`CopyBlock::longest_line`]) — never a block whose every row group
-    /// its filter prunes, nor one whose batch and filter read no field, its
-    /// long rows streamed — and what the query's batch decodes beside it, its
-    /// one factor; or nothing where that line fits its chunk, no reader
-    /// holding it past its chunk term. What a caller hands
+    /// `options` will hold**, each piece read with `read`: the longest line of
+    /// the blocks whose rows it holds, as the map records it
+    /// ([`BlockRecord::longest_line`](pgdt_model::BlockRecord::longest_line)) —
+    /// never a block whose every row group its filter prunes, nor one whose
+    /// batch and filter read no field, its long rows streamed — and what the
+    /// query's batch decodes beside it, its one factor; or nothing where that
+    /// line fits its chunk, no reader holding it past its chunk term. What a
+    /// caller hands
     /// [`ArrangementRequest::line_charge`](pgdt_io::ArrangementRequest::line_charge)
     /// before resolving the arrangement it plans under ([`Self::plan`]), so
     /// that line is admitted without waiting on the readers carved beside it
-    /// (`docs/design/decisions.md`, "D157", "D160"). Reads no byte of the
-    /// dump; refuses what [`Self::schema`] refuses over the table's own
-    /// blocks, and answers zero for a table reading none of its own.
+    /// (`docs/design/decisions.md`, "D157", "D160"). Reads no byte of the dump;
+    /// refuses what [`Self::schema`] refuses over the table's own blocks, and
+    /// answers zero for a table reading none of its own.
     pub fn line_charge(&self, read: ReadOptions, options: &QueryOptions) -> Result<u64> {
         let blocks = self.read(options)?;
         if blocks.is_empty() {

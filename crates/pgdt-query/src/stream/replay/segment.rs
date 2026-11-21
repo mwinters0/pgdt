@@ -3,9 +3,10 @@
 
 use std::ops::Range;
 
+use pgdt_core::CopyHeader;
 use pgdt_core::Result;
 use pgdt_io::ByteRangeSource;
-use pgdt_model::CopyBlock;
+use pgdt_model::{BlockAddress, CopyBlock};
 
 /// What state a [`Segment`]'s scanner starts in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,9 +33,17 @@ pub(in crate::stream) enum SegmentEntry {
 /// straddling a cut belongs to the piece before it, once.
 #[derive(Debug, Clone)]
 pub(in crate::stream) struct Segment {
-    /// The block this piece is of, **without its statistics**
-    /// ([`Segment::new`]).
-    pub(in crate::stream) block: CopyBlock,
+    /// What the block this piece is of holds rows of.
+    pub(in crate::stream) header: CopyHeader,
+    /// Where that block is. **Its record is not held**: nothing reading a
+    /// segment needs it once [`ReplayPlan::new`](super::plan::ReplayPlan::new)
+    /// has planned and pruned — a replay under a
+    /// [`DynamicFilter`](crate::stream::replay::dynamic::DynamicFilter) reads
+    /// it from the
+    /// [`TablePartitions`](crate::stream::partitions::TablePartitions) holding
+    /// it — and a plan's cuts, which a dynamic filter's cut copies again, hold
+    /// a segment per piece.
+    pub(in crate::stream) address: BlockAddress,
     pub(in crate::stream) start: u64,
     pub(in crate::stream) limit: u64,
     pub(in crate::stream) entry: SegmentEntry,
@@ -42,29 +51,22 @@ pub(in crate::stream) struct Segment {
 
 impl Segment {
     /// The piece of `block` from `start` to `limit`, entered as `entry`.
-    ///
-    /// **The copy drops the block's statistics.** Nothing reading a segment
-    /// needs them once [`ReplayPlan::new`](super::plan::ReplayPlan::new) has pruned — a replay under a
-    /// [`DynamicFilter`](crate::stream::replay::dynamic::DynamicFilter) reads them from the [`TablePartitions`](crate::stream::partitions::TablePartitions) holding them
-    /// — and a copy keeping the `Arc` would hold every matched block's
-    /// resident in each of a plan's cuts, whose segments a dynamic filter's
-    /// cut copies again.
     pub(in crate::stream) fn new(
         block: &CopyBlock,
         start: u64,
         limit: u64,
         entry: SegmentEntry,
     ) -> Self {
-        let block = CopyBlock { statistics: None, ..block.clone() };
-        Segment { block, start, limit, entry }
+        let (header, address) = (block.header.clone(), block.address);
+        Segment { header, address, start, limit, entry }
     }
 
     /// The piece of `block` replaying `run`, a range in segment terms: the
     /// run that begins before the block's first row starts at its header, as
     /// a whole block's first piece does, and any other inside its data.
     pub(in crate::stream) fn over(block: &CopyBlock, run: Range<u64>) -> Self {
-        let (start, entry) = if run.start < block.data_offset {
-            (block.header_offset, SegmentEntry::Header)
+        let (start, entry) = if run.start < block.address.data_offset {
+            (block.address.header_offset, SegmentEntry::Header)
         } else {
             (run.start, SegmentEntry::Interior)
         };
@@ -91,7 +93,8 @@ impl Segment {
     /// inside its data ([`DynamicRead::at_row`](super::dynamic::DynamicRead::at_row)): entered there, its limit
     /// unchanged.
     pub(in crate::stream) fn rest_from(&self, start: u64) -> Self {
-        Segment::new(&self.block, start, self.limit, SegmentEntry::Interior)
+        let (header, address) = (self.header.clone(), self.address);
+        Segment { header, address, start, limit: self.limit, entry: SegmentEntry::Interior }
     }
 
     /// The bytes this piece is responsible for, for balancing sub-streams
@@ -100,7 +103,7 @@ impl Segment {
     /// **data**, so the first piece is not charged for the header line it also
     /// covers.
     pub(in crate::stream) fn weight(&self) -> u64 {
-        self.limit.saturating_sub(self.start.max(self.block.data_offset))
+        self.limit.saturating_sub(self.start.max(self.address.data_offset))
     }
 }
 

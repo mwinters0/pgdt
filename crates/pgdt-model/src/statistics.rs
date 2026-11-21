@@ -47,10 +47,10 @@ pub enum PostgresInvalidValues {
     /// Read as the decoders read it, with no contract: a parse goes on past
     /// one, its row group then keeping no statistic of its column a read could
     /// contradict and its block recording it
-    /// ([`crate::CopyBlock::ignored_refusals`]), and a query reads a float past its type's range as
-    /// `pgdt_codec::internal::float_field` reads it, a `varchar(n)` or `char(n)` value past
-    /// its length as written and a NULL in a `NOT NULL` column as NULL, and
-    /// fails on every other such field. A
+    /// ([`crate::BlockRecord::ignored_refusals`]), and a query reads a float
+    /// past its type's range as `pgdt_codec::internal::float_field` reads it, a
+    /// `varchar(n)` or `char(n)` value past its length as written and a NULL in
+    /// a `NOT NULL` column as NULL, and fails on every other such field. A
     /// filter literal is never opted out.
     Ignore,
     /// **A parse checks every field**, failing at the first its type's `*_in`
@@ -58,7 +58,7 @@ pub enum PostgresInvalidValues {
     /// to a query: a column the request leaves at the metadata level, a nested
     /// value's elements, a value too long to key, and the rows of a block whose
     /// statistics declined. A block it checks whole records it
-    /// ([`crate::CopyBlock::checked_in_full`]), and one the cache holds
+    /// ([`crate::BlockRecord::checked_in_full`]), and one the cache holds
     /// unchecked is re-read and checked, so a clean run has checked every field
     /// whichever runs built the cache. A query reads under it as under
     /// `Default`, and a query front end refuses it ([`Self::queryable`]).
@@ -132,7 +132,7 @@ pub enum BlockGathered {
     Declined {
         /// The statistics allowance it declined under
         /// (`pgdt_io::Arrangement::statistics_allowance`), which the map records
-        /// ([`crate::CopyBlock::statistics_declined`]) so that a
+        /// ([`crate::BlockRecord::statistics_declined`]) so that a
         /// back-fill retries it only under a larger one.
         allowance: u64,
     },
@@ -357,13 +357,13 @@ pub trait BlockObserver: Send {
     /// observer keyed and went past, being told to ignore them
     /// ([`crate::PostgresInvalidValues::Ignore`]), taken before
     /// [`Self::finish`]: what the block records
-    /// ([`crate::CopyBlock::ignored_refusals`]).
+    /// ([`crate::BlockRecord::ignored_refusals`]).
     fn take_ignored(&mut self) -> Option<IgnoredRefusals>;
 
     /// Whether this observer checks every field of every row it is handed as
     /// a strict parse does ([`crate::PostgresInvalidValues::Strict`]), so a
     /// block it finishes unrefused is checked in full
-    /// ([`crate::CopyBlock::checked_in_full`]).
+    /// ([`crate::BlockRecord::checked_in_full`]).
     fn checks_every_field(&self) -> bool;
 }
 

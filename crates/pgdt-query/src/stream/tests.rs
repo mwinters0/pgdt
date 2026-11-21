@@ -5,7 +5,7 @@ use super::*;
 use crate::options::QueryOptions;
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::Parallelism;
-use pgdt_model::{CopyBlock, Finding, Severity};
+use pgdt_model::{BlockAddress, BlockRecord, CopyBlock, Finding, Severity};
 use std::sync::Arc;
 
 /// **The count note names a lever a plain source actually has** (`KD32`):
@@ -141,19 +141,17 @@ fn a_compressed_note_names_its_container_and_its_unit() {
 fn a_segment_resumes_from_the_row_its_pause_left() {
     let block = CopyBlock {
         header: pgdt_core::parse_copy_header(b"COPY public.t (id) FROM stdin;").unwrap(),
-        header_offset: 10,
-        data_offset: 40,
-        terminator_offset: 400,
-        end_offset: 403,
-        row_count: 0,
         partition_root: None,
-        statistics: None,
-        statistics_declined: None,
-        ignored_refusals: None,
-        checked_in_full: false,
-        census: Some(pgdt_model::BlockCensus::default()),
-        recorded_rows: None,
-        longest_line: None,
+        address: BlockAddress {
+            header_offset: 10,
+            data_offset: 40,
+            terminator_offset: 400,
+            end_offset: 403,
+        },
+        record: Arc::new(BlockRecord {
+            census: Some(pgdt_model::BlockCensus::default()),
+            ..BlockRecord::default()
+        }),
     };
     let whole = Segment::over(&block, 39..403);
     assert_eq!((whole.start, whole.entry), (10, SegmentEntry::Header));
@@ -200,10 +198,11 @@ pub(super) fn two_blocks(dir: &std::path::Path) -> std::path::PathBuf {
     path
 }
 
-/// **A replay's plan and segments keep no block's statistics**: once they
-/// exist, the matched blocks the map handed over are the only holders of
-/// each block's `Arc`, so dropping them frees the statistics before a row
-/// is read, on the partitioned path and the serial resume alike.
+/// **A replay's plan and segments keep no block's record**: once they exist,
+/// the matched blocks the map handed over are the only holders of each
+/// block's record and so of its statistics, so dropping them frees the
+/// statistics before a row is read, on the partitioned path and the serial
+/// resume alike.
 #[tokio::test]
 async fn a_replay_holds_no_block_s_statistics() {
     use pgdt_io::LocalFileSource;
@@ -217,15 +216,14 @@ async fn a_replay_holds_no_block_s_statistics() {
     let mut matches: Vec<CopyBlock> = index.blocks().cloned().collect();
     assert_eq!(matches.len(), 2);
     for block in &mut matches {
-        block.statistics = Some(Arc::new(BlockStatistics {
+        Arc::make_mut(&mut block.record).statistics = Some(Arc::new(BlockStatistics {
             group_size: 1 << 20,
             sizing: GroupSizing::Stated,
             groups: Vec::new(),
             columns: vec![None; block.header.columns.len()],
         }));
     }
-    let held: Vec<_> =
-        matches.iter().map(|block| Arc::clone(block.statistics.as_ref().unwrap())).collect();
+    let held: Vec<_> = matches.iter().map(|block| Arc::clone(&block.record)).collect();
 
     let PlannedReplay { plan, groups, .. } = plan_replay(
         &source,
@@ -239,9 +237,11 @@ async fn a_replay_holds_no_block_s_statistics() {
     )
     .unwrap();
     let serial: Vec<Segment> = matches.iter().flat_map(|block| plan.segments(block)).collect();
-    assert!(groups.iter().flatten().chain(&serial).all(|s| s.block.statistics.is_none()));
     drop(matches);
-    for statistics in &held {
-        assert_eq!(Arc::strong_count(statistics), 1, "only the test's own copy remains");
+    for record in &held {
+        assert_eq!(Arc::strong_count(record), 1, "only the test's own copy remains");
+        let statistics = record.statistics.as_ref().unwrap();
+        assert_eq!(Arc::strong_count(statistics), 1, "held through the record alone");
     }
+    drop((plan, groups, serial));
 }

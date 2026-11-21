@@ -1733,7 +1733,10 @@ carries three things the text views state differently:
   several `COPY` blocks, and pgdt does not yet have a rule for merging blocks
   that disagree, so grouping them is left to you.
 
-The file map's own `COPY` blocks carry their **`census`**, `null` for a
+The file map's own `COPY` blocks each carry their `header`, an `address` —
+the `header_offset`, `data_offset`, `terminator_offset` and `end_offset`
+`--detail` prints — and a `record` of what reading their rows found: its
+`row_count`, its **`census`**, `null` for a
 block recorded at the metadata level and otherwise its `shapes`, one per
 column, and its `unrepresentable` counts, one `{format, engine}` pair per
 column — `format` counting the values the column's Arrow type cannot hold and
@@ -1782,8 +1785,9 @@ holding one in header order: `first` (its row's `offset` from the block's
 data, its `COPY` `line`, its `column` by position in the header, its
 `declared_type` and `value`) and `count`. **`checked_in_full`** is `true` for a
 block a strict `parse` checked every value of. **`longest_line`** is the
-block's longest line as `--detail` states it, its `offset` and its `len`, or
-`null` for a block holding no row.
+block's longest line, its `len` and its `offset` from the block's data, where
+`--detail` states it from the start of the file, or `null` for a block
+holding no row. Each of these is in the block's `record`.
 
 **This is a raw dump of pgdt's internal representation, not a designed API.**
 There's no schema, no compatibility promise across versions, no version field

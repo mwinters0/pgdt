@@ -2383,9 +2383,10 @@ class Stager:
             copy = span.get("body", {}).get("Data", {}).get("Copy")
             if not copy:
                 continue
-            rows += copy["row_count"]
+            rows += copy["record"]["row_count"]
             columns = max(columns, len(copy["header"]["columns"]))
-            data_bytes += copy["terminator_offset"] - copy["data_offset"]
+            address = copy["address"]
+            data_bytes += address["terminator_offset"] - address["data_offset"]
         got = {
             "stamp": stamp,
             "rows": rows,

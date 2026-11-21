@@ -25,10 +25,10 @@ use pgdt_dump::internal::{
     ChunkCarry, ChunkPass, CopyScannerExt, FieldFold, PieceEndings, RowEnding, RowFold,
     StreamedLine,
 };
-use pgdt_dump::{CopyEnd, CopyScanner, Event};
+use pgdt_dump::{CopyEnd, CopyScanner, Event, ScannedLine};
 use pgdt_model::internal::BlockCensusExt;
 use pgdt_model::{
-    BlockCensus, LongestLine,
+    BlockCensus,
     internal::{BlockObserver, CensusFold, FieldCount},
 };
 
@@ -94,7 +94,7 @@ pub(super) struct PieceScan {
     pub endings: PieceEndings,
     /// The longest of the rows this piece owns, which [`merge`] folds in file
     /// order into the block's.
-    pub longest_line: Option<LongestLine>,
+    pub longest_line: Option<ScannedLine>,
     /// How a piece continuing from [`PieceScan::through`] must enter.
     ///
     /// **[`PieceEntry::RowStart`] almost always, and the exception is why this
@@ -259,7 +259,7 @@ fn streamed_piece(base: u64, line: StreamedLine, fold: Option<&mut CensusFold>) 
         terminator: None,
         through: if ended { base + line.bytes() } else { base },
         endings: PieceEndings { first: ended.then_some((line.ending(), base)), mismatch: None },
-        longest_line: ended.then_some(LongestLine { offset: base, len: line.bytes() }),
+        longest_line: ended.then_some(ScannedLine { offset: base, len: line.bytes() }),
         next: PieceEntry::RowStart,
     }
 }
@@ -415,7 +415,7 @@ pub(super) fn empty_census(plan: Option<&CensusPlan>) -> BlockCensus {
 /// and censuses union, `ArrayShape`'s merge being a bounded semilattice. What
 /// the order decides is which pieces are *in* the fold, everything past the
 /// terminator not being part of the block at all, and that the earliest of
-/// the longest lines stands ([`LongestLine::fold`]).
+/// the longest lines stands ([`ScannedLine::fold`]).
 pub(super) fn merge(pieces: &[PieceScan]) -> Option<Interior> {
     let mut census = BlockCensus::default();
     let mut row_count = 0u64;
@@ -423,7 +423,7 @@ pub(super) fn merge(pieces: &[PieceScan]) -> Option<Interior> {
     for piece in pieces {
         census.merge(&piece.census);
         row_count += piece.rows;
-        longest_line = LongestLine::fold(longest_line, piece.longest_line);
+        longest_line = ScannedLine::fold(longest_line, piece.longest_line);
         if let Some((terminator_offset, end_offset)) = piece.terminator {
             return Some(Interior {
                 census,

@@ -111,13 +111,9 @@ pub struct SpanText {
 /// The payload behind [`SpanBody::Data`] — see that variant's docs for why
 /// one `Data` span kind covers all three producers despite them not sharing a
 /// shape.
-///
-/// [`CopyBlock`] is boxed because it alone would set the size of every span
-/// of a map, most of which are statements; a box costs an allocation a block
-/// and moves no cache byte.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataBlock {
-    Copy(Box<CopyBlock>),
+    Copy(CopyBlock),
     InsertRun(InsertRun),
     LargeObjects(LargeObjectRegion),
 }
@@ -135,9 +131,10 @@ pub struct InsertRun {
     /// matching [`CopyHeader::qualified_name`](pgdt_core::CopyHeader::qualified_name)'s
     /// convention for the same object.
     pub table: String,
-    /// Number of `INSERT` statements folded into this span — free to
-    /// compute, finding the run's end meaning recognizing each completion.
-    pub row_count: u64,
+    /// What the pass found: its `row_count` the `INSERT` statements folded
+    /// into this span — free to compute, finding the run's end meaning
+    /// recognizing each completion — and nothing else yet.
+    pub record: BlockRecord,
 }
 
 /// The large-object data region (I12) — every `BEGIN;`/`COMMIT;`-wrapped
@@ -260,19 +257,12 @@ pub enum LabelPlacement {
     After(String),
 }
 
-/// One located COPY block.
+/// One located COPY block: what it holds rows *of*, where it is, and what a
+/// pass found reading it — each its own part, so a block can be addressed and
+/// recorded apart (`docs/design/decisions.md`, "D168").
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CopyBlock {
     pub header: CopyHeader,
-    /// Absolute file offset of the `C` in `COPY`.
-    pub header_offset: u64,
-    /// Absolute file offset of the block's first data byte.
-    pub data_offset: u64,
-    /// Absolute file offset of the `\.` terminator line.
-    pub terminator_offset: u64,
-    /// Absolute file offset just past the terminator line.
-    pub end_offset: u64,
-    pub row_count: u64,
     /// The root table named by this block's `-- load via partition root
     /// <name>` marker, if it carried one (I2) — meaning `header` names that
     /// root rather than the partition whose rows follow, and **other blocks
@@ -282,9 +272,39 @@ pub struct CopyBlock {
     /// once the queried table's block closes or must run to EOF, those blocks
     /// not being adjacent (`docs/design/decisions.md`, "D49").
     pub partition_root: Option<String>,
+    /// Where the block is in the dump.
+    pub address: BlockAddress,
+    /// What the passes that read the block found. **Shared, and changed by
+    /// copying on write** ([`Arc::make_mut`]): a clone of the block or the map
+    /// copies a reference, and the one pass changing a record copies that
+    /// record alone (`docs/design/decisions.md`, "D168").
+    pub record: Arc<BlockRecord>,
+}
+
+/// **Where a `COPY` block is in a plain dump**: its four absolute file
+/// offsets, from which its identity is derived ([`BlockAddress::id`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockAddress {
+    /// Absolute file offset of the `C` in `COPY`.
+    pub header_offset: u64,
+    /// Absolute file offset of the block's first data byte.
+    pub data_offset: u64,
+    /// Absolute file offset of the `\.` terminator line.
+    pub terminator_offset: u64,
+    /// Absolute file offset just past the terminator line.
+    pub end_offset: u64,
+}
+
+/// **What a pass found reading a block's rows**: their count, and whatever
+/// else the pass recorded of them. Carries no address: every offset in it is
+/// relative to the block's first data byte, so it means the same wherever
+/// the block is.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockRecord {
+    pub row_count: u64,
     /// This block's per-row-group column statistics, where the mapping pass
     /// that recorded it was asked to gather them (`pgdt_mapping::statistics`).
-    /// Shared, so a clone of the map copies a reference
+    /// Shared, so a copy of the record copies a reference
     /// (`docs/design/decisions.md`, "D34").
     #[serde(deserialize_with = "deserialize_block_statistics")]
     pub statistics: Option<Arc<BlockStatistics>>,
@@ -345,7 +365,8 @@ pub struct CopyBlock {
 /// several are as long (`docs/design/decisions.md`, "D140").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LongestLine {
-    /// Absolute file offset of the line's first byte.
+    /// Where the line's first byte is, relative to the block's first data
+    /// byte.
     pub offset: u64,
     /// The line's bytes, its line ending included.
     pub len: u64,

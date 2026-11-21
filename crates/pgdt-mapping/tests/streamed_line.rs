@@ -113,7 +113,7 @@ async fn largest_under(
         .spans
         .iter()
         .find_map(|span| match &span.body {
-            SpanBody::Data(DataBlock::Copy(block)) => Some(block.row_count),
+            SpanBody::Data(DataBlock::Copy(block)) => Some(block.record.row_count),
             _ => None,
         })
         .unwrap();

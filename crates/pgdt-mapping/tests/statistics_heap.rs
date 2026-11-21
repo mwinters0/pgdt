@@ -110,7 +110,9 @@ fn reported_and_freed(mut index: DumpIndex) -> Vec<(u64, u64)> {
     let mut out = Vec::new();
     for span in &mut index.spans {
         let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body else { continue };
-        let Some(statistics) = block.statistics.take() else { continue };
+        let Some(statistics) = Arc::make_mut(&mut block.record).statistics.take() else {
+            continue;
+        };
         assert_eq!(Arc::strong_count(&statistics), 1, "the map is the only holder");
         let reported = statistics.heap_bytes();
         let before = FREED.get();

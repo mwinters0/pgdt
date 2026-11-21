@@ -326,7 +326,7 @@ impl UnrepresentableRead {
 /// holding one as its text, the rest holding none.
 ///
 /// **A column is tested only where `counts`, the block's own count
-/// ([`pgdt_model::CopyBlock::unrepresentable`]), says it holds such a value
+/// ([`pgdt_model::BlockRecord::unrepresentable`]), says it holds such a value
 /// in the tiers `reach` reads**, the count being the map's exact record of
 /// them (`docs/design/decisions.md`, "D96"); a block with no count is tested
 /// throughout.
