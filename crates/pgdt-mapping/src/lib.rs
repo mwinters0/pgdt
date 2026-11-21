@@ -10,6 +10,7 @@ mod backfill;
 mod context;
 mod forward;
 mod interior;
+mod open;
 pub mod statistics;
 mod whole_file;
 
@@ -25,7 +26,8 @@ pub use whole_file::{MapRun, build_index, build_map, map_file};
 pub mod internal {
     pub use crate::backfill::reread_rows;
     pub use crate::context::{PassContext, ReadContext};
-    pub use crate::forward::{MapStop, Pass, Target, map_forward, splice};
+    pub use crate::forward::{MapStop, Target, map_forward, splice};
+    pub use crate::open::Pass;
     #[cfg(feature = "test-support")]
     pub use crate::statistics::gather::one_group_bounds;
     pub use crate::statistics::stored::{

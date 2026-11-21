@@ -4,7 +4,6 @@
 
 use std::sync::Arc;
 
-use pgdt_codec::internal::counter_for;
 use pgdt_core::{CopyHeader, Error, Result};
 use pgdt_dump::attach_text;
 use pgdt_dump::dump_metadata_from_spans;
@@ -14,12 +13,12 @@ use pgdt_dump::internal::{Drawing, FieldFold, announce_read_loop, finish_block};
 use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event};
 use pgdt_io::internal::memory_budget_display;
 use pgdt_model::internal::Recorder;
-use pgdt_model::{BlockRecord, DumpIndex, Span, SpanBody, timescaledb};
+use pgdt_model::{BlockRecord, DumpIndex, Span, SpanBody};
 use tokio_util::sync::CancellationToken;
 
-use crate::context::{Gathering, PassContext};
+use crate::context::PassContext;
 use crate::interior::{Region, RegionOutcome, RegionScan, report_shortfall, scan_region};
-use crate::statistics::gather;
+use crate::open::{Pass, Policy, open as open_block};
 
 mod save;
 
@@ -185,21 +184,6 @@ async fn interrupted(ctx: &PassContext<'_>, index: &DumpIndex) -> Result<MapStop
     Ok(MapStop::Interrupted)
 }
 
-/// What a mapping pass records of each block it maps
-/// (`docs/design/decisions.md`, "D77").
-#[derive(Clone, Copy)]
-pub enum Pass<'a> {
-    /// [`map_file`](crate::map_file)'s: each block at the level the request
-    /// gives its table, censused where that is the data level, and its
-    /// data-level columns gathered, every observer charging the account and
-    /// treating a field its type's `*_in` refuses as the gathering says
-    /// ([`Gathering`]).
-    Parse(Gathering<'a>),
-    /// A query's: every block censused, nothing gathered, whatever level a
-    /// parse would have given it (`docs/design/decisions.md`, "D35").
-    Query,
-}
-
 /// Extend `index`'s map forward from its own `scanned_through`, persisting as
 /// it goes, until the queried table is settled, EOF is reached, or `ctx`'s
 /// token fires. Emits no rows. `target` is the
@@ -349,15 +333,6 @@ pub async fn map_forward(
                     // Read off the header, for the offer below.
                     let header_offset = start.header_offset;
                     let data_offset = start.data_offset;
-                    // The block's level: censused, and gathering where
-                    // a statistics request tracks its columns.
-                    let (census, gathering) = match mapping {
-                        Pass::Query => (true, None),
-                        Pass::Parse(gathering) => (
-                            gathering.request.tracked_columns(&start.header).is_some(),
-                            Some(gathering),
-                        ),
-                    };
                     let header = start.header.clone();
                     builder.on_copy_start(*start);
                     // **Once per database, not once per block**:
@@ -380,41 +355,15 @@ pub async fn map_forward(
                     // After the restatement, so the count and the
                     // observer resolve the block against its database's
                     // DDL — the first segment of its name's (`KD133`).
-                    let mut recorder = Recorder::new(data_offset);
-                    if census {
-                        let counter =
-                            counter_for(&header, index.metadata.as_deref(), db.as_deref());
-                        recorder = recorder.with_census(header.columns.len(), counter);
-                    }
-                    // A block no request tracks is observed too under
-                    // `PostgresInvalidValues::Strict`, to check its fields.
-                    let observer = gathering.and_then(|gathering| {
-                        gather::observer_for(
-                            gathering.request,
-                            &header,
-                            index.metadata.as_deref(),
-                            db.as_deref(),
-                            gathering.account,
-                            gathering.invalid,
-                        )
-                    });
-                    if let Some(observer) = observer {
-                        recorder = recorder.with_observer(observer);
-                    }
-                    // TimescaleDB's catalog, at every level and read on this
-                    // loop, its rows never handed to the workers
-                    // (`docs/design/decisions.md`, "D133").
-                    let records = timescaledb::records_rows(&header);
-                    if records {
-                        recorder = recorder.with_rows();
-                    }
-                    // A block whose rows are counted, censused and observed
-                    // holds none of them: a row outgrowing its chunk is
-                    // streamed (`pgdt_dump::ChunkEvents::stream_rows`), its
-                    // census and its observer holding only the fields they
-                    // read whole.
-                    chunk.stream_rows(!recorder.holds_rows());
-                    let (header, recorder) = open.insert((header, recorder));
+                    let opened = open_block(
+                        &header,
+                        data_offset,
+                        index.metadata.as_deref(),
+                        db.as_deref(),
+                        Policy::Maps(mapping),
+                    );
+                    chunk.stream_rows(opened.streams);
+                    let (header, recorder) = open.insert((header, opened.recorder));
                     // **The offer, and this loop is the leader making it**
                     // ([`scan_region`]): everything from
                     // `data_offset` until `\.` is line-structured rows, so
@@ -424,9 +373,9 @@ pub async fn map_forward(
                     // block it closes holds the statistics its pieces
                     // observed, as a declined one does the rows this loop
                     // hands on.
-                    let outcome = match records {
-                        true => RegionOutcome { scan: RegionScan::Declined, shortfall: None },
-                        false => {
+                    let outcome = match opened.offers_interior {
+                        false => RegionOutcome { scan: RegionScan::Declined, shortfall: None },
+                        true => {
                             // The line this loop drew for lies before the
                             // block and is scanned: kept while it waits on
                             // the region, it is the earliest, which no

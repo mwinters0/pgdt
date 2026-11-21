@@ -7,7 +7,7 @@ in its topic's file under `decisions/`, which opens with what the topic is and i
 index and the citation target: cite as `docs/design/decisions.md`, "D12". The rules, the caps and the meter included,
 are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D169 -->
+<!-- decision-watermark: D170 -->
 
 ## I/O, memory and parallelism
 [`decisions/io.md`](decisions/io.md)
@@ -87,6 +87,7 @@ are `docs/process.md`, "The decision register".
 - **D167** A block's identity is derived from its address, ordered in dump order, and never persisted
 - **D168** A block is its header, its address and its record, the record shared and copied on write
 - **D169** One recorder takes a block's rows, a held row split once, and a piece observes rows alone
+- **D170** A block is opened in one place under its pass's policy, and a re-read merged by the record's one rule
 
 ## Type resolution and decoders
 [`decisions/types.md`](decisions/types.md)

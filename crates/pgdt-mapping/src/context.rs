@@ -88,7 +88,7 @@ impl<'a> PassContext<'a> {
 /// table, the account every observer charges, bounded by the run's statistics
 /// allowance, and what a field its type's `*_in` refuses does
 /// ([`PostgresInvalidValues`]). A query's pass gathers nothing, so holds none
-/// ([`Pass`](crate::forward::Pass)).
+/// ([`Pass`](crate::open::Pass)).
 #[derive(Clone, Copy)]
 pub struct Gathering<'a> {
     pub(crate) request: &'a StatisticsRequest,

@@ -6,10 +6,12 @@
 
 use std::collections::BTreeSet;
 
+use pgdt_core::internal::StatisticsScope;
+
 use crate::diagnostic::DiagnosticExt;
 use crate::{
     ArrayShape, BlockAddress, BlockRecord, BlockStatistics, CopyBlock, DataBlock, DatabaseMetadata,
-    Diagnostic, DumpIndex, SpanBody, Unrepresentable,
+    Diagnostic, DumpIndex, IgnoredRefusals, SpanBody, Unrepresentable,
 };
 
 /// Per-span cap on stored text (`docs/design/decisions.md`, "D30") — a whole
@@ -56,6 +58,62 @@ impl BlockRecord {
     pub fn unrepresentable(&self) -> Option<&[Unrepresentable]> {
         self.census.as_ref().map(|census| census.unrepresentable.as_slice())
     }
+}
+
+/// What a crate above calls on [`BlockRecord`] that is not its API: the
+/// back-fill's merge, reached through `internal`.
+pub trait BlockRecordExt {
+    /// **Merge `read`, the record a re-read of this block finished, into
+    /// it** — the back-fill's one rule (`docs/design/decisions.md`, "D170").
+    /// A read that `gathered` replaces the census, every row having been
+    /// read, so a gathering block is at the data level whether its
+    /// statistics fitted or not; a check alone records only that it
+    /// checked. A read that declined keeps the statistics the block held and
+    /// records the allowance beside them (D85); one that gathered replaces
+    /// them and clears an earlier decline. Either merges the fields it went
+    /// past ([`IgnoredRefusals::merge`]).
+    ///
+    /// Answers the heap bytes of the statistics a gathered read replaced,
+    /// `Some(0)` where the block held none, and `None` where it replaced
+    /// none: what the caller's account credits. What is freed is freed
+    /// inside a statistics scope, as it was allocated (`pgdt_core::instrument`).
+    fn merge(&mut self, read: BlockRecord, gathered: bool) -> Option<u64>;
+}
+
+impl BlockRecordExt for BlockRecord {
+    fn merge(&mut self, read: BlockRecord, gathered: bool) -> Option<u64> {
+        if gathered {
+            self.census = read.census;
+        }
+        self.checked_in_full |= read.checked_in_full;
+        let ignored = read.ignored_refusals.map(|ignored| *ignored);
+        let _attributed = StatisticsScope::enter();
+        if let Some(allowance) = read.statistics_declined {
+            // The observer freed its own and holds nothing to replace the
+            // block's with.
+            self.statistics_declined = Some(allowance);
+            merge_ignored(&mut self.ignored_refusals, ignored);
+            None
+        } else if let Some(gathered) = read.statistics {
+            let replaced = self.statistics.as_deref().map_or(0, BlockStatistics::heap_bytes);
+            self.statistics = Some(gathered);
+            // A block that holds what was asked declines nothing, so a
+            // record from an earlier, tighter allowance goes.
+            self.statistics_declined = None;
+            merge_ignored(&mut self.ignored_refusals, ignored);
+            Some(replaced)
+        } else {
+            // A check alone gathered nothing and declined nothing.
+            None
+        }
+    }
+}
+
+/// [`IgnoredRefusals::merge`] over a record's boxed field.
+fn merge_ignored(record: &mut Option<Box<IgnoredRefusals>>, read: Option<IgnoredRefusals>) {
+    let mut merged = record.take().map(|record| *record);
+    IgnoredRefusals::merge(&mut merged, read);
+    *record = merged.map(Box::new);
 }
 
 /// The census of several blocks read as one, one entry per name in `columns`
@@ -311,3 +369,6 @@ impl DumpIndex {
         self.scanned_through >= size
     }
 }
+
+#[cfg(test)]
+mod tests;

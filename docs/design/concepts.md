@@ -176,8 +176,9 @@ extends a map, and what is found wrong with the file
   blocks and each one's identity, derived and never persisted (D167), the
   tables they hold rows for, and the partition roots blocks are
   written through, which a read's refusals and the map's findings both read
-  (D136); `diagnostic.rs`: what is found wrong with the file, recomputed on
-  load rather than persisted.
+  (D136), and a re-read's record merged into a block's by one rule (D170);
+  `diagnostic.rs`: what is found wrong with the file, recomputed on load
+  rather than persisted.
 - **pgdt-dump** — `map/`: building a map — where a statement ends, a comment
   block read, and what every map is checked for and carries.
 
@@ -187,9 +188,10 @@ Extending a map forward from its frontier, a block's interior split into
 pieces and folded back, each block closed, the cache saved on a throttle
 ([`decisions.md`](decisions.md), "D48", "Batches, streams and the leader").
 
-- **pgdt-mapping** — `context.rs`, `forward/`, `whole_file.rs`, `backfill.rs`,
-  `interior/`: the pass whole — what it reads and saves under, a map extended
-  from its frontier, each block's rows recorded, the whole-file map and the
+- **pgdt-mapping** — `context.rs`, `open.rs`, `forward/`, `whole_file.rs`,
+  `backfill.rs`, `interior/`: the pass whole — what it reads and saves under,
+  each block opened under its pass's policy (D170), a map extended from its
+  frontier, each block's rows recorded, the whole-file map and the
   back-fill re-reading what a mapped block lacks, and a block's interior split
   into pieces and folded. Above the codec, since a block it maps is gathered
   as it is read, and below the query layer, since it builds no array (D68).

@@ -52,7 +52,7 @@ pub mod internal {
     pub use crate::diagnostic::DiagnosticExt;
     pub use crate::persisted::statistics::{BoundsView, ColumnBounds};
     pub use crate::recorder::Recorder;
-    pub use crate::span::BlockIdExt;
+    pub use crate::span::{BlockIdExt, BlockRecordExt};
     pub use crate::statistics::{
         BlockObserved, BlockObserver, ColumnStatisticsExt, ColumnStatisticsParts, FieldRefusalExt,
         IgnoredRefusalsExt, RowObserver, text_heap, vec_heap,

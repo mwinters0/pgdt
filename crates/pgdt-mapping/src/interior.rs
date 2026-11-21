@@ -12,8 +12,9 @@
 //!
 //! **[`map_forward`](crate::forward::map_forward) is a leader, as a
 //! back-fill's or a query's re-read is.** Its
-//! `CopyStart` arm offers each open region but a TimescaleDB catalog
-//! block's (`docs/design/decisions.md`, "D133") to [`scan_region`] and closes one
+//! `CopyStart` arm offers each open region the block's open says is offered
+//! (`crate::open`), every one but a TimescaleDB catalog block's
+//! (`docs/design/decisions.md`, "D133"), to [`scan_region`] and closes one
 //! it took through the same path a serial `CopyEnd` takes, then puts the
 //! serial scanner back down past it.
 

@@ -27,7 +27,8 @@ use crate::backfill::{
     Backfill, backfill_statistics, report_density_shortfall, report_statistics_declines,
 };
 use crate::context::{Gathering, PassContext, ReadContext};
-use crate::forward::{MapStop, Pass, cancelled_read, map_forward, splice};
+use crate::forward::{MapStop, cancelled_read, map_forward, splice};
+use crate::open::Pass;
 use crate::statistics::account::{StatisticsAccount, StatisticsHeld, Term};
 use crate::statistics::request::StatisticsRequest;
 
