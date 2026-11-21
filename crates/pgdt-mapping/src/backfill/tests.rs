@@ -2,13 +2,15 @@ use super::*;
 use std::num::NonZeroU64;
 
 use pgdt_dump::cache::{CacheMode, colocated_path};
+use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_fixtures::{all_fixtures, refused_field, statistics_fixture};
 use pgdt_io::{
-    Allowance, ArrangementRequest, DEFAULT_MEMORY_BUDGET, Extent, Jobs, Ledger, LocalFileSource,
-    Parallelism,
+    Allowance, Arrangement, ArrangementRequest, ByteRangeSource, DEFAULT_MEMORY_BUDGET, Extent,
+    Jobs, Ledger, LocalFileSource, Parallelism,
 };
 use pgdt_model::internal::{ColumnStatisticsExt, ColumnStatisticsParts};
 use pgdt_model::{ColumnStatistics, GroupSizing};
+use tokio_util::sync::CancellationToken;
 
 use crate::map_file;
 use crate::statistics::request::{

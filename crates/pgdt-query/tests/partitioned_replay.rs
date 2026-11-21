@@ -1058,7 +1058,7 @@ async fn a_plan_over_a_complete_cache_prices_its_own_chunk() {
     let replay = arranged_as(Parallelism::workers(8, 8 * unit));
 
     let mapper = local(&path);
-    let index = pgdt_mapping::build_index(mapper.as_ref(), &ScanOptions::default()).await.unwrap();
+    let index = pgdt_fixtures::build_index(mapper.as_ref(), &ScanOptions::default()).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let dump = dump_over(local(&path), &index, dir.path()).await.unwrap();
     let table = dump.table(&common::selector("public.t_int")).unwrap().unwrap();
@@ -1127,7 +1127,7 @@ async fn an_unbounded_span_falls_back_to_the_decode_footprint_alone() {
 #[tokio::test]
 async fn a_dump_s_plan_replays_as_the_mapping_pass_would() {
     use pgdt_core::Error;
-    use pgdt_mapping::build_index;
+    use pgdt_fixtures::build_index;
     use pgdt_mapping::statistics::StatisticsRequest;
 
     let path = partitions_fixture(16, "load-via-partition-root");

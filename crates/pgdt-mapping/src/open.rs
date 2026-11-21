@@ -45,7 +45,7 @@ pub enum Reread<'a> {
 
 /// **What a pass records of each block it opens**, and so how it reads one:
 /// the passes' differences as data, each the pass's own business.
-pub(crate) enum Policy<'a> {
+pub enum Policy<'a> {
     /// A forward pass mapping the block, as `pass` says: [`Pass::Parse`]
     /// censuses it by its level and attaches the observer its request and
     /// mode give it, [`Pass::Query`] censuses it and gathers nothing. Both
@@ -58,35 +58,43 @@ pub(crate) enum Policy<'a> {
     /// recorded by the passes that map it and never here (D133), and offered
     /// to the interior first.
     Rereads(Reread<'a>),
+    /// The eager pass `map_file` is held to, a fixture's: every block
+    /// censused, nothing observed, TimescaleDB's catalog's rows recorded
+    /// (D133), and read serially, never offered to the interior.
+    Eager,
 }
 
 /// A block as [`open`] answers it: its recorder, and how the pass reads it.
-pub(crate) struct OpenBlock {
+pub struct OpenBlock {
     /// What records the block's rows, from its `CopyStart` to its `CopyEnd`.
-    pub(crate) recorder: Recorder,
+    pub recorder: Recorder,
     /// Whether a row outgrowing its chunk is streamed
     /// (`pgdt_dump::ChunkEvents::stream_rows`): not where the recorder holds
     /// every row whole ([`Recorder::holds_rows`]).
-    pub(crate) streams: bool,
+    pub streams: bool,
     /// Whether the block's rows are offered to the interior split
     /// (`crate::interior::scan_region`).
-    pub(crate) offers_interior: bool,
+    pub offers_interior: bool,
 }
 
 /// **Open the block whose `COPY` header is `header` and whose first data
 /// byte is at `data_offset`** under `policy`: its census counted against the
 /// DDL `metadata` states for it in `database`, its observer attached, its
 /// rows recorded where the policy says, and whether it streams and is
-/// offered to the interior derived from what it records.
-pub(crate) fn open(
+/// offered to the interior derived from what it records, the eager pass
+/// offering none.
+pub fn open(
     header: &CopyHeader,
     data_offset: u64,
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
     policy: Policy<'_>,
 ) -> OpenBlock {
+    let serial = matches!(policy, Policy::Eager);
     let (census, observer, records) = match policy {
-        Policy::Maps(Pass::Query) => (true, None, timescaledb::records_rows(header)),
+        Policy::Maps(Pass::Query) | Policy::Eager => {
+            (true, None, timescaledb::records_rows(header))
+        }
         // A block no request tracks is observed too under
         // `PostgresInvalidValues::Strict`, to check its fields.
         Policy::Maps(Pass::Parse(gathering)) => (
@@ -127,5 +135,6 @@ pub(crate) fn open(
     // them: a row outgrowing its chunk is streamed, its census and its
     // observer holding only the fields they read whole.
     let streams = !recorder.holds_rows();
-    OpenBlock { recorder, streams, offers_interior: !records }
+    let offers_interior = !records && !serial;
+    OpenBlock { recorder, streams, offers_interior }
 }

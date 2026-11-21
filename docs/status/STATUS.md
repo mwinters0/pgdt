@@ -97,7 +97,7 @@ Spec: [`../design/roadmap-P43-block-model.md`](../design/roadmap-P43-block-model
 - [x] **43.6** The `Recorder` in `pgdt-model`: a held row split once, `RowFold` replaced, the three hosts fed through it, the observer contract split into its row and block traits, `Builder` recording nothing and `on_copy_end` taking the record; `--count-pair` on a data-level parse — [notes](../design/roadmap-P43.6-recorder-notes.md)
 - [x] **43.7** One open under per-pass policies, `map_forward`'s `CopyStart` arm becoming it; one close, the back-fill merging through `BlockRecord`; `--count-pair` on a data-level parse — [notes](../design/roadmap-P43.7-open-close-notes.md)
 - [x] **43.7.1** A re-read's policy as data: `Policy::Rereads` carrying the back-fill's plan, or a check alone, with its gathering, or nothing for a query's census, and the open building `observer_tracking` or `checker` from it, as the spec's back-fill policy states — [notes](../design/roadmap-P43.7.1-reread-policy-notes.md)
-- [ ] **43.8** `build_index`, `build_map` and `backfill_block` in `pgdt-fixtures` behind `mapping`, the eager pass opening through the open under its policy
+- [x] **43.8** `build_index`, `build_map` and `backfill_block` in `pgdt-fixtures` behind `mapping`, the eager pass opening through the open under its policy — [notes](../design/roadmap-P43.8-eager-pass-notes.md)
 
 ## Not started
 

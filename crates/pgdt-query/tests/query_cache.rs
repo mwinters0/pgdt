@@ -15,8 +15,8 @@ use bytes::Bytes;
 use futures::StreamExt;
 use pgdt_dump::cache::{CacheMode, CacheStatus};
 use pgdt_dump::{ScanOptions, cache, check_tiling};
+use pgdt_fixtures::build_index;
 use pgdt_io::{ByteRangeSource, LocalFileSource};
-use pgdt_mapping::build_index;
 use pgdt_model::DumpIndex;
 use pgdt_query::{QueryOptions, ScanExtent};
 

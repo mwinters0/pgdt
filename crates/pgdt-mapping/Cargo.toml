@@ -30,7 +30,10 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
-pgdt-fixtures = { path = "../pgdt-fixtures" }
+# `mapping` for the eager pass `map_file` is held to, which this crate's
+# integration tests call; a unit test calling it would meet a second copy of
+# this crate, whose types are not its own.
+pgdt-fixtures = { path = "../pgdt-fixtures", features = ["mapping"] }
 # What this crate's tests reach there.
 pgdt-codec = { path = "../pgdt-codec", features = ["test-support"] }
 pgdt-dump = { path = "../pgdt-dump", features = ["test-support"] }

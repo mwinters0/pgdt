@@ -7,14 +7,12 @@ use std::sync::Arc;
 
 use pgdt_core::{Error, Result};
 use pgdt_dump::internal::{Drawing, FieldFold, announce_read_loop, finish_block};
-use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ReadOptions, ScanOptions};
-use pgdt_io::{Arrangement, ByteRangeSource};
+use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event};
 use pgdt_model::{
     BlockId, BlockRecord, BlockStatistics, CopyBlock, DataBlock, DumpIndex, DumpMetadata,
     PostgresInvalidValues, Span, SpanBody,
     internal::{BlockRecordExt, Recorder},
 };
-use tokio_util::sync::CancellationToken;
 
 use crate::context::{Gathering, PassContext, ReadContext};
 use crate::forward::{SaveThrottle, cancelled_read};
@@ -222,17 +220,17 @@ pub(crate) fn report_statistics_declines(
     declined
 }
 
-/// **Back-fill one block the map already holds**: re-read it for what
-/// `request` asks of it, and record what each read found in `block` —
-/// what [`map_file`](crate::map_file)'s back-fill does to every block lacking
-/// what its request asks, through the same per-block step. Its columns are
-/// resolved against `metadata`, the map's, whole-file where it can be, in
-/// `database`, the one its span records
-/// ([`DumpIndex::blocks_with_database`](pgdt_model::DumpIndex::blocks_with_database)).
-/// Answers whether it read the block: `false` is a block that holds what was
-/// asked already, or one that declined under an allowance no smaller than
-/// this one, and that no strict parse is owed a check of, and is left as it
-/// was.
+/// **Back-fill one block the map already holds, outside any pass**: re-read
+/// it under `read` for what `request` asks of it, and record what each read
+/// found in `block` — what [`map_file`](crate::map_file)'s back-fill does to
+/// every block lacking what its request asks, through the same per-block
+/// step. Its columns are resolved against `metadata`, the map's, whole-file
+/// where it can be, in `database`, the one its span records
+/// ([`DumpIndex::blocks_with_database`]). Answers whether it read the block:
+/// `false` is a block that holds what was asked already, or one that
+/// declined under an allowance no smaller than this one, and that no strict
+/// parse is owed a check of, left as it was — or `read`'s token stopping a
+/// read, the block keeping what the reads before it recorded.
 ///
 /// **What it asks of the block is the pass's**: whatever `request` lacks
 /// there, gathered beside everything the block already held so nothing is
@@ -241,68 +239,45 @@ pub(crate) fn report_statistics_declines(
 /// block no strict parse checked is read to check every field too. What a
 /// read found is recorded as a pass records it: the census, which puts a
 /// block mapped at the metadata level at the data level; the statistics, or
-/// the allowance they declined under ([`BlockRecord::statistics_declined`](pgdt_model::BlockRecord::statistics_declined);
+/// the allowance they declined under ([`BlockRecord::statistics_declined`];
 /// `docs/design/decisions.md`, "D85"); the fields a column it does not track
-/// went past ([`BlockRecord::ignored_refusals`](pgdt_model::BlockRecord::ignored_refusals)); and a clean check
-/// ([`BlockRecord::checked_in_full`](pgdt_model::BlockRecord::checked_in_full)).
+/// went past ([`BlockRecord::ignored_refusals`]); and a clean check
+/// ([`BlockRecord::checked_in_full`]).
 ///
-/// **The arrangement is the pass's too**: the block is offered to the leader
-/// under its parallelism and read serially where it declines, so what is
-/// gathered is what a straight-through pass would have gathered; and its
-/// statistics allowance ([`Arrangement::statistics_allowance`]) bounds what
-/// the block's statistics hold, those it already holds included, a read past
-/// it declining. Its readers draw what they hold past their chunk from its
-/// ledger, which the block's statistics draw on first, the arrangement's
-/// `held` being what the block holds already, which its account loads
-/// (`docs/design/decisions.md`, "D157"). It takes no cancellation, being no
-/// mapping pass: a caller stops it by dropping it (`docs/design/decisions.md`,
-/// "D26").
-///
-/// **A block that no longer ends where the map says is refused**,
-/// [`Error::CachedBlockChanged`] naming no cache, this entry point being
-/// handed none, rather than given statistics describing other bytes than its
-/// map does. **A field its type's `*_in` refuses fails the read**, with
-/// [`Error::FieldRefused`], in a column `request` tracks — in every column
-/// under [`PostgresInvalidValues::Strict`] — as it fails a mapping pass,
-/// unless `invalid` ignores it; in any other column it is recorded.
-///
-/// **Its parameters are what an embedder states**, as [`map_file`](crate::map_file)'s are:
-/// it opens no pass, so has no [`PassContext`] to take.
-#[allow(clippy::too_many_arguments)]
-pub async fn backfill_block(
-    source: &dyn ByteRangeSource,
-    read: ReadOptions,
-    arrangement: &Arrangement,
+/// **It reads as a pass's readers do**: offered to the leader under `read`'s
+/// parallelism and read serially where it declines, its readers drawing what
+/// they hold past their chunk from `read`'s ledger, which the block's
+/// statistics draw on first (`docs/design/decisions.md`, "D157"), bounded by
+/// `allowance`, those it already holds included, a read past it declining.
+/// A block that no longer ends where the map says is refused,
+/// [`Error::CachedBlockChanged`] naming no cache, rather than given
+/// statistics describing other bytes than its map does; a field its type's
+/// `*_in` refuses fails the read, with [`Error::FieldRefused`], in a column
+/// `request` tracks — in every column under
+/// [`PostgresInvalidValues::Strict`] — unless `invalid` ignores it, and in
+/// any other column is recorded.
+pub async fn backfill_one(
+    read: ReadContext<'_>,
+    allowance: Option<u64>,
     invalid: PostgresInvalidValues,
     request: &StatisticsRequest,
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
     block: &mut CopyBlock,
 ) -> Result<bool> {
-    let allowance = arrangement.statistics_allowance();
     let plan = request.backfill(block, metadata, database, allowance);
     let unchecked = invalid == PostgresInvalidValues::Strict && !block.record.checked_in_full;
     if plan.is_none() && !unchecked {
         return Ok(false);
     }
-    let scan_options = ScanOptions { read, parallelism: arrangement.parallelism() };
-    let extent = source.extent().await?;
-    announce_read_loop(source, read, scan_options.parallelism);
+    announce_read_loop(read.source, read.scan.read, read.scan.parallelism);
     // What the block holds is alive beside what a read gathers, as a
     // loaded block's statistics are in a pass, until a read replaces them.
-    let account = Arc::new(StatisticsAccount::charging(allowance, arrangement.ledger().clone()));
+    let account = Arc::new(StatisticsAccount::charging(allowance, read.ledger.clone()));
     let held = block.record.statistics.as_deref().map_or(0, BlockStatistics::heap_bytes);
     account.apply(&[(Term::Loaded, held as i64)]);
     let loaded =
         block.record.statistics.is_some().then_some(block.address.id()).into_iter().collect();
-    let cancel = CancellationToken::new();
-    let read = ReadContext {
-        source,
-        scan: scan_options,
-        ledger: arrangement.ledger(),
-        cancel: &cancel,
-        extent,
-    };
     let mut reader = Rereads {
         read,
         cache_path: None,
@@ -310,9 +285,7 @@ pub async fn backfill_block(
         loaded,
         shortfall_reported: false,
     };
-    let filled = reader.fill(metadata, database, block, plan).await?;
-    assert!(filled, "a re-read stops short only where its token fires, and nothing holds this one");
-    Ok(true)
+    reader.fill(metadata, database, block, plan).await
 }
 
 /// What every re-read of one back-fill shares: what it reads under, the

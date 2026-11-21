@@ -122,10 +122,10 @@ carries up; the builder hosting the row path. Code: `pgdt_model::internal::Recor
 ### D170 A block is opened in one place under its pass's policy, and a re-read merged by the record's one rule
 One `open` turns a block's header, its DDL and the pass's `Policy` into its `Recorder` — census, observer, rows as text
 — and says whether it streams and is offered to the interior: a parse censuses by level and attaches its request's
-observer, a query censuses alone, both record the catalog's rows (D133); a re-read censuses and builds what its `Reread`
-names, a back-fill's gatherer or checker, or no observer for a query's census. A re-read's record merges into the
-block's by `BlockRecordExt::merge`, the credit for what it replaced staying the back-fill's account's. Rejected: each
-pass opening its own, the mechanism written three times; a re-read's caller building its observer, written twice; the
-open taking the pass context, which it reads none of, a re-read outside a pass holding none and `reread_rows` the read
-half alone; the merge in the back-fill, a rule of the record every re-read shares. Code: `pgdt-mapping`'s `open::open`,
-`pgdt_model::internal::BlockRecordExt`. Evidence: `span/tests.rs`.
+observer, a query censuses alone, as the fixtures' eager pass does serially, all recording the catalog's rows (D133); a
+re-read censuses and builds what its `Reread` names, a back-fill's gatherer or checker, or no observer for a query's
+census. A re-read's record merges into the block's by `BlockRecordExt::merge`, crediting what it replaced to the
+back-fill's account. Rejected: each pass opening its own, written three times; a re-read's caller building its
+observer, written twice; the open taking the pass context, which it reads none of, a re-read outside a pass holding
+none and `reread_rows` the read half alone; the merge in the back-fill, a rule of the record every re-read shares.
+Code: `pgdt-mapping`'s `open::open`, `pgdt_model::internal::BlockRecordExt`. Evidence: `span/tests.rs`.

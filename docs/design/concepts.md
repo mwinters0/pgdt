@@ -481,11 +481,14 @@ every arrangement `pgdt` resolves holds beside its readers
 What every crate's tests address the fixtures by: the generated tree and its
 enumerator, the sandboxes a test writes a cache beside, the multi-database
 concatenation, the fields PostgreSQL refuses and how a sweep maps past them, a
-fixture mapped beside its cache, the server's answers beside a dump, and the
-hand-written dump
+fixture mapped beside its cache, the eager pass the mapping pass is held to,
+the server's answers beside a dump, and the hand-written dump
 ([`decisions.md`](decisions.md), "D68").
 
-- **pgdt-fixtures** — `lib.rs`, `refused.rs`, `parsed.rs`, `answers.rs`: a member only a
-  dev-dependency reaches, so every crate's tests share one copy with the graph
-  one-way; the sweep's request builders, which name the statistics request,
-  and a fixture mapped beside its cache, behind its `mapping` feature.
+- **pgdt-fixtures** — `lib.rs`, `refused.rs`, `parsed.rs`, `eager.rs`, `answers.rs`: a
+  member only a dev-dependency reaches, so every crate's tests share one copy
+  with the graph one-way; the sweep's request builders, which name the
+  statistics request, a fixture mapped beside its cache, and the eager pass —
+  a whole file mapped serially through the mapping pass's one open, and one
+  block back-filled outside any pass — behind its `mapping` feature, called
+  by tests alone and so no part of the mapping pass's API (D106).

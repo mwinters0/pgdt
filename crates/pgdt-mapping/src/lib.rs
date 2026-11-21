@@ -14,20 +14,19 @@ mod open;
 pub mod statistics;
 mod whole_file;
 
-pub use backfill::backfill_block;
 pub use statistics::gather::strict::{
     StrictUnchecked, UncheckedBound, UncheckedCheck, UncheckedColumn, strict_unchecked,
 };
-pub use whole_file::{MapRun, build_index, build_map, map_file};
+pub use whole_file::{MapRun, map_file};
 
 /// What a crate above reaches that is not this crate's API: public only
 /// because a crate boundary forced it, and named here so a caller reaching
 /// past the API names the word.
 pub mod internal {
-    pub use crate::backfill::reread_rows;
+    pub use crate::backfill::{backfill_one, reread_rows};
     pub use crate::context::{PassContext, ReadContext};
     pub use crate::forward::{MapStop, Target, map_forward, splice};
-    pub use crate::open::{Pass, Reread};
+    pub use crate::open::{OpenBlock, Pass, Policy, Reread, open};
     #[cfg(feature = "test-support")]
     pub use crate::statistics::gather::one_group_bounds;
     pub use crate::statistics::stored::{

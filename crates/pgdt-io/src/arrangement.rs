@@ -351,7 +351,7 @@ impl Arrangement {
     /// allocator retains and a read's longest line come off it — the
     /// ledger's room past that line —
     /// carved after the workers (`docs/design/decisions.md`, "D85"), which
-    /// `pgdt_mapping::map_file` and `pgdt_mapping::backfill_block` bound their
+    /// `pgdt_mapping::map_file` and `pgdt_mapping::internal::backfill_one` bound their
     /// statistics by. `None`, where no allowance was found, declines nothing.
     pub fn statistics_allowance(&self) -> Option<u64> {
         self.statistics_allowance

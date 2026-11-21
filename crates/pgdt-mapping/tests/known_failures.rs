@@ -21,8 +21,8 @@
 use std::path::{Path, PathBuf};
 
 use pgdt_dump::ScanOptions;
+use pgdt_fixtures::build_map;
 use pgdt_io::LocalFileSource;
-use pgdt_mapping::build_map;
 use pgdt_model::DataBlock;
 use pgdt_model::SpanBody;
 

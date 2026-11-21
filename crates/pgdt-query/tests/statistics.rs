@@ -20,12 +20,13 @@ use std::time::SystemTime;
 use bytes::Bytes;
 use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus, LoadedCache};
+use pgdt_fixtures::backfill_block;
 use pgdt_io::{Allowance, Arrangement, ArrangementRequest, ByteRangeSource, Jobs, LocalFileSource};
 use pgdt_mapping::statistics::{
     BLOCK_MAX_ROW_GROUPS, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES,
     StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsSizing, StatisticsTarget,
 };
-use pgdt_mapping::{MapRun, backfill_block, map_file};
+use pgdt_mapping::{MapRun, map_file};
 use pgdt_model::internal::{ColumnStatisticsExt, ColumnStatisticsParts};
 use pgdt_model::{
     BlockStatistics, ColumnRefusals, ColumnStatistics, CopyBlock, DICTIONARY_ENTRY_MAX_BYTES,

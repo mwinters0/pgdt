@@ -29,7 +29,7 @@ async fn the_filter_is_resolved_once_per_block_at_plan_time() {
     };
     // The whole file, past the first block, which would otherwise settle the
     // table; a file with no `\connect`, so no block names a database.
-    let index = pgdt_mapping::build_index(&source, &ScanOptions::default()).await.unwrap();
+    let index = pgdt_fixtures::build_index(&source, &ScanOptions::default()).await.unwrap();
     let matches: Vec<CopyBlock> = index.blocks().cloned().collect();
     let database: Option<String> = None;
     let [first, second] = &matches[..] else { panic!("two blocks: {matches:?}") };

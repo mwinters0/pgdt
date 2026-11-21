@@ -157,7 +157,7 @@ fn toc_coverage_diagnostic(spans: &[Span]) -> Diagnostic {
 /// findings ([`pgdt_model::timescaledb::findings`]), each a pure function of the map
 /// `mapped` — its spans, its DDL and its catalog's rows — the file's
 /// addressable `size` and the source's compression `index`. **The one place they are computed**, for
-/// every site a whole map is finished or loaded — `pgdt_mapping::build_index`,
+/// every site a whole map is finished or loaded — `pgdt_fixtures::build_index`,
 /// `pgdt_mapping::map_file`, `pgdt_mapping::map_forward` at EOF and
 /// `crate::cache::store::status_from_file` — so no site carries a subset of
 /// what another does.

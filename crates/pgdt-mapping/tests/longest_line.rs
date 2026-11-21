@@ -10,9 +10,10 @@ use std::sync::Arc;
 
 use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{ReadOptions, ScanOptions};
+use pgdt_fixtures::build_map;
 use pgdt_io::{ByteRangeSource, LocalFileSource};
+use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
-use pgdt_mapping::{build_map, map_file};
 use pgdt_model::{CopyBlock, DataBlock, LongestLine, PostgresInvalidValues, Span, SpanBody};
 use tokio_util::sync::CancellationToken;
 

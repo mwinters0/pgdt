@@ -1287,7 +1287,7 @@ where
     let extent = source.extent().await?;
     // Named "preamble scan", not "scan": the caller a `parse` runs is
     // `preamble::scan_preamble`, and `pgdt_mapping`'s `map_forward` announces
-    // itself as "scan". Its `build_index` and `build_map` share this label
+    // itself as "scan". `pgdt_fixtures`' `build_index` and `build_map` share this label
     // while scanning to EOF; neither is reached from the CLI. A single `parse` runs both in sequence, so two passes sharing
     // one name would read as an interrupted-and-resumed run.
     tracing::info!(

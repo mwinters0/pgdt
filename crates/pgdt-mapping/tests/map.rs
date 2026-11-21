@@ -6,8 +6,8 @@
 use std::path::Path;
 
 use pgdt_dump::{ScanOptions, check_tiling, dump_metadata_from_spans};
+use pgdt_fixtures::{build_index, build_map};
 use pgdt_io::LocalFileSource;
-use pgdt_mapping::{build_index, build_map};
 use pgdt_model::DiagnosticKind;
 use pgdt_model::{SpanBody, TilingIssue};
 

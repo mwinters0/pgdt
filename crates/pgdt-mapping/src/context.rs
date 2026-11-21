@@ -21,7 +21,7 @@ use crate::statistics::request::StatisticsRequest;
 /// where the source has said so.
 ///
 /// **The half of a [`PassContext`] a read needs**, apart because a block read
-/// again outside a pass ([`backfill_block`](crate::backfill_block)) reads
+/// again outside a pass ([`backfill_one`](crate::internal::backfill_one)) reads
 /// under one and saves nowhere.
 #[derive(Clone, Copy)]
 pub struct ReadContext<'a> {

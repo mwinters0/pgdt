@@ -36,7 +36,7 @@ pub const ROW_GROUP_DEFAULT_MIN_ROWS: u64 = 1 << 10;
 /// What a mapping pass is asked to record: each table's and column's level,
 /// at what group size and between what density bounds
 /// (`docs/design/decisions.md`, "D77"). An argument of [`crate::map_file`]
-/// and [`crate::backfill_block`] alone — a query never gathers.
+/// and [`crate::internal::backfill_one`] alone — a query never gathers.
 ///
 /// **The default is the data level everywhere** ([`Self::DATA`]), a parse
 /// carrying the intent to do all work a later query could use; recording less
@@ -61,7 +61,7 @@ pub struct StatisticsRequest {
 /// minimum and the default minimum gather alike and answer a block gathered
 /// under either alike, but differ towards one gathered under another sizing,
 /// which the stated one re-reads and the default keeps
-/// ([`crate::backfill_block`]); a stated size gathers unlike the unstated
+/// ([`crate::internal::backfill_one`]); a stated size gathers unlike the unstated
 /// default whatever its value, with no cap and no merge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatisticsSizing {

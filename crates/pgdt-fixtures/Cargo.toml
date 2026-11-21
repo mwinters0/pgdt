@@ -8,13 +8,14 @@ publish.workspace = true
 # A member only tests depend on, each as a dev-dependency: the fixture
 # vocabulary every crate's tests speak (`docs/design/decisions.md`, "D68").
 # It depends on no member, so the tests of any crate reach it with the graph
-# one-way, but behind `mapping`, which a sweep's request builders and a
-# fixture mapped beside its cache need: the mapping pass and the crates its
-# call takes. Feature unification turns `mapping` on for pgdt-codec's and
+# one-way, but behind `mapping`, which a sweep's request builders, a
+# fixture mapped beside its cache and the eager pass need: the mapping pass
+# and the crates its calls take. Feature unification turns `mapping` on for pgdt-codec's and
 # pgdt-mapping's own unit tests too, linking a second copy of their crate whose
 # types are not the test's; nothing passes one across today.
 [features]
 mapping = [
+    "dep:pgdt-core",
     "dep:pgdt-mapping",
     "dep:pgdt-dump",
     "dep:pgdt-io",
@@ -23,6 +24,7 @@ mapping = [
 ]
 
 [dependencies]
+pgdt-core = { path = "../pgdt-core", optional = true }
 pgdt-dump = { path = "../pgdt-dump", optional = true }
 # `test-support` for an arrangement at a budget a test states (`arranged_as`).
 pgdt-io = { path = "../pgdt-io", optional = true, features = ["test-support"] }

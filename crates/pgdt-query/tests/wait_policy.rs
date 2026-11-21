@@ -28,9 +28,10 @@ use bytes::Bytes;
 use futures::StreamExt;
 use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{ReadOptions, ScanOptions};
+use pgdt_fixtures::build_index;
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism, WaitPolicy};
+use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
-use pgdt_mapping::{build_index, map_file};
 
 mod common;
 use common::{Cold, edge_cases};

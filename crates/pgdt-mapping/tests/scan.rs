@@ -12,9 +12,10 @@ use pgdt_core::{escape_field, split_fields, unescape_field};
 use pgdt_dump::cache::CacheMode;
 use pgdt_dump::internal::with_line_bound;
 use pgdt_dump::{Event, ReadOptions, ScanOptions, scan};
+use pgdt_fixtures::build_index;
 use pgdt_io::LocalFileSource;
+use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
-use pgdt_mapping::{build_index, map_file};
 
 use pgdt_fixtures::{edge_cases, edge_cases_fixture, objects_fixture, types_fixture};
 use pgdt_model::PostgresInvalidValues;

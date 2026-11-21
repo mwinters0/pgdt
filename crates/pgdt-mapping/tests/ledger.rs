@@ -316,7 +316,7 @@ async fn a_back_fill_parking_its_readers_checks_every_block() {
             let table = format!("{version}: {}", block.header.table);
             assert!(!block.record.checked_in_full, "{table}");
             let request = &StatisticsRequest::DATA;
-            let filled = pgdt_mapping::backfill_block(
+            let filled = pgdt_fixtures::backfill_block(
                 source.as_ref(),
                 read,
                 &arrangement,

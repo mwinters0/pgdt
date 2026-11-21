@@ -243,7 +243,7 @@ pub enum SpanBody {
     /// into its owning entry's span (`pgdt_dump::map`'s module docs, "no grouping").
     Unparsed,
     /// Bytes no scan has walked yet — always a single trailing span
-    /// (`docs/design/decisions.md`, "D30"). Never produced by `pgdt_mapping::build_map`,
+    /// (`docs/design/decisions.md`, "D30"). Never produced by `pgdt_fixtures::build_map`,
     /// which always scans to EOF; an incremental scan is what emits one.
     Unscanned,
 }

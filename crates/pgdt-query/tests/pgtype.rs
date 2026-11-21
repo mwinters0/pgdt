@@ -15,8 +15,8 @@ use pgdt_codec::UnrepresentableMode;
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{ColumnResolution, SchemaMode, resolve_columns};
 use pgdt_dump::ScanOptions;
+use pgdt_fixtures::build_index;
 use pgdt_io::LocalFileSource;
-use pgdt_mapping::build_index;
 use pgdt_model::{DumpMetadata, TableName};
 use pgdt_query::QueryOptions;
 

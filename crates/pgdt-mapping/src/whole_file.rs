@@ -1,26 +1,20 @@
 //! A whole file's map: [`map_file`], resumed from what a cache holds and
-//! back-filled where its blocks lack what was asked, and the eager
-//! [`build_index`] and [`build_map`] it is held to.
+//! back-filled where its blocks lack what was asked.
 
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use pgdt_codec::internal::counter_for;
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::statistics_loaded;
-use pgdt_core::{CopyHeader, Error, Result};
+use pgdt_core::{Error, Result};
 use pgdt_dump::attach_text;
 use pgdt_dump::cache::{CacheMode, Held, Opened, SourceWatch};
 use pgdt_dump::dump_metadata_from_spans;
-use pgdt_dump::internal::Builder;
-use pgdt_dump::internal::{derived_diagnostics, finish_block, scan_preamble};
-use pgdt_dump::{Event, ReadOptions, ScanOptions, scan as scan_events};
+use pgdt_dump::internal::{derived_diagnostics, scan_preamble};
+use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{Arrangement, ByteRangeSource, Extent};
-use pgdt_model::internal::{IgnoredRefusalsExt, Recorder};
-use pgdt_model::{
-    BlockId, BlockRecord, Diagnostic, DumpIndex, DumpMetadata, PostgresInvalidValues, Span,
-    timescaledb,
-};
+use pgdt_model::internal::IgnoredRefusalsExt;
+use pgdt_model::{BlockId, Diagnostic, DumpIndex, PostgresInvalidValues};
 use tokio_util::sync::CancellationToken;
 
 use crate::backfill::{
@@ -31,115 +25,6 @@ use crate::forward::{MapStop, cancelled_read, map_forward, splice};
 use crate::open::Pass;
 use crate::statistics::account::{StatisticsAccount, StatisticsHeld, Term};
 use crate::statistics::request::StatisticsRequest;
-
-/// Scan `source` end to end and build its full file map, every block
-/// censused and counted and none gathering statistics — the eager, serial
-/// pass the incremental one ([`map_file`]) is held to. One pass:
-/// [`pgdt_dump::internal::Builder`] is fed the whole [`Event`] stream, and
-/// `DumpIndex::metadata` is [`dump_metadata_from_spans`] over the result and
-/// [`DumpIndex::blocks`] a filter over it (`docs/design/decisions.md`,
-/// "D34"). It reads with `options`, and nothing stops it from outside
-/// ([`pgdt_dump::scan`]).
-///
-/// **Here rather than beside the index**, which is dump's: counting a block's
-/// values resolves its columns' declared types, so the pass states each
-/// database's DDL at its first `COPY` block as [`map_forward`] does
-/// (`docs/design/decisions.md`, "D96").
-pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<DumpIndex> {
-    let (builder, size) = eager_pass(source, options).await?;
-    let roles = builder.roles().clone();
-    let tablespaces = builder.tablespaces().clone();
-    let mut spans = builder.finish(size);
-    let metadata = Some(Arc::new(dump_metadata_from_spans(&spans)));
-    attach_text(source, &mut spans).await?;
-    let mut index = DumpIndex {
-        spans,
-        scanned_through: size,
-        metadata,
-        roles,
-        tablespaces,
-        diagnostics: Vec::new(),
-    };
-    index.diagnostics = derived_diagnostics(&index, size, source.compression_index().as_ref());
-    Ok(index)
-}
-
-/// Scan `source` end to end and build its full file map as a span list —
-/// [`build_index`]'s spans, alone. Always scans to EOF, so
-/// [`SpanBody::Unscanned`] never appears in the result.
-pub async fn build_map(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<Vec<Span>> {
-    let (builder, end) = eager_pass(source, options).await?;
-    let mut spans = builder.finish(end);
-    attach_text(source, &mut spans).await?;
-    Ok(spans)
-}
-
-/// [`build_index`] and [`build_map`]'s one scan: every event to one builder,
-/// each block counted against the DDL above it, restated once per database,
-/// and the end of the file it reached.
-async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<(Builder, u64)> {
-    let mut builder = Builder::new();
-    // What stopped the scan, a block's close failing it. None can: this pass
-    // gathers no statistics, so no block meets a refused field.
-    let mut failed: Option<Error> = None;
-    // The database the metadata in hand was stated for, and that metadata.
-    let mut stated: Option<(Option<String>, DumpMetadata)> = None;
-    // The open `COPY` block's header and what records its rows.
-    let mut open: Option<(CopyHeader, Recorder)> = None;
-    let reached = scan_events(source, options, |event| {
-        match event {
-            Event::CopyStart(start) => {
-                let boundary = builder.pending_comment_start().unwrap_or(start.header_offset);
-                let header = start.header.clone();
-                let data_offset = start.data_offset;
-                builder.on_copy_start(*start);
-                let db = builder.database().map(str::to_owned);
-                if stated.as_ref().is_none_or(|(covers, _)| *covers != db) {
-                    let metadata = dump_metadata_from_spans(&builder.snapshot(boundary));
-                    stated = Some((db.clone(), metadata));
-                }
-                let metadata = stated.as_ref().map(|(_, metadata)| metadata);
-                let counter = counter_for(&header, metadata, db.as_deref());
-                let mut recorder =
-                    Recorder::new(data_offset).with_census(header.columns.len(), counter);
-                if timescaledb::records_rows(&header) {
-                    recorder = recorder.with_rows();
-                }
-                open = Some((header, recorder));
-            }
-            Event::Row(row) => {
-                if let Some((_, recorder)) = &mut open {
-                    recorder.row(row.offset, row.raw);
-                }
-            }
-            // `scan` streams no row.
-            Event::StreamedRow(_) => unreachable!("an eager pass streams no row"),
-            Event::CopyEnd(end) => {
-                let record = match open.take() {
-                    Some((header, recorder)) => finish_block(recorder, &header, &end),
-                    None => Ok(BlockRecord::default()),
-                };
-                match record {
-                    Ok(record) => builder.on_copy_end(*end, record),
-                    Err(e) => {
-                        failed = Some(e);
-                        return std::ops::ControlFlow::Break(());
-                    }
-                }
-            }
-            Event::Line(line) => builder.feed_line(line.offset, line.raw),
-            Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),
-            Event::LargeObjectStart(start) => builder.on_large_object_start(start.start_offset),
-            Event::LargeObjectEnd(end) => builder.on_large_object_end(end.end_offset),
-        }
-        std::ops::ControlFlow::Continue(())
-    })
-    .await?;
-    match failed {
-        Some(e) => Err(e),
-        None => Ok((builder, reached.expect("only a failed block stops this scan short"))),
-    }
-}
 
 /// What one [`map_file`] run did, and **what a dump read through its map is
 /// built from**: the source and the watch the open took, handed back beside
@@ -175,7 +60,7 @@ pub struct MapRun {
     /// apart from a stop inside the back-fill.
     pub interrupted: bool,
     /// How many blocks the scan had already mapped lacked the statistics this
-    /// run asked for ([`backfill_block`](crate::backfill_block)) — zero for a run
+    /// run asked for ([`backfill_one`](crate::internal::backfill_one)) — zero for a run
     /// interrupted before its map reached EOF, which is where the count is
     /// taken.
     pub lacking_statistics: usize,
@@ -270,8 +155,8 @@ impl Mapped {
 /// believed, and saves go to the open's mode; the source and the watch come
 /// back in the [`MapRun`], beside the map built over them. This is
 /// [`map_forward`] with no stop target, plus the three whole-file facts that
-/// only a scan reaching EOF may state; `pgdt_mapping::build_index` stays the
-/// eager, cache-blind producer. Rejected: teaching *it* to resume, which
+/// only a scan reaching EOF may state; `pgdt_fixtures::build_index` stays the
+/// eager, cache-blind producer it is held to. Rejected: teaching *it* to resume, which
 /// duplicates the splice-onto-a-prefix logic here.
 ///
 /// **It opens with the bounded preamble prepass** `pgdt_query::Table::settle` runs, under
@@ -285,9 +170,9 @@ impl Mapped {
 /// and of a metadata-level table no census — and then
 /// **re-reads every block that lacks it** — one the cache already held,
 /// a metadata-level one among them, or one this run gathered too coarsely for
-/// a stated maximum ([`backfill_block`](crate::backfill_block)) — never replacing what a
+/// a stated maximum ([`backfill_one`](crate::internal::backfill_one)) — never replacing what a
 /// block holds with less, one at a time in file order through the
-/// same per-block step [`backfill_block`](crate::backfill_block) takes, saving as it
+/// same per-block step [`backfill_one`](crate::internal::backfill_one) takes, saving as it
 /// goes and charging the run's own account. The back-fill runs once the
 /// map has reached EOF, so each block resolves against whole-file metadata,
 /// and a run interrupted inside it resumes into it, the blocks still lacking

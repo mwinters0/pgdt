@@ -20,8 +20,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use pgdt_dump::{ScanOptions, cache};
+use pgdt_fixtures::build_index;
 use pgdt_io::{ByteRangeSource, CompressedFileSource, LocalFileSource};
-use pgdt_mapping::build_index;
 use pgdt_model::{BlockStatistics, DumpIndex, Span, SpanBody};
 
 mod common;

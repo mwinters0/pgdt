@@ -3780,6 +3780,7 @@ dependencies = [
 name = "pgdt-fixtures"
 version = "0.4.0"
 dependencies = [
+ "pgdt-core",
  "pgdt-dump",
  "pgdt-io",
  "pgdt-mapping",

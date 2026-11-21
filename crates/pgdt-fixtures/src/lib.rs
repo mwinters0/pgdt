@@ -10,12 +10,14 @@
 //! no member but behind `mapping`, so every crate's tests reach it with the
 //! graph one-way (`docs/design/decisions.md`, "D68").
 //!
-//! Everything here is a *path* or an *expectation*, but for three calls into
-//! the library, behind `mapping`: a fixture copied out of the tree and mapped
+//! Everything here is a *path* or an *expectation*, but for the calls into
+//! the library behind `mapping`: a fixture copied out of the tree and mapped
 //! beside its cache, which every test reading a map starts from and which
 //! differs per test only in the request it states, that cache with its
-//! statistics stripped, and the arrangement a mapping pass stating a worker
-//! count and no allowance reads under. Anything else that drives
+//! statistics stripped, the arrangement a mapping pass stating a worker
+//! count and no allowance reads under, and the eager pass the mapping pass
+//! is held to — a whole file mapped serially, and one block back-filled
+//! outside any pass. Anything else that drives
 //! the library — a `collect`, a `drain`, a `census_of` — stays in the file
 //! whose subject it is: those differ per test file in ways that matter, and
 //! merging them here would be the second mistake this crate exists to undo.
@@ -144,9 +146,13 @@ pub fn all_fixtures() -> Vec<PathBuf> {
 
 mod answers;
 #[cfg(feature = "mapping")]
+mod eager;
+#[cfg(feature = "mapping")]
 mod parsed;
 mod refused;
 pub use answers::{Answer, Answers, Reading, answers, answers_path};
+#[cfg(feature = "mapping")]
+pub use eager::{backfill_block, build_index, build_map};
 #[cfg(feature = "mapping")]
 pub use parsed::{arranged, arranged_as, floored, parsed_copy, ungathered};
 pub use refused::{REFUSED_FIELDS, RefusedField, refused_field};

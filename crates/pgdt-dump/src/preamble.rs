@@ -100,7 +100,7 @@ pub async fn scan_preamble(
 /// persisting the result when the cache is enabled (a no-op when it isn't —
 /// see [`CacheMode::save`]). Bounded to the file's first `COPY` block
 /// regardless of dump size (I1) — a dump holding none, `--inserts`', is read
-/// to its end — independent of `build_index`'s full
+/// to its end — independent of `pgdt_fixtures::build_index`'s full
 /// structural scan.
 ///
 /// **It reads the cache `opened` decoded** ([`CacheMode::open`]), whose
@@ -109,7 +109,7 @@ pub async fn scan_preamble(
 ///
 /// A fresh scan's spans are persisted alongside the metadata, with a
 /// trailing [`SpanBody::Unscanned`] span covering the rest of the file where
-/// its end is known — a genuinely partial scan, unlike `build_index`, which
+/// its end is known — a genuinely partial scan, unlike `pgdt_fixtures::build_index`, which
 /// always reaches EOF (`docs/design/decisions.md`, "D30").
 ///
 /// Also returns whatever the open reported on the loaded index (e.g. a

@@ -22,8 +22,8 @@ use futures::StreamExt;
 use pgdt_dump::cache::{CacheMode, CacheStatus};
 use pgdt_dump::internal::load;
 use pgdt_dump::{ReadOptions, ScanOptions};
+use pgdt_fixtures::build_index;
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
-use pgdt_mapping::build_index;
 use pgdt_model::{BlockCensus, DumpIndex};
 use pgdt_query::{QueryOptions, ScanExtent};
 

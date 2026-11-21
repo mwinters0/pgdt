@@ -19,8 +19,8 @@ use std::path::{Path, PathBuf};
 
 use pgdt_dump::cache::OVERWRITE_WAYS_OUT;
 use pgdt_dump::{ScanOptions, cache};
+use pgdt_fixtures::build_index;
 use pgdt_io::LocalFileSource;
-use pgdt_mapping::build_index;
 use pgdt_model::CACHE_FORMAT_VERSION;
 use pgdt_model::{DumpIndex, DumpMetadata, Span, SpanBody};
 

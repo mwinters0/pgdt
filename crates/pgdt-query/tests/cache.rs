@@ -13,11 +13,12 @@ use pgdt_dump::cache::{
     WeakIdentity,
 };
 use pgdt_dump::{ScanOptions, cache, check_tiling, preamble_only};
+use pgdt_fixtures::build_index;
 use pgdt_io::{
     ByteRangeSource, CompressedFileSource, CompressionIndex, LocalFileSource, Origin, Parallelism,
 };
+use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
-use pgdt_mapping::{build_index, map_file};
 use pgdt_model::CACHE_FORMAT_VERSION;
 use pgdt_model::DiagnosticKind;
 use pgdt_model::SpanBody;

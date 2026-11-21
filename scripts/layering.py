@@ -94,8 +94,9 @@ EMBEDDERS = ("datafusion-pgdump", "datafusion-cli-pgdump", "pgdt")
 #: `count-instructions` and `gzip-inflate` are the harness's. `pgdt-fixtures`
 #: is the tests' vocabulary, which no row lists, so only a dev-dependency
 #: reaches it; its edges, behind its
-#: `mapping` feature, are for a sweep's request builders and a fixture mapped
-#: beside its cache, which takes the mapping pass and what its call names.
+#: `mapping` feature, are for a sweep's request builders, a fixture mapped
+#: beside its cache and the eager pass, which take the mapping pass and what
+#: its calls name.
 GRAPH: dict[str, tuple[str, ...]] = {
     "pgdt-core": (),
     "pgdt-model": ("pgdt-core",),
@@ -119,7 +120,7 @@ GRAPH: dict[str, tuple[str, ...]] = {
     "peak-rss": (),
     "count-instructions": (),
     "gzip-inflate": (),
-    "pgdt-fixtures": ("pgdt-model", "pgdt-io", "pgdt-dump", "pgdt-mapping"),
+    "pgdt-fixtures": ("pgdt-core", "pgdt-model", "pgdt-io", "pgdt-dump", "pgdt-mapping"),
 }
 
 #: Each library's API namespaces: the public modules an embedder names. Any

@@ -14,9 +14,10 @@ use std::sync::Arc;
 
 use pgdt_dump::cache::{self, CacheMode, Held};
 use pgdt_dump::{ReadOptions, ScanOptions};
+use pgdt_fixtures::build_index;
 use pgdt_io::{Allowance, Arrangement, ArrangementRequest, ByteRangeSource, Jobs, LocalFileSource};
+use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
-use pgdt_mapping::{build_index, map_file};
 use pgdt_model::timescaledb::{Era, Recipe, Release, Resolution, Resolved, TimescaleDb, Version};
 use pgdt_model::{DatabaseMetadata, DiagnosticKind, DumpIndex, PostgresInvalidValues};
 use tokio_util::sync::CancellationToken;

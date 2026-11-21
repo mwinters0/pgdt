@@ -212,7 +212,7 @@ async fn a_replay_holds_no_block_s_statistics() {
     let source = LocalFileSource::open(two_blocks(dir.path())).unwrap();
     let query_options = QueryOptions::default();
     let parallelism = Parallelism::workers(4, pgdt_io::DEFAULT_MEMORY_BUDGET);
-    let index = pgdt_mapping::build_index(&source, &ScanOptions::default()).await.unwrap();
+    let index = pgdt_fixtures::build_index(&source, &ScanOptions::default()).await.unwrap();
     let mut matches: Vec<CopyBlock> = index.blocks().cloned().collect();
     assert_eq!(matches.len(), 2);
     for block in &mut matches {

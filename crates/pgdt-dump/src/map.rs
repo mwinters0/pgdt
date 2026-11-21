@@ -46,8 +46,8 @@
 //! - **Boundaries and classification.** [`Builder`] is the state machine,
 //!   driven directly by [`crate::preamble::scan_preamble`] and
 //!   `pgdt_mapping`'s mapping passes, fed the same [`crate::scan::Event`]
-//!   stream those already walk. `pgdt_mapping::build_map` is a thin wrapper for
-//!   callers that just want a span list.
+//!   stream those already walk. `pgdt_fixtures::build_map` is a thin wrapper for
+//!   tests that just want a span list.
 //!
 //!   A [`Builder`] that starts partway through a file opens its first span at
 //!   its own first recognized content, **not** at the byte it began reading;
@@ -191,8 +191,8 @@ enum Mode {
 }
 
 /// The statement-driven boundary/classification pass, shared by
-/// `pgdt_mapping::build_map` (a standalone, always-to-EOF scan) and
-/// `pgdt_mapping::build_index`/[`crate::preamble::scan_preamble`], which drive
+/// `pgdt_fixtures::build_map` (a standalone, always-to-EOF scan) and
+/// `pgdt_fixtures::build_index`/[`crate::preamble::scan_preamble`], which drive
 /// it directly off the events [`crate::scan::scan`] already walks
 /// (`docs/design/decisions.md`, "D34").
 pub struct Builder {
