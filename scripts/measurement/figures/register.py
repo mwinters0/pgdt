@@ -179,28 +179,6 @@ ALLOCATOR_SHARES: tuple[runspec.Shared, ...] = tuple(
 #: measures it here and says so in the table's own provenance paragraph.
 _RESERVE_BASELINE = runspec.RunSpec("pgdt", "control", "parse-rss", "warm", "plain, serial default")
 
-#: `gzip-resident`'s three legs: the registered input, what the table calls
-#: it, and which charge its `parse` runs under.
-#:
-#: **Two charges, because a gzip `parse` runs under two.** A single
-#: member's first `parse` is its first pass, charged per worker with no pool
-#: (`gzip_first_pass_charge`); a BGZF file is walked at open, so its first
-#: `parse` block-decodes as an `.xz` file's does (`gzip_block_charge`). Those
-#: two are compressions of `control` at `pg_dump`'s level, so neither's
-#: plaintext or zlib differs from the other's.
-#:
-#: **The third is the first pass's falsifier**: a member whose chunks reach
-#: the speculation limit (`repeated_gz`), the only file filling the plaintext
-#: terms most of a task's charge is (`gzip_task_bytes`) on every chunk, so the
-#: only one on which each added worker can hold more than it was charged
-#: (`docs/design/decisions.md`, "D124"). The same zlib, level
-#: and length of plaintext as `control_gz`, packed tighter.
-GZIP_RSS_LEGS: tuple[tuple[str, str, str], ...] = (
-    ("control_gz", "single member, first pass", "pass"),
-    ("repeated_gz", "single member at the limit, first pass", "pass"),
-    ("control_bgzf", "BGZF, block path", "block"),
-)
-
 #: The read path a gzip `parse` adds to `READ`: the deflate adapter, its first
 #: pass and walk, and the crate beneath them. Kept apart from `READ` so a
 #: change here leaves the `.xz` and plain figures current.
@@ -970,6 +948,7 @@ FIGURES: list[declaration.Figure] = [
     # map and the cache, where a per-block cost would read as remainder.
     declaration.Figure(
         id="gzip-resident",
+        stand_in=stand_ins.gzip_resident,
         section="What a gzip scan holds against its charge",
         stage="warm-parallel",
         depends=declaration._declare(
@@ -988,7 +967,7 @@ FIGURES: list[declaration.Figure] = [
             # select (`GATE_LEG`).
             "crates/pgdt/Cargo.toml",
         ),
-        warm_inputs=tuple(leg for leg, _, _ in GZIP_RSS_LEGS),
+        warm_inputs=tuple(leg for leg, _, _ in shapes.GZIP_RSS_LEGS),
         memory=shapes.GZPASS_MEMORY,
     ),
     # A gzip first pass's wall clock against the worker count, over four

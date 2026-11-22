@@ -1,7 +1,8 @@
 """What each figure family's legs report in a dry run (`Figure.stand_in`): a stand-in a renderer can
 read, so a dry run reaches every division and refusal a table performs. Each is plausible and
 never the library's arithmetic, so nothing here grows into a second authority on what a run
-resolves; a leg outside the family a function names reports nothing."""
+resolves; where a table holds a report to the harness's own mirror of it, the stand-in reports
+the mirror's answer. A leg outside the family a function names reports nothing."""
 
 from __future__ import annotations
 
@@ -9,6 +10,7 @@ import hashlib
 from typing import TYPE_CHECKING
 
 from measurement import config
+from measurement import gzip_charge
 from measurement import inputs
 from measurement import shapes
 from measurement.figures.declaration import StandIn
@@ -109,6 +111,28 @@ def gzip_first_pass(spec: RunSpec, digest: bytes) -> StandIn:
         }
     )
 
+
+def gzip_resident(spec: RunSpec, digest: bytes) -> StandIn:
+    """A resolution and its bill: the resident table refuses a leg whose run
+    resolved another count or billed other than the mirror charges
+    (`gzip_charge.gzip_leg_charge`), a first-pass leg that opened no first
+    pass, and a block-path leg that did. Billed over the leg's nominal size,
+    which a first pass's charge reads only for whether it is past one chunk."""
+    if not spec.command.startswith(shapes.GZRSS_FAMILY):
+        return NOTHING
+    kind = {leg: kind for leg, _, kind in shapes.GZIP_RSS_LEGS}[spec.input]
+    jobs = spec.command.removeprefix(shapes.GZRSS_FAMILY)
+    nominal = inputs.INPUTS[spec.input].nominal_bytes
+    if nominal is None:
+        raise ValueError(f"{spec.input} declares no nominal size to bill a dry run over")
+    billed, _ = gzip_charge.gzip_leg_charge(kind, int(jobs), nominal)
+    return StandIn(
+        {
+            "resolved_jobs": jobs,
+            "resolved_budget": str(billed),
+            **({"first_pass_workers": jobs} if kind == "pass" else {}),
+        }
+    )
 
 def long_line(spec: RunSpec, digest: bytes) -> StandIn:
     """An answer or a resolution: the figure refuses a query or filter leg

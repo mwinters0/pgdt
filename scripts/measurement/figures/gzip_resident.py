@@ -14,14 +14,13 @@ from measurement import runspec
 from measurement import shapes
 from measurement import staging
 from measurement.figures import gate_table
-from measurement.figures import register
 
 if TYPE_CHECKING:
     from measurement.timing import Session
 
 
 #: The limit leg, the first pass's falsifier, by name.
-GZIP_LIMIT_LEG = register.GZIP_RSS_LEGS[1][0]
+GZIP_LIMIT_LEG = shapes.GZIP_RSS_LEGS[1][0]
 
 #: How far past the speculation limit's ratio the limit leg's member must
 #: pack, plaintext over compressed bytes, before a sitting reads it
@@ -53,21 +52,9 @@ def gzip_limit_ratio_problem(plaintext: int, packed: int) -> str | None:
 def _gzip_rss_specs() -> list[runspec.RunSpec]:
     return [
         runspec.RunSpec("pgdt", leg, f"{shapes.GZRSS_FAMILY}{jobs}", "warm-parallel", f"{label}, {jobs}j")
-        for leg, label, _ in register.GZIP_RSS_LEGS
+        for leg, label, _ in shapes.GZIP_RSS_LEGS
         for jobs in shapes.GZIP_RSS_JOBS
     ]
-
-
-def gzip_leg_charge(kind: str, jobs: int, stored_size: int) -> tuple[int, int]:
-    """`(billed, pool)` for one `gzip-resident` leg: what the rule charges
-    `jobs` workers under the leg's charge, and the part of it a retention list
-    holds."""
-    if kind == "pass":
-        return gzip_charge.gzip_first_pass_charge(jobs, stored_size), 0
-    if kind == "block":
-        unit = gzip_charge.bgzf_unit()
-        return gzip_charge.gzip_block_charge(unit, jobs), memory_model.pool_bytes(unit, jobs)
-    raise ValueError(f"no gzip charge named {kind!r}")
 
 
 def run_gzip_resident(session: Session) -> str:
@@ -107,7 +94,9 @@ def run_gzip_resident(session: Session) -> str:
     from the library refuses the figure rather than reading a remainder off a
     stale bill. A first-pass leg must say it opened a first pass, and a BGZF
     leg must not — a BGZF file read by a first pass is a walk that did not run.
-    A `--dry-run` writes no such line, so it cannot rehearse this figure.
+    A `--dry-run` writes no such line, so its stand-in reports the mirror's own
+    bill (`stand_ins.gzip_resident`): it rehearses every division, the check
+    against the library's bill excepted.
 
     **Three reps**, as `parallel-peak-rss` takes: a peak is a maximum, steady
     across reps, and the reps are there to catch an outlier.
@@ -128,11 +117,11 @@ def run_gzip_resident(session: Session) -> str:
     session.build_before_sweep(to_sweep)
     session.sweep(figure, to_sweep, session.cfg.reps(3))
 
-    kinds = {leg: kind for leg, _, kind in register.GZIP_RSS_LEGS}
-    labels = {leg: label for leg, label, _ in register.GZIP_RSS_LEGS}
+    kinds = {leg: kind for leg, _, kind in shapes.GZIP_RSS_LEGS}
+    labels = {leg: label for leg, label, _ in shapes.GZIP_RSS_LEGS}
     stored = {
         leg: staging.file_size(session.cfg, session.input_path(leg, "warm-parallel"), leg)
-        for leg, _, _ in register.GZIP_RSS_LEGS
+        for leg, _, _ in shapes.GZIP_RSS_LEGS
     }
     by_leg: dict[str, dict[int, list[float]]] = {}
     held_worst: dict[tuple[str, int], float] = {}
@@ -144,7 +133,7 @@ def run_gzip_resident(session: Session) -> str:
         readings = session.get_rss(figure, spec)
         by_leg.setdefault(spec.input, {})[jobs] = readings
         held_worst[(spec.input, jobs)] = max(readings) * 1024
-        billed, pool = gzip_leg_charge(kinds[spec.input], jobs, stored[spec.input])
+        billed, pool = gzip_charge.gzip_leg_charge(kinds[spec.input], jobs, stored[spec.input])
         bills[(spec.input, jobs)] = (billed, pool)
         report = session.reported.get(spec.key(figure), {})
         if report.get("resolved_jobs") != str(jobs):
@@ -171,7 +160,7 @@ def run_gzip_resident(session: Session) -> str:
     rows = []
     for jobs in shapes.GZIP_RSS_JOBS:
         cells = [str(jobs) + (" *(serial)*" if jobs == shapes.PARALLEL_BASELINE else "")]
-        for leg, _, _ in register.GZIP_RSS_LEGS:
+        for leg, _, _ in shapes.GZIP_RSS_LEGS:
             values = by_leg[leg][jobs]
             delta = formatting.median(values) - formatting.median(by_leg[leg][shapes.GZIP_RSS_JOBS[0]])
             cells.append(
@@ -179,10 +168,10 @@ def run_gzip_resident(session: Session) -> str:
                 + ("" if jobs == shapes.GZIP_RSS_JOBS[0] else f" · {formatting.fmt_rss_delta(delta)}")
             )
         rows.append(cells)
-    table = formatting.md_table(["`--jobs`", *(label for _, label, _ in register.GZIP_RSS_LEGS)], rows)
+    table = formatting.md_table(["`--jobs`", *(label for _, label, _ in shapes.GZIP_RSS_LEGS)], rows)
 
     model_rows, model_faults, model_unnamed = [], [], []
-    for leg, label, kind in register.GZIP_RSS_LEGS:
+    for leg, label, kind in shapes.GZIP_RSS_LEGS:
         for jobs in shapes.GZIP_RSS_JOBS:
             billed, pool = bills[(leg, jobs)]
             held = held_worst[(leg, jobs)]
@@ -223,7 +212,7 @@ def run_gzip_resident(session: Session) -> str:
 
     low, high = shapes.GZIP_RSS_JOBS[-2], shapes.GZIP_RSS_JOBS[-1]
     secants = []
-    for leg, label, kind in register.GZIP_RSS_LEGS:
+    for leg, label, kind in shapes.GZIP_RSS_LEGS:
         added = high - low
         held_each = (held_worst[(leg, high)] - held_worst[(leg, low)]) / added
         billed_each = (bills[(leg, high)][0] - bills[(leg, low)][0]) / added
@@ -254,7 +243,7 @@ def run_gzip_resident(session: Session) -> str:
             if leg == limit_leg
             else ""
         )
-        for leg, label, _ in register.GZIP_RSS_LEGS
+        for leg, label, _ in shapes.GZIP_RSS_LEGS
     )
     return (
         table

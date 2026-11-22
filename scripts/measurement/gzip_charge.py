@@ -1,5 +1,6 @@
-"""The gzip first pass's own charge terms: what a pass, a speculative decode and a task hold
-resident, from the decoder's and the library's constants."""
+"""gzip's charge terms: what a first pass, a speculative decode, a task and a block-decoding reader
+hold resident, from the decoder's and the library's constants, and what a `gzip-resident` leg is
+billed under them."""
 
 from __future__ import annotations
 
@@ -185,3 +186,15 @@ def bgzf_unit() -> int:
     many units, and the last is smaller, so it is the file's largest unit."""
     members = -(-LIBRARY_GZIP_SPACING // BGZF_BLOCK)
     return members * BGZF_BLOCK
+
+
+def gzip_leg_charge(kind: str, jobs: int, stored_size: int) -> tuple[int, int]:
+    """`(billed, pool)` for one `gzip-resident` leg of `kind`
+    (`shapes.GZIP_RSS_LEGS`): what the rule charges `jobs` workers under the
+    leg's charge, and the part of it a retention list holds."""
+    if kind == "pass":
+        return gzip_first_pass_charge(jobs, stored_size), 0
+    if kind == "block":
+        unit = bgzf_unit()
+        return gzip_block_charge(unit, jobs), memory_model.pool_bytes(unit, jobs)
+    raise ValueError(f"no gzip charge named {kind!r}")

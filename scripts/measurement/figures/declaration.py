@@ -114,7 +114,8 @@ class Figure:
     #: What a dry run of a leg reports in place of the run's own report, given
     #: the spec and the rep's pseudo-random bytes (`figures.stand_ins`): a
     #: renderer refusing a leg whose report it cannot read, a dry run must
-    #: reach every division it performs. `None` reports nothing.
+    #: reach every division it performs, as `test_stand_ins` holds every
+    #: selectable figure's to. `None` reports nothing.
     stand_in: Callable[[RunSpec, bytes], StandIn] | None = None
     #: The cache this figure's legs read built ahead of the sweep, where a
     #: cold leg cannot build it in its own timed container.

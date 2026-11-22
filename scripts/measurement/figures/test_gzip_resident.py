@@ -100,7 +100,7 @@ class GzipResident(unittest.TestCase):
         self.assertEqual(spec.generator, "generate_repeated_rows.py")
         self.assertEqual(spec.args, ("--from-dump", "@SOURCE@"))
         self.assertEqual(inputs.input_file("repeated_gz"), "repeated_gz.gz")
-        kinds = {leg: kind for leg, _, kind in register.GZIP_RSS_LEGS}
+        kinds = {leg: kind for leg, _, kind in shapes.GZIP_RSS_LEGS}
         self.assertEqual(kinds["repeated_gz"], "pass")
 
     def test_the_limit_leg_must_pack_past_the_limits_ratio_with_room(self):
@@ -154,7 +154,7 @@ class GzipResident(unittest.TestCase):
 
     def test_every_leg_is_parallel_peak_rss_s_shape_over_gzip(self):
         specs = gzip_resident._gzip_rss_specs()
-        self.assertEqual(len(specs), len(register.GZIP_RSS_LEGS) * len(shapes.GZIP_RSS_JOBS))
+        self.assertEqual(len(specs), len(shapes.GZIP_RSS_LEGS) * len(shapes.GZIP_RSS_JOBS))
         self.assertEqual({s.input for s in specs}, {"control_gz", "repeated_gz", "control_bgzf"})
         self.assertEqual({s.regime for s in specs}, {"warm-parallel"})
         self.assertEqual({s.binary for s in specs}, {"pgdt"})
@@ -288,10 +288,10 @@ class GzipResident(unittest.TestCase):
 
     def test_the_charges_are_the_bills_a_run_stated(self):
         sizes = self.SIZES
-        kinds = {leg: kind for leg, _, kind in register.GZIP_RSS_LEGS}
+        kinds = {leg: kind for leg, _, kind in shapes.GZIP_RSS_LEGS}
         for (leg, jobs), stated in self.STATED_BILLS.items():
             with self.subTest(leg=leg, jobs=jobs):
-                billed, pool = gzip_resident.gzip_leg_charge(kinds[leg], jobs, sizes[leg])
+                billed, pool = gzip_charge.gzip_leg_charge(kinds[leg], jobs, sizes[leg])
                 self.assertEqual(billed, stated)
                 # A first pass retains no block, so it bills no pool; the BGZF
                 # leg's pool is `pool_bytes` over its unit, at every count.
@@ -316,7 +316,7 @@ class GzipResident(unittest.TestCase):
 
     def test_an_unknown_charge_is_an_error(self):
         with self.assertRaises(ValueError):
-            gzip_resident.gzip_leg_charge("walk", 1, 1)
+            gzip_charge.gzip_leg_charge("walk", 1, 1)
 
     def test_the_bands_are_the_xz_checks_own(self):
         # One set of lines for every source: `charge_model_problem` is
@@ -336,14 +336,14 @@ class GzipResident(unittest.TestCase):
         """A sitting whose every cell holds its bill plus `extra` MiB (100 by
         default), each run reporting the bill and count it ran under."""
         sizes = self.SIZES
-        kinds = {leg: kind for leg, _, kind in register.GZIP_RSS_LEGS}
+        kinds = {leg: kind for leg, _, kind in shapes.GZIP_RSS_LEGS}
         rss, reports = {}, {}
         for spec in gzip_resident._gzip_rss_specs():
             jobs = int(spec.command.rpartition("-jobs-")[2])
             key = spec.key(self.FIGURE)
             # The mirror's bill, which `test_the_charges_are_the_bills_a_run_stated`
             # holds to what runs stated.
-            bill, _ = gzip_resident.gzip_leg_charge(kinds[spec.input], jobs, sizes[spec.input])
+            bill, _ = gzip_charge.gzip_leg_charge(kinds[spec.input], jobs, sizes[spec.input])
             held = bill + (extra or {}).get((spec.input, jobs), 100 * config.MIB)
             rss[key] = [held / 1024 - 20, held / 1024 - 10, held / 1024]
             report = {
@@ -377,7 +377,7 @@ class GzipResident(unittest.TestCase):
     def test_cells_inside_the_bound_meet_the_model(self):
         body = self._render(self._raw())
         self.assertIn("The model holds at every cell above", body)
-        labels = tuple(f"| {label}, `--jobs " for _, label, _ in register.GZIP_RSS_LEGS)
+        labels = tuple(f"| {label}, `--jobs " for _, label, _ in shapes.GZIP_RSS_LEGS)
         rows = [ln for ln in body.splitlines() if ln.startswith(labels)]
         self.assertEqual(len(rows), 9)
         for row in rows:
