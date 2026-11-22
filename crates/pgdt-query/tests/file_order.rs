@@ -20,7 +20,10 @@ use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_query::{Dump, QueryOptions, Table, TablePartitions, TableStream};
 
 mod common;
-use common::{Cold, arranged, arranged_as, dump_over, edge_cases, mapped, rows_of, types_fixture};
+use common::{
+    Cold, arranged, arranged_as, dump_over, edge_cases, edge_cases_fixture, mapped, rows_of,
+    types_fixture,
+};
 
 type Rows = Vec<Vec<Option<String>>>;
 
@@ -144,6 +147,33 @@ async fn resume_refuses_a_partitions_token_and_another_querys() {
     whole.next().await.unwrap().unwrap();
     let refused = plan.resume(whole.resume_token(), 1).err().unwrap();
     assert!(matches!(refused, Error::ResumeQueryMismatch), "{refused}");
+}
+
+/// **A token is its table's in its database**: `edge_cases/dumpall` holds
+/// `public.widgets` in two databases, so a token one of them produced,
+/// under the same query, is refused by the other's plan as another table's
+/// rather than replaying its segments from the token's offset, and still
+/// resumed by its own.
+#[tokio::test]
+async fn resume_refuses_a_token_from_a_same_named_table_in_another_database() {
+    let source: Arc<dyn ByteRangeSource> =
+        Arc::new(LocalFileSource::open(edge_cases_fixture(16, "dumpall")).unwrap());
+    let dump = mapped(source, &StatisticsRequest::DATA).await;
+    let widgets: Vec<_> =
+        dump.tables().iter().filter(|t| t.qualified_name() == "public.widgets").collect();
+    let databases: Vec<_> = widgets.iter().map(|t| t.database.as_deref()).collect();
+    assert_eq!(databases, [Some("pgdt_fixture"), Some("pgdt_tenant")]);
+    let [first, second] = [widgets[0], widgets[1]].map(|name| {
+        let table = dump.table(&name.clone().into()).unwrap().unwrap();
+        table.plan(ReadOptions::default(), QueryOptions::default(), &arranged(1)).unwrap()
+    });
+
+    let mut stream = first.in_file_order(1);
+    stream.next().await.unwrap().unwrap();
+    let token = stream.resume_token();
+    let refused = second.resume(token.clone(), 1).err().unwrap();
+    assert!(matches!(refused, Error::ResumeQueryMismatch), "{refused}");
+    first.resume(token, 1).unwrap();
 }
 
 /// A source failing every read that touches `ranges`, each with its own

@@ -5,7 +5,7 @@ use super::*;
 use crate::options::QueryOptions;
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::Parallelism;
-use pgdt_model::{BlockAddress, BlockRecord, CopyBlock, Finding, Severity};
+use pgdt_model::{BlockAddress, BlockRecord, CopyBlock, Finding, Severity, TableName};
 use std::sync::Arc;
 
 /// **The count note names a lever a plain source actually has** (`KD32`):
@@ -177,10 +177,11 @@ fn a_segment_resumes_from_the_row_its_pause_left() {
 #[test]
 fn a_partitions_fingerprint_differs_from_the_whole_streams() {
     let options = QueryOptions::default();
-    let whole = query_fingerprint("public.t", &options, None);
-    let first = query_fingerprint("public.t", &options, Some((0, 4)));
-    let second = query_fingerprint("public.t", &options, Some((1, 4)));
-    let of_two = query_fingerprint("public.t", &options, Some((0, 2)));
+    let table = TableName { database: None, schema: Some("public".into()), table: "t".into() };
+    let whole = query_fingerprint(&table, &options, None);
+    let first = query_fingerprint(&table, &options, Some((0, 4)));
+    let second = query_fingerprint(&table, &options, Some((1, 4)));
+    let of_two = query_fingerprint(&table, &options, Some((0, 2)));
     assert_ne!(whole, first);
     assert_ne!(first, second);
     assert_ne!(first, of_two);

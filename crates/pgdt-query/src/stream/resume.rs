@@ -4,7 +4,7 @@
 use pgdt_codec::SchemaMode;
 use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_core::CopyHeader;
-use pgdt_model::BlockId;
+use pgdt_model::{BlockId, TableName};
 
 use crate::options::QueryOptions;
 use crate::predicate::{Expr, PredicateOp};
@@ -47,8 +47,8 @@ impl ResumeToken {
     }
 }
 
-/// A [`ResumeToken`]'s stamp of the query that produced it: the table, the
-/// projection, the filter terms and their semantics, the schema mode, how a
+/// A [`ResumeToken`]'s stamp of the query that produced it: the table in its
+/// database, the projection, the filter terms and their semantics, the schema mode, how a
 /// value its column cannot hold is read, whose rows the table holds and — for a sub-stream of a
 /// partitioned replay — which partition of how many it came out of
 /// (`docs/design/decisions.md`, "D49"). The hasher's output is not stable
@@ -60,20 +60,13 @@ impl ResumeToken {
 /// superset into `Error::ResumeQueryMismatch`
 /// (`docs/design/decisions.md`, "D51").
 pub(super) fn query_fingerprint(
-    table: &str,
+    table: &TableName,
     options: &QueryOptions,
     partition: Option<(usize, usize)>,
 ) -> u64 {
     use std::hash::{Hash, Hasher};
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    // deficiency: KD183 — `table` is `schema.table` alone
-    // (`TableName::qualified_name`), so a token one database's table produced
-    // passes on a table of that name in another `\connect`ed database read
-    // under equal options, and replays that table's segments from the token's
-    // offset where `TablePartitions::resume` means to refuse it as another
-    // table's. Owned out of band; the fix hashes the database beside the
-    // name.
     table.hash(&mut hasher);
     match partition {
         None => 0u8.hash(&mut hasher),

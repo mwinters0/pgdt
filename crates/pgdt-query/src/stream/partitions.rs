@@ -102,7 +102,7 @@ pub struct TablePartitions {
     groups: Arc<Vec<Vec<Segment>>>,
     plan_notes: Vec<PlanNote>,
     orders: Vec<Sortedness>,
-    table: String,
+    table: TableName,
     /// Every matched block's record, which a dynamic filter's read of a
     /// block takes ([`DynamicRead`]): the map's own, shared.
     records: Arc<BTreeMap<BlockId, Arc<BlockRecord>>>,
@@ -179,7 +179,7 @@ impl TablePartitions {
             groups: Arc::new(groups),
             plan_notes,
             orders,
-            table: table.qualified_name(),
+            table: table.clone(),
             records: Arc::new(records),
             matches,
             advice,
