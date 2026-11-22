@@ -29,14 +29,14 @@ resolved to text. A function porting an `*_in` grammar whole, whose every
 refusal is the server's, carries one marker; a function mixing a refusal of the
 server's with shortfalls of ours marks the check.
 
-**No operator refusal is one**, because none is made on the server's terms. A
-comparison the server lacks is answered where this build can (`json`'s, as text,
-`ComparisonDivergence::AsText`), and every operator `predicate/resolve.rs` refuses is
-this build's own: a type the register models no order for (a `D55` shortfall)
-or a server-side function it cannot run (`UnanswerableReason`, whose `=` the
-server answers). A release adding an operator therefore lifts none of them, and
-a marker on one would name an invariant no release can falsify. A
-`ComparisonPlan` variant that is the server's refusal would reopen this.
+**No operator refusal is one.** A comparison the server lacks is answered
+where this build can (`json`'s, as text, `ComparisonDivergence::AsText`), and
+every operator `predicate/resolve.rs` refuses is this build's own -- a type the
+register models no order for (a `D55` shortfall) or a server-side function it
+cannot run (`UnanswerableReason`, whose `=` the server answers) -- but one:
+ordering a container holding `json`, which `array_cmp` and `record_cmp` refuse
+too. I45 holds that one, its "Relied on by" naming `NestedCompare` and its
+re-verification run at every new major, so a marker would restate it.
 
 Usage:
 

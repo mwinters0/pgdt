@@ -781,9 +781,10 @@ impl NestedCompare {
 /// consumed by `pgdt_query::predicate`, which reads it instead of inspecting the
 /// Arrow type.
 ///
-/// **No variant refuses on PostgreSQL's terms**, so no operator refusal
-/// carries a `pg-refuses` marker; a variant that would is the case
-/// `scripts/pg_refuses.py`'s docstring says reopens that.
+/// **No operator refusal carries a `pg-refuses` marker**, which marks a
+/// refusal of a value's text (`scripts/pg_refuses.py`). The one ordering
+/// refusal the server shares, `json` beneath a container
+/// ([`NestedCompare::Uncomparable`]), is held by I45 instead.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ComparisonPlan {
     /// Values decode through `kind` and compare by that order; `divergence`
