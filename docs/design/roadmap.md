@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P17, P19, P20, P25, P27–P31, P33, P35, P36, P38 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P43 — the block model: identity, address and record | **Current** | [spec](roadmap-P43-block-model.md); progress in [`../status/STATUS.md`](../status/STATUS.md) |
+| P43 — the block model: identity, address and record | **Complete** | [spec](roadmap-P43-block-model.md); [notes](roadmap-P43-block-model-notes.md) |
 | P8 — `--inserts` and `--column-inserts` rows | Sketched; not grilled | this file, below; [inbox](roadmap-P8-inserts-inbox.md) |
 | P18 — zstd and lz4 input | Sketched; not grilled | this file, below; [inbox](roadmap-P18-zstd-inbox.md) — carved out of the gzip work |
 | P41 — archive formats: the shared model, and `--format=custom` | Sketched; not grilled | this file, below; [inbox](roadmap-P41-archive-formats-inbox.md) |
@@ -730,11 +730,12 @@ item; see below.
 
 ## P43 — The block model: identity, address and record
 
-A block of rows has an identity (`BlockId`), an address (`BlockAddress`) and a
-record (`BlockRecord`), each its own type, and one recorder in the model records
-a block's rows for every pass, opened and closed once. Ahead of P8 and the archive
-phases, each of which starts from one of the three. The spec is
-[`roadmap-P43-block-model.md`](roadmap-P43-block-model.md).
+**Complete.** A block of rows has an identity (`BlockId`), an address
+(`BlockAddress`) and a record (`BlockRecord`), each its own type, and one
+recorder in the model records a block's rows for every pass, opened and closed
+once. Ahead of P8 and the archive phases, each of which starts from one of the
+three. The spec is [`roadmap-P43-block-model.md`](roadmap-P43-block-model.md),
+and what it leaves the next phase its [notes](roadmap-P43-block-model-notes.md).
 
 ## P8 — `--inserts` and `--column-inserts` rows
 

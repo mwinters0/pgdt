@@ -85,26 +85,12 @@ apparatus gate and no marker ([`../design/measurements.md`](../design/measuremen
 the comparison alone; `--count-span <base>..<tip>` counts a run of landed
 commits the same way, as the account their pairs must sum to.
 
-## P43 progress
-
-Spec: [`../design/roadmap-P43-block-model.md`](../design/roadmap-P43-block-model.md).
-
-- [x] **43.1** `pgdt-model`'s `persisted/` split: the serde shapes alone in it, contracts, walks, diagnostics and recipes beside it; a move, no bump; the concept map's claims follow — [notes](../design/roadmap-P43.1-persisted-notes.md)
-- [x] **43.2** The mapping pass context for every function under `too_many_arguments`; `forward.rs`'s cancel-save-return and `whole_file.rs`'s interrupted exit each written once — [notes](../design/roadmap-P43.2-pass-context-notes.md)
-- [x] **43.3** `BlockId`, derived from the header offset, at every identity site; display sites print the address; no format change — [notes](../design/roadmap-P43.3-block-id-notes.md)
-- [x] **43.4** `CopyBlock` as header, partition root, `BlockAddress` and `Arc<BlockRecord>`; `LongestLine` block-relative; `InsertRun` holding a record; copy-on-write in the back-fill and `settle.rs`; `Segment` holding header and address, no whole block cloned; the cache-format bump; `--count-pair` on the typed query — [notes](../design/roadmap-P43.4-block-record-notes.md)
-- [x] **43.5** `BlockObserver`'s one-call close; the `Gatherer` as a block's gatherer, a piece's and the strict checker; `--count-pair` on a data-level parse — [notes](../design/roadmap-P43.5-observer-close-notes.md)
-- [x] **43.6** The `Recorder` in `pgdt-model`: a held row split once, `RowFold` replaced, the three hosts fed through it, the observer contract split into its row and block traits, `Builder` recording nothing and `on_copy_end` taking the record; `--count-pair` on a data-level parse — [notes](../design/roadmap-P43.6-recorder-notes.md)
-- [x] **43.7** One open under per-pass policies, `map_forward`'s `CopyStart` arm becoming it; one close, the back-fill merging through `BlockRecord`; `--count-pair` on a data-level parse — [notes](../design/roadmap-P43.7-open-close-notes.md)
-- [x] **43.7.1** A re-read's policy as data: `Policy::Rereads` carrying the back-fill's plan, or a check alone, with its gathering, or nothing for a query's census, and the open building `observer_tracking` or `checker` from it, as the spec's back-fill policy states — [notes](../design/roadmap-P43.7.1-reread-policy-notes.md)
-- [x] **43.8** `build_index`, `build_map` and `backfill_block` in `pgdt-fixtures` behind `mapping`, the eager pass opening through the open under its policy — [notes](../design/roadmap-P43.8-eager-pass-notes.md)
-
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdt info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **P43 is open** (above). A dump is readable over HTTP, plain, `.xz` and gzip,
+- **No phase is open.** A dump is readable over HTTP, plain, `.xz` and gzip,
   with nothing about the network's speed priced
   (`KD35`, `KD36`). What statistics may hold resident is bounded and their
   coverage is not (`KD33`, `KD34`), both owned by P23, whose sketch in
