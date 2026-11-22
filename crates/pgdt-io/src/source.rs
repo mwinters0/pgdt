@@ -167,8 +167,8 @@ pub trait ByteRangeSource: Send + Sync {
     /// that path to be taken at all, whether or not it was.
     ///
     /// One reader's charge *plus the retention list it leaves behind*, which
-    /// is the line [`BlockCache::affordable`](crate::source::compressed::blocks::BlockCache::affordable) draws: a pool serving one reader
-    /// still holds [`POOL_DEPTH`](crate::source::pool::POOL_DEPTH) slots. `None` for a source with no such path
+    /// is the line `BlockCache::affordable` draws: a pool serving one reader
+    /// still holds `POOL_DEPTH` slots. `None` for a source with no such path
     /// to take: every source but a compressed one, and a compressed one with
     /// no block unit, a gzip first pass's before its hand-over included.
     ///
@@ -493,7 +493,7 @@ impl std::fmt::Debug for ParkedReader<'_> {
 /// Shipped, not probed (`docs/design/decisions.md`, "D10"): the default that
 /// is worst-case-best across the device classes measured
 /// (`docs/design/measurements.md`, "What the read chunk size is worth").
-/// Public and named because it is what [`pgdt_dump::ReadOptions::chunk_size_bytes`]
+/// Public and named because it is what `pgdt_dump::ReadOptions::chunk_size_bytes`
 /// defaults to and what callers scale from.
 ///
 /// **Raising it costs memory, not pooling.** Every read loop announces the

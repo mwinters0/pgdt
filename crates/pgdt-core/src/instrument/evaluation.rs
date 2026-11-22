@@ -74,10 +74,10 @@ impl EvaluationPart {
 }
 
 /// `$body`, timed as `$part` where the instrument is built in — a leaf part
-/// only inside [`row_evaluated!`]. **Without the instrument it expands to
+/// only inside [`row_evaluated!`](crate::row_evaluated!). **Without the instrument it expands to
 /// `$body`, `$part` evaluated and dropped beside it**, so a shipped build compiles what it wraps
 /// exactly as written; an inlined closure is not enough to promise that.
-/// With it, `$body` runs in a closure passed to [`timed_span`], which the
+/// With it, `$body` runs in a closure passed to `timed_span`, which the
 /// calling module imports under the feature. The `cfg` is read in the crate
 /// expanding it, so each such crate has an `introspect` turning on this one's.
 #[macro_export]
@@ -97,7 +97,7 @@ macro_rules! timed {
 
 /// `$body`, one row's evaluation against a dynamic filter's state, timed as
 /// [`EvaluationPart::Row`] with every leaf part it reaches, where the
-/// instrument is built in, through [`evaluated_row`]; without it, `$body`
+/// instrument is built in, through `evaluated_row`; without it, `$body`
 /// alone.
 #[macro_export]
 macro_rules! row_evaluated {

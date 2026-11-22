@@ -32,8 +32,8 @@ use super::{Codec, CompressionIndex, LiveBlock, Positioned, codec_over, piece_of
 /// stated where each lives. There a decode reads a file as it goes; here
 /// nothing can `await` inside a decode, so this source fetches a unit's whole
 /// compressed extent first — the codec states it before the fetch — wraps it
-/// in a [`Window`] and decodes out of that. The plaintext side is unchanged:
-/// the same [`BlockCache`], the same slot, the same zero-copy slice of a
+/// in a `Window` and decodes out of that. The plaintext side is unchanged:
+/// the same `BlockCache`, the same slot, the same zero-copy slice of a
 /// decoded unit.
 ///
 /// **Two arms, and the budget picks between them.**
@@ -46,7 +46,7 @@ use super::{Codec, CompressionIndex, LiveBlock, Positioned, codec_over, piece_of
 ///   and comparing the unit's check when we complete it — so what is held is
 ///   the compressed window and the decoder, never the plaintext. This source
 ///   keeps the window and the handle together across reads so that a unit a
-///   scan sits inside is decoded once (D15, [`HeldBlock`]).
+///   scan sits inside is decoded once (D15, `HeldBlock`).
 ///
 /// **Leaving a unit completes it**, which is what compares its check, and a
 /// run's end leaves the unit its last read stopped inside
@@ -579,7 +579,7 @@ impl ByteRangeSource for FetchedCompressedSource {
         Some(self.codec.index())
     }
 
-    /// [`partition_advice`](super::blocks::partition_advice), as the local
+    /// `partition_advice`, as the local
     /// source's is: the cut points are a property of the file rather than of
     /// the transport, and reading them off the arm actually taken is what
     /// keeps `pgdt_query`'s `compressed_block_path_declined` honest here.

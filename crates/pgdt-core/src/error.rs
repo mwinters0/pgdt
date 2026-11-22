@@ -169,7 +169,7 @@ pub enum Error {
     /// run has already read is suspect and a map or row set built from them
     /// could mix two versions of the file. Raised by a remote source whose
     /// server refuses a request's precondition, and by
-    /// [`pgdt_dump::cache::SourceWatch`] — at a cache save, once when the run
+    /// `pgdt_dump::cache::SourceWatch` — at a cache save, once when the run
     /// finishes, and in place of a failure met while reading, which the
     /// change often is (`pgdt_dump::cache::SourceWatch::attribute`) — and an
     /// abort rather than a diagnostic on every provider,
@@ -194,7 +194,7 @@ pub enum Error {
     /// read, since the
     /// promise [`Error::SourceChangedWhileRead`] makes would otherwise be
     /// stated and not kept (`docs/design/decisions.md`, "D21"). `why` is the
-    /// source's own sentence ([`pgdt_io::ByteRangeSource::in_flight_unchecked`]).
+    /// source's own sentence (`pgdt_io::ByteRangeSource::in_flight_unchecked`).
     #[error(
         "nothing can tell whether the dump changes while it is being read — {why} — so the run was refused before reading it; read it anyway binding no identity signal"
     )]
@@ -405,7 +405,7 @@ pub enum Error {
     },
     /// A field its declared type's `*_in` refuses, met by a pass decoding it
     /// — a parse gathering statistics, or a back-fill re-reading a block for
-    /// them — under [`pgdt_model::PostgresInvalidValues::Default`], which fails at
+    /// them — under `pgdt_model::PostgresInvalidValues::Default`, which fails at
     /// the first, as a restore under `ON_ERROR_STOP`
     /// fails the table's `COPY` (`docs/design/roadmap.md`, "A literal is
     /// guaranteed in `*_out`'s form and never read past `*_in`'s"). The line
@@ -438,16 +438,16 @@ pub enum Error {
     /// A NULL in a column its declaration makes `NOT NULL` — on the column, at
     /// the table, through a parent or through a domain — which a restore
     /// refuses (I76): [`Self::FieldRefused`]'s counterpart, met wherever such
-    /// a field is read but under [`pgdt_model::PostgresInvalidValues::Ignore`].
+    /// a field is read but under `pgdt_model::PostgresInvalidValues::Ignore`.
     /// `line` is `COPY`'s count where a pass numbers it, as
     /// [`Self::FieldRefused`]'s is, and `None` for a query, which names the
     /// line by its offset alone, as [`Self::FieldDecode`] does.
     #[error("{}", null_refused(table, column, *line, *line_offset))]
     NullRefused { table: String, column: String, line: Option<u64>, line_offset: u64 },
     /// [`Self::FieldRefused`], read from the cache rather than the dump: a
-    /// parse under [`pgdt_model::PostgresInvalidValues::Default`] whose cache
+    /// parse under `pgdt_model::PostgresInvalidValues::Default` whose cache
     /// records a field an earlier parse ignoring such fields went past
-    /// ([`pgdt_model::BlockRecord::ignored_refusals`]) fails with the first it
+    /// (`pgdt_model::BlockRecord::ignored_refusals`) fails with the first it
     /// records in a column its request tracks, before reading anything — the
     /// verdict being the dump's, not that of whichever run gathered the cache.
     /// `refused` is that refusal as a read of the dump would have raised it.
@@ -460,7 +460,7 @@ pub enum Error {
     /// its declared type and the query's front end cannot hold — past its
     /// Arrow type or, where the front end counts it, the calendar DataFusion
     /// displays — and the query is
-    /// under [`pgdt_codec::UnrepresentableMode::Refuse`]: refused at planning,
+    /// under `pgdt_codec::UnrepresentableMode::Refuse`: refused at planning,
     /// before a row is read, wherever the map counts one in the table, not
     /// only in the groups a filter keeps. `values` is the map's count in the
     /// tiers the query's front end cannot hold (`docs/design/decisions.md`,
@@ -471,7 +471,7 @@ pub enum Error {
     )]
     Unrepresentable { table: String, column: String, declared_type: String, values: u64 },
     /// A filter term that reads its column's declared type, in a query under
-    /// [`pgdt_codec::SchemaMode::Strings`], which resolves none: `IS [NOT]
+    /// `pgdt_codec::SchemaMode::Strings`, which resolves none: `IS [NOT]
     /// UNREPRESENTABLE`, every value being text its column holds and no NULL
     /// made of one, so there is nothing for the test to tell apart
     /// (`docs/design/decisions.md`, "D101"); and an ordering operator in

@@ -36,7 +36,7 @@ pub fn numeric_in_stores(text: &str) -> bool {
 
 /// A filter literal compared with a `numeric(p,s)` column, as an unscaled
 /// integer digit string at `scale` decimal places — the form
-/// [`i128::from_str`]/[`i256::from_str`] accept directly. **Exact**: the
+/// `i128::from_str`/`i256::from_str` accept directly. **Exact**: the
 /// server coerces a literal with no typmod (I63), so a digit finer than the
 /// scale is no value this key can carry and is refused rather than rounded
 /// (`docs/design/decisions.md`, "D55"), and no precision applies. A field is
@@ -121,7 +121,7 @@ pub fn decimal_unscaled_digits(s: &str, scale: i8) -> Option<String> {
 ///
 /// The grammar is [`decimal_unscaled_digits`]'s, `[-]digits[.digits]`; a
 /// value past the precision is [`Unread::Refused`], and so is a text
-/// `numeric_in` refuses at every major ([`numeric_unread`]), any other being
+/// `numeric_in` refuses at every major (`numeric_unread`), any other being
 /// [`Unread::Unparsed`] — `NaN` among them, which bypasses the typmod and has
 /// no decimal representation. `scale` is `numerictypmodin`'s whole range,
 /// -1000 to 1000, so a column held as text for a scale no Arrow decimal

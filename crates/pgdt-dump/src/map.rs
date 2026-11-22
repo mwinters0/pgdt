@@ -845,7 +845,7 @@ impl Builder {
     /// end up producing the same map. Neither this method nor
     /// [`on_large_object_end`](Self::on_large_object_end) pushes the region's
     /// span: the region stays *pending* until
-    /// [`flush_large_objects`](Self::flush_large_objects) closes it, which
+    /// `flush_large_objects` closes it, which
     /// happens only when something else is about to open, so consecutive
     /// `BEGIN;`/`COMMIT;` pairs merge into one span. I12 is what makes that
     /// sound without reading each entry's TOC `Type:` field; whatever *does*
@@ -969,7 +969,7 @@ impl Builder {
     /// because this module only ever decides where the *next* span starts.
     ///
     /// Only sound to call where nothing is mid-classification — `self.mode`
-    /// is [`Mode::Idle`] **and** no large-object region is pending — since
+    /// is `Mode::Idle` **and** no large-object region is pending — since
     /// otherwise the last-pushed span is the one *before* the span open at
     /// `end`, and stamping its `end` there would be wrong.
     ///
@@ -994,7 +994,7 @@ impl Builder {
     }
 
     /// The start offset of a comment block currently being absorbed —
-    /// `None` unless `self.mode` is [`Mode::Comment`]. A caller that must stop
+    /// `None` unless `self.mode` is `Mode::Comment`. A caller that must stop
     /// scanning *before* the decision a `--`-prefixed run is waiting on
     /// ([`crate::preamble::scan_preamble`]) retreats its stop point here rather
     /// than guess the comment's kind (`docs/design/decisions.md`, "D31"):

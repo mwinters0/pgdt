@@ -46,7 +46,7 @@ use crate::batch::{append_typed, finish_column, new_column_builder};
 /// arrays it built.
 ///
 /// `column` is needed for the same reason
-/// [`ColumnBuilder`](crate::batch::ColumnBuilder) needs it: the Arrow type
+/// `ColumnBuilder` needs it: the Arrow type
 /// does not say which literal form a nested value is written in, and
 /// `int4range[]` and `int4multirange` share one. Its
 /// [`ResolvedColumn::plan`] says; there is no plan-less entry point

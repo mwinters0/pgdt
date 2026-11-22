@@ -82,7 +82,7 @@ pub struct ScanBudget {
 /// allowance and where it came from — the half of a budget-quoting plan note
 /// the library does not tell, provenance being the caller's fact
 /// (`docs/design/decisions.md`, "D64"), and what [`crate::BudgetedPlanNote`]
-/// names — and the holdings that came off it ([`ScanBudget::draw`]'s
+/// names — and the holdings that came off it (`ScanBudget::draw`'s
 /// terms).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BudgetAccount {

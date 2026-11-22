@@ -41,13 +41,13 @@ pub enum NestedKey {
     /// A `record_out` value: one entry per declared field, in declaration
     /// order.
     Record(Vec<Option<NestedKey>>),
-    /// A range value, already through [`make_range`] — the form the server
+    /// A range value, already through `make_range` — the form the server
     /// would have stored, not the form it was written in. Boxed because a
     /// bound is itself a `NestedKey`; the vector the multirange holds is
     /// indirection enough on its own.
     Range(Box<RangeKey>),
     /// A multirange value, already sorted, coalesced and emptied out
-    /// ([`canonical_multirange`]), so its members are never empty and never
+    /// (`canonical_multirange`), so its members are never empty and never
     /// touch.
     Multirange(Vec<RangeKey>),
 }

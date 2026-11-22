@@ -77,7 +77,7 @@ pub enum StatisticsSizing {
         min_rows: Option<u64>,
         /// The most rows a block's densest tenth of groups should hold — read
         /// at the 90th-percentile group
-        /// ([`max_rows_group`](super::density::max_rows_group)) — and **there
+        /// (`max_rows_group`) — and **there
         /// is no default**: a maximum applies only where a caller states one.
         ///
         /// It is the only thing that makes a block finer than

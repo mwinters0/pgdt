@@ -506,7 +506,7 @@ fn clipped(text: &str) -> String {
 }
 
 /// The unescaped bytes of a field ([`unescaped`]), read off a field held
-/// whole by [`escape_at`], the one reading of COPY TEXT's escapes, which
+/// whole by `escape_at`, the one reading of COPY TEXT's escapes, which
 /// [`Unescape`] reads over runs and [`unescape_field`] collects.
 #[derive(Debug, Clone)]
 pub struct Unescaped<'a> {
@@ -634,7 +634,7 @@ const STAGE: usize = 256;
 /// **COPY TEXT's escapes read a run of a field's bytes at a time**, the runs
 /// needing no common slice: what a field's text is, read with no more of it
 /// held between runs than an escape begun at a run's end, and within one than
-/// [`STAGE`]'s bytes, so a reader fed the field as its line goes by holds
+/// `STAGE`'s bytes, so a reader fed the field as its line goes by holds
 /// none of it (`docs/design/decisions.md`, "D144").
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Unescape {
@@ -647,7 +647,7 @@ pub struct Unescape {
 impl Unescape {
     /// Read `run`, the field's next bytes as `COPY` wrote them, handing
     /// `emit` its text they complete in order, a stretch at a time: one no
-    /// escape spells and longer than [`STAGE`] as a slice of `run`, the rest
+    /// escape spells and longer than `STAGE` as a slice of `run`, the rest
     /// gathered first, so `emit` is handed a slice of one only where an
     /// escape has a long stretch or an end of `run` on either side.
     pub fn run(&mut self, run: &[u8], mut emit: impl FnMut(&[u8])) {

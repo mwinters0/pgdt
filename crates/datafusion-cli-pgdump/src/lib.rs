@@ -224,7 +224,8 @@ impl Args {
 }
 
 #[tokio::main]
-/// Calls [`main_inner`], then handles printing errors and returning the correct exit code
+/// Calls `main_inner`, then handles printing errors and returning the correct exit code
+// pgdump: `main_inner` a code span, being private to a public item's doc;
 // pgdump: upstream's `main`, handed its arguments already parsed, and renamed
 // pgdump: since `#[tokio::main]` refuses arguments on a function named `main`;
 // pgdump: `retained` is what the caller's allocator keeps of what it frees,

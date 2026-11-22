@@ -104,7 +104,7 @@ pub enum ChunkPass {
 /// where an earlier line needs the room ([`give_up`](Self::give_up))
 /// (`docs/design/decisions.md`, "D157", "D158").
 ///
-/// **What it carries between two chunks is one [`Leftover`]**, matched whole
+/// **What it carries between two chunks is one `Leftover`**, matched whole
 /// both by what it says it will hold once it absorbs the next
 /// ([`charge_absorbing`](Self::charge_absorbing)) and by the absorb itself
 /// ([`absorb`](Self::absorb)), so a draw cannot price one case while the
@@ -199,7 +199,7 @@ impl StreamedLine {
         self.len
     }
 
-    /// How the row ends, as [`RowEnding::of`] reads its bytes before the LF.
+    /// How the row ends, as `RowEnding::of` reads its bytes before the LF.
     pub fn ending(&self) -> RowEnding {
         self.ending.ending()
     }

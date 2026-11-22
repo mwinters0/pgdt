@@ -141,7 +141,7 @@ pub enum CompareKind {
     ///
     /// `qualifier` is the column's field qualifier, under which `interval_in`
     /// reads a field and a strict parse checks one
-    /// ([`interval_reads`](crate::value::datetime::grammar::interval_reads));
+    /// (`interval_reads`);
     /// `None` for a column with none, and for a literal's reading, which no
     /// typmod reaches. It refuses a field and never moves a key.
     Interval {
@@ -552,9 +552,9 @@ pub enum NestedCompare {
     ///
     /// `grammar` is the position's input grammar where this build reads one for
     /// a type it orders by nothing
-    /// ([`text_grammar`](crate::grammar::input::text_grammar)), and `delimiter` its
+    /// (`text_grammar`), and `delimiter` its
     /// type's `typdelim`, which an array of it is split at
-    /// ([`typdelim`](crate::declared::typdelim)).
+    /// (`typdelim`).
     Uncomparable {
         declared: String,
         divergence: Option<ComparisonDivergence>,

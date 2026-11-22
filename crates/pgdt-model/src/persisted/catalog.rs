@@ -21,12 +21,12 @@ pub struct DatabaseMetadata {
     /// names no database. Never guessed: a `--create` dump's pre-`\connect`
     /// segment names no real database either, and is told apart by being
     /// *replaced* rather than pushed when the first `\connect` arrives, its
-    /// version headers carried over ([`pgdt_dump::dump_metadata_from_spans`]'s `Connect`
+    /// version headers carried over (`pgdt_dump::dump_metadata_from_spans`'s `Connect`
     /// arm).
     pub name: Option<String>,
     /// Whether this database's preamble was read to completion. Always
     /// `true` for every entry a `pgdt_fixtures::build_index` full scan or a
-    /// [`pgdt_dump::internal::scan_preamble`] prepass produces, neither ever leaving
+    /// `pgdt_dump::internal::scan_preamble` prepass produces, neither ever leaving
     /// a segment half-read. The *first* database's metadata is present after
     /// any scan that persists a cache (the preamble prepass,
     /// `docs/design/decisions.md`, "D30") and every later `\connect`ed
@@ -71,7 +71,7 @@ pub struct DatabaseMetadata {
 pub struct CollationDef {
     /// Schema-qualified name, in the canonical spelling a type's name is kept
     /// in (`public.c_collation`, `public."CI"`) — which
-    /// [`pgdt_codec::compare::comparison_for`] reads back as the server reads a
+    /// `pgdt_codec::compare::comparison_for` reads back as the server reads a
     /// column's `COLLATE` clause, which is how it joins the two.
     pub name: String,
     /// `false` only where the statement carried `deterministic = false`.
@@ -105,7 +105,7 @@ pub struct Extension {
 /// clause whenever a column's collation is its *type's* default, so a bare
 /// `name` column is `C` and a bare `text` column is the database's — two
 /// facts behind one absence, decided by
-/// [`pgdt_codec::compare::comparison_for`].
+/// `pgdt_codec::compare::comparison_for`.
 ///
 /// `not_null` is the `NOT NULL` among its constraints, or what implies one —
 /// an inline `PRIMARY KEY`, `GENERATED … AS IDENTITY` or a `serial` type —
@@ -250,7 +250,7 @@ pub enum TypeKind {
     /// which clears every enum's (`pgdt_dump`'s
     /// `ddl::metadata::fold_enum_labels_unread`). Nothing `pg_dump` writes clears it.
     Enum { labels: Vec<String>, exact: bool },
-    /// Reduces to a base type, resolved transitively by [`pgdt_codec::pgtype`] (a
+    /// Reduces to a base type, resolved transitively by `pgdt_codec::pgtype` (a
     /// domain over a domain is legal).
     ///
     /// `collation` is the domain's own `COLLATE` clause, verbatim, which

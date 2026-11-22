@@ -53,7 +53,7 @@ impl<'a> TableStream<'a> {
 
     /// This query's resolved schema and diagnostics — one schema per table,
     /// whichever of its blocks a batch came from
-    /// ([`TableColumns`](super::replay::plan::TableColumns)) — held from
+    /// (`TableColumns`) — held from
     /// before the first poll: its plan's
     /// ([`TablePartitions::resolved_schema`](crate::stream::TablePartitions::resolved_schema)),
     /// where the plan reads a block, and the empty schema
@@ -119,7 +119,7 @@ impl<'a> TableStream<'a> {
     /// the first poll ruled out, by the first sub-stream to take that cut
     /// ([`DynamicPartitions`](crate::stream::partitions::DynamicPartitions)); one ruled out as the replay reached it, by the
     /// sub-stream whose piece holds the byte its search starts at
-    /// (`D + k·N − 1`, [`crate::prune::BlockPruning::kept`]'s terms), where
+    /// (`D + k·N − 1`, `crate::prune::BlockPruning::kept`'s terms), where
     /// that sub-stream skipped it — so a group cut between two sub-streams
     /// counts once at most, and not at all where the first read any of it.
     pub fn dynamic_filter_pruned_groups(&self) -> u64 {

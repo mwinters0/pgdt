@@ -98,7 +98,7 @@ impl Unchecked {
 }
 
 /// The grammar a strict parse reads a field of a column compared by `plan`
-/// and declared `declared` by in place of `plan`: its [`text_grammar`] where
+/// and declared `declared` by in place of `plan`: its `text_grammar` where
 /// `plan` orders it by nothing, and `None` elsewhere.
 pub fn column_grammar(
     plan: &ComparisonPlan,
@@ -276,7 +276,7 @@ fn domains_beneath(
 /// a nested value is read as the server reads one on its way in, through each
 /// container's input grammar, every element as a field of its own type and a
 /// range's bounds in order. `json`, held as its text, is read by `json_in`'s
-/// grammar ([`json_in`](crate::value::json::json_in)), and a position holding
+/// grammar (`json_in`), and a position holding
 /// a type ordered by nothing by its [`TextGrammar`] where it has one; any
 /// other plan naming no type this build reads by — another held as its text,
 /// or a range declaring its own canonical function — refuses nothing, no

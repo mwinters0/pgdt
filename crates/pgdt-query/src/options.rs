@@ -150,7 +150,7 @@ impl QueryOptions {
     /// **How this query's statistics are read where a column holds a value
     /// its type cannot**, as its reads and its filter take one: as NULL under
     /// [`UnrepresentableMode::Null`], in the tiers its semantics cannot hold
-    /// ([`Self::unrepresentable_reach`]), and otherwise every value in
+    /// (`Self::unrepresentable_reach`), and otherwise every value in
     /// PostgreSQL's order — under the refuse mode; under the untyped mode,
     /// whose columns holding one are text and compare in that order in
     /// PostgreSQL's semantics, and read no bounds in DataFusion's; and under

@@ -85,9 +85,9 @@ pub struct BlockStatistics {
 pub enum GroupSizing {
     /// A stated group size, gathered exactly.
     Stated,
-    /// An unstated size: [`pgdt_mapping::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES`], or the finer size a
+    /// An unstated size: `pgdt_mapping::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES`, or the finer size a
     /// re-read for a broken maximum predicts, merged pairwise
-    /// past [`pgdt_mapping::statistics::BLOCK_MAX_ROW_GROUPS`] groups and, once the block is finished,
+    /// past `pgdt_mapping::statistics::BLOCK_MAX_ROW_GROUPS` groups and, once the block is finished,
     /// until its median group holds `min_rows` rows or it is one group.
     ///
     /// `max_rows` is the stated maximum the size was chosen under, if any: it
@@ -146,7 +146,7 @@ pub struct ColumnStatistics {
     /// a `bytea`'s decoded bytes or an enum's labels — a field that does not
     /// decode counting its escaped bytes. Kept for every column, whatever the
     /// typed read emits it as: the measure is the text's, so a read in
-    /// [`pgdt_codec::SchemaMode::Strings`] sizes every column by it.
+    /// `pgdt_codec::SchemaMode::Strings` sizes every column by it.
     pub value_bytes: Vec<u64>,
 }
 

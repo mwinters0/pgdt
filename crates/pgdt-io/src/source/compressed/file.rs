@@ -34,7 +34,7 @@ use super::{
 /// [`ByteRangeSource::stored_size`]/[`ByteRangeSource::modified`], and every
 /// decode reads its compressed bytes through `pread`, so the handle is shared
 /// by everything and disturbs nothing. A decode pulls from it as a
-/// [`Positioned`] read, which is where this source and
+/// `Positioned` read, which is where this source and
 /// [`FetchedCompressedSource`](crate::FetchedCompressedSource) part, whose
 /// bytes have to be fetched into a window first
 /// (`docs/design/decisions.md`, "D15").
@@ -42,13 +42,13 @@ use super::{
 /// **Two arms, and the budget picks between them**, as the fetched source's do:
 ///
 /// - Where the stated budget holds a whole decoded unit, a read decodes the
-///   units it lands in into slots of its own [`BlockCache`] and slices the
+///   units it lands in into slots of its own `BlockCache` and slices the
 ///   answer out of them. The codec names a unit from its index alone, so no
 ///   lock is held across a decode; what this arm does take is its own
-///   [`BlockCache`]'s retention list.
+///   `BlockCache`'s retention list.
 /// - Where it does not, the unit is read **in pieces** through one live
 ///   handle, kept across reads so a forward scan continues rather than
-///   restarting ([`LiveBlock`]).
+///   restarting (`LiveBlock`).
 ///
 /// A whole-unit decode compares the check before it returns, and the
 /// piecewise arm compares it when it leaves the unit, or as the run ends for
@@ -409,13 +409,13 @@ impl ByteRangeSource for CompressedFileSource {
     /// by one `read_range` and returned when its bytes are dropped, so a loop
     /// releasing each chunk before its next read holds one of them — which is
     /// the discipline
-    /// [`BufferPool::obtain`] documents. The **block** pool's holder is
-    /// [`BlockCache`], which *retains*: it is the exempt class, exactly as the
+    /// `BufferPool::obtain` documents. The **block** pool's holder is
+    /// `BlockCache`, which *retains*: it is the exempt class, exactly as the
     /// replay loop is, so it is left at [`WaitPolicy::NeverWait`] whatever a
     /// loop permits (`docs/design/decisions.md`, "D5").
     ///
     /// A read that needs both takes the **chunk** slot first and the block
-    /// slot inside it ([`CompressedFileSource::read_by_blocks`]), never the
+    /// slot inside it (`CompressedFileSource::read_by_blocks`), never the
     /// other way round, so a waiting reader holds no block slot at all.
     fn hint_wait_policy(&self, policy: WaitPolicy) {
         self.budget.pool.set_policy(policy);
@@ -457,18 +457,18 @@ impl ByteRangeSource for CompressedFileSource {
         cores.min(self.codec.unit_count().max(1))
     }
 
-    /// **What readers of this file hold**: [`DecodeBudget::block_worker_memory`]
+    /// **What readers of this file hold**: `DecodeBudget::block_worker_memory`
     /// — the per-reader charge plus the block pool's retention list, the shape
-    /// `worker_count` and [`Parallelism::fit`] both solve
+    /// `worker_count` and `Parallelism::fit` both solve
     /// against to hand back a count. `None` where there is no block path to
     /// buy — a file with no units, or one whose largest unit is not a length
     /// on this target — since the piecewise arm has no second worker to
     /// give at any budget.
     ///
     /// **It is charged at the chunk a scan settles at**
-    /// ([`DecodeBudget::charged_chunk_bytes`]), which is what
-    /// [`BlockCache::affordable`] compares a budget against once the file is
-    /// open. *Rejected:* charging the unannounced pool's [`POOL_MAX_BYTES`](crate::source::pool::POOL_MAX_BYTES)
+    /// (`DecodeBudget::charged_chunk_bytes`), which is what
+    /// `BlockCache::affordable` compares a budget against once the file is
+    /// open. *Rejected:* charging the unannounced pool's `POOL_MAX_BYTES`
     /// ceiling instead, which runs the recommendation high and resolves fewer
     /// readers than fit.
     fn default_worker_memory(&self) -> Option<WorkerMemory> {
@@ -476,7 +476,7 @@ impl ByteRangeSource for CompressedFileSource {
     }
 
     /// Leave the live piecewise unit, if a read left one seated, comparing
-    /// its check ([`LiveBlock`]). The whole-unit arm compares before a read
+    /// its check (`LiveBlock`). The whole-unit arm compares before a read
     /// returns, so this is the only unit whose bytes can have gone out
     /// unverified — seated by the piecewise arm, and still seated where a
     /// raised budget moved later reads to the block arm.

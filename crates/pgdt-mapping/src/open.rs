@@ -19,7 +19,7 @@ pub enum Pass<'a> {
     /// gives its table, censused where that is the data level, and its
     /// data-level columns gathered, every observer charging the account and
     /// treating a field its type's `*_in` refuses as the gathering says
-    /// ([`Gathering`]).
+    /// (`Gathering`).
     Parse(Gathering<'a>),
     /// A query's: every block censused, nothing gathered, whatever level a
     /// parse would have given it (`docs/design/decisions.md`, "D35").

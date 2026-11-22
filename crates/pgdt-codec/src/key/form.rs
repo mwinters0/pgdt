@@ -79,7 +79,7 @@ pub fn nested_accepted_form(plan: &NestedCompare) -> String {
 ///
 /// Two arms answer with the kind's own payload, because there the payload
 /// *is* the answer: an enum's declared labels, and a `numeric(p,s)`'s scale
-/// — see [`ENUM_LABELS_SHOWN`] and [`decimal_accepted_form`].
+/// — see `ENUM_LABELS_SHOWN` and `decimal_accepted_form`.
 ///
 /// [`CompareKind::Text`] and [`CompareKind::PaddedText`] never refuse a
 /// literal, and an enum with no labels is refused by [`comparison_for`]
@@ -198,7 +198,7 @@ pub fn accepted_form(kind: &CompareKind) -> String {
 const ENUM_LABELS_SHOWN: usize = 12;
 
 /// How many of `kind`'s declared labels [`accepted_form`] leaves unlisted:
-/// zero for every kind but an enum declaring more than [`ENUM_LABELS_SHOWN`].
+/// zero for every kind but an enum declaring more than `ENUM_LABELS_SHOWN`.
 pub fn unlisted_labels(kind: &CompareKind) -> usize {
     match kind {
         CompareKind::Enum { labels, .. } => labels.len().saturating_sub(ENUM_LABELS_SHOWN),

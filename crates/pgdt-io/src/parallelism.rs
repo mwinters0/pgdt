@@ -18,10 +18,10 @@ use crate::memory::{DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE, margin_allowance};
 ///   buffers a pool retains beside the one each worker is filling, which is
 ///   the block pool's retention list and nothing every other source has.
 ///
-/// **The pool term is arithmetic from [`BufferPool`](crate::source::pool::BufferPool), not a safety margin.**
-/// [`BufferPool::slots`](crate::source::pool::BufferPool::slots) clamps the block pool at `POOL_DEPTH` or the readers still reading, whichever is more, and
-/// [`BlockCache::slot`](crate::source::compressed::blocks::BlockCache::slot) drains the retention list to `slots − 1` *before*
-/// obtaining the buffer a landed decode (`Decoding::land`, of a [`BlockCache::claim`](crate::source::compressed::blocks::BlockCache::claim)) then pushes back onto it, so
+/// **The pool term is arithmetic from `BufferPool`, not a safety margin.**
+/// `BufferPool::slots` clamps the block pool at `POOL_DEPTH` or the readers still reading, whichever is more, and
+/// `BlockCache::slot` drains the retention list to `slots − 1` *before*
+/// obtaining the buffer a landed decode (`Decoding::land`, of a `BlockCache::claim`) then pushes back onto it, so
 /// the pool holds `slots − 1` retained units beside the one unit each worker
 /// has in flight — unbounded in the block size, which is why
 /// [`MEMORY_RESERVE`] cannot absorb it.
@@ -37,7 +37,7 @@ use crate::memory::{DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE, margin_allowance};
 /// candidate was a worker still holding its own block while its tail read
 /// decoded its successor's into a second slot, which a miss on a block in
 /// flight no longer does
-/// ([`BlockCache::claim`](crate::source::compressed::blocks::BlockCache::claim)). Being the program's, it is on every
+/// (`BlockCache::claim`). Being the program's, it is on every
 /// allocator, and in that re-take
 /// [`MEMORY_UNPOOLED_BOUND`](crate::internal::MEMORY_UNPOOLED_BOUND) absorbed it. **(b) owned by P23**: closing it
 /// means a re-take, and billing the unit here if it stays.
@@ -80,7 +80,7 @@ impl WorkerMemory {
     }
 
     /// The shared pool at `workers` readers: `pool_depth.max(workers) − 1`
-    /// units, which is [`BufferPool::slots`](crate::source::pool::BufferPool::slots) less the slot a decode is writing
+    /// units, which is `BufferPool::slots` less the slot a decode is writing
     /// into — flat up to the depth and rising with the count above it, and
     /// zero for a shape with no pool unit ([`WorkerMemory::per_worker`]) or a
     /// depth of at most one at one reader.
@@ -119,7 +119,7 @@ impl WorkerMemory {
     /// pool is a constant `(pool_depth − 1)` units, so the cost is linear again
     /// with a different intercept; those candidates are enumerated rather than
     /// divided for, and there are at most `pool_depth` of them — which every
-    /// shipped shape sets to [`POOL_DEPTH`](crate::source::pool::POOL_DEPTH), though the type accepts any.
+    /// shipped shape sets to `POOL_DEPTH`, though the type accepts any.
     ///
     /// The cost is non-decreasing in the count on both pieces, so the first
     /// regime's answer is final whenever it reaches the depth at all.
@@ -379,10 +379,10 @@ impl Parallelism {
         (affords, cap.min(memory.at(affords)))
     }
 
-    /// Whether a larger allowance, carved as [`Parallelism::within_shared`]
+    /// Whether a larger allowance, carved as `Parallelism::within_shared`
     /// carves one, would raise a budget of `budget` bytes for a source recommending
     /// `memory` ([`ByteRangeSource::default_worker_memory`](crate::ByteRangeSource::default_worker_memory)) — the question a
-    /// plan note's [`pgdt_query::PlanLever::LargerAllowance`] answers.
+    /// plan note's `pgdt_query::PlanLever::LargerAllowance` answers.
     ///
     /// **It is the carving's cap read backwards**, so the rule stays in one
     /// place: a source recommending no cost is carved to

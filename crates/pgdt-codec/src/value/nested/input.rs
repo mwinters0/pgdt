@@ -102,7 +102,7 @@ pub fn parse_array(s: &str) -> Option<ArrayLiteral<'_>> {
 }
 
 /// [`parse_array`] for an element type whose `typdelim` is `delim` — `;` for
-/// `box`, the one built-in's that is not `,` (I22): [`ArrayWalk`]'s elements
+/// `box`, the one built-in's that is not `,` (I22): `ArrayWalk`'s elements
 /// collected.
 pub fn parse_array_delimited(s: &str, delim: u8) -> Option<ArrayLiteral<'_>> {
     // Owned unconditionally: `array_in` trims and unescapes, so an element
@@ -123,7 +123,7 @@ pub fn parse_array_delimited(s: &str, delim: u8) -> Option<ArrayLiteral<'_>> {
 }
 
 /// Parse a `record_in` literal for a composite with `columns` declared fields:
-/// [`RecordWalk`]'s fields collected.
+/// `RecordWalk`'s fields collected.
 ///
 /// **Arity is a parameter because `record_in` checks it**, which is the one
 /// place this differs from [`decode_record`]: the server reads exactly
@@ -144,7 +144,7 @@ pub fn parse_record(s: &str, columns: usize) -> Option<RecordLiteral> {
     Some(RecordLiteral { fields: parts.parts })
 }
 
-/// Parse a `range_in` literal ([`RangeWalk`]).
+/// Parse a `range_in` literal (`RangeWalk`).
 ///
 /// The bounds are **not canonicalized** — `[1,10]` stays inclusive-inclusive
 /// here, where the server would rewrite it to `[1,11)` for a discrete subtype.
@@ -159,7 +159,7 @@ pub fn parse_range(s: &str) -> Option<RangeLiteral> {
 }
 
 /// Parse a `multirange_in` literal into its member ranges
-/// ([`MultirangeWalk`]).
+/// (`MultirangeWalk`).
 ///
 /// **A member spelled `empty` is accepted and dropped**, which
 /// [`decode_multirange`] refuses because `multirange_out` never writes one. A
@@ -184,7 +184,7 @@ pub fn parse_multirange(s: &str) -> Option<Vec<RangeLiteral>> {
 
 /// Parse an `int2vectorin` literal — everything the server accepts for an
 /// `int2vector` column, which is a strict superset of what
-/// [`decode_int2vector`] reads ([`Int2VectorWalk`]).
+/// [`decode_int2vector`] reads (`Int2VectorWalk`).
 ///
 /// [`decode_int2vector`]: super::output::decode_int2vector
 pub fn parse_int2vector(s: &str) -> Option<Vec<i16>> {

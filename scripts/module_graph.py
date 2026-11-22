@@ -60,9 +60,9 @@ module's doc naming a module that reads it, says the concept does not yet
 stand on its own. `--docs` lists those links, and they never fail the check.
 A doc link here is a `crate::`, `super::`, `self::` or `pgdt_*::` path in a
 comment, since rust-analyzer's index carries none, and a script's are not
-read. Nothing runs `cargo doc`'s link check, and a doc link into a higher
-crate or into another module's private child does not resolve, so such a
-reference is a code span instead.
+read. A doc link into a higher crate does not resolve, and one from a public
+item to a private one is dead in the rendered docs, so either reference is a
+code span instead: `check.py`'s rustdoc check fails on both.
 
 rust-analyzer is the `rust-toolchain.toml` component that `rustup which
 rust-analyzer` names. Its `scip` index covers the whole workspace, so a

@@ -188,7 +188,7 @@ async fn interrupted(ctx: &PassContext<'_>, index: &DumpIndex) -> Result<MapStop
 /// it goes, until the queried table is settled, EOF is reached, or `ctx`'s
 /// token fires. Emits no rows. `target` is the
 /// table a query may stop early for once
-/// [`target_settled`] says so; **`None` means "run to EOF"**, what
+/// `target_settled` says so; **`None` means "run to EOF"**, what
 /// `pgdt_query::ScanExtent::Full` asks for and what [`map_file`](crate::map_file) always wants. Rejected:
 /// a `ScanExtent` beside a sentinel table name, which is dead data any later
 /// reader has to prove is unused.
@@ -198,7 +198,7 @@ async fn interrupted(ctx: &PassContext<'_>, index: &DumpIndex) -> Result<MapStop
 /// frontier (`docs/design/decisions.md`, "D48").
 ///
 /// **Not every completed block is persisted; every exit from the loop but
-/// an error is** — see [`SaveThrottle`], an interrupt before the first read
+/// an error is** — see `SaveThrottle`, an interrupt before the first read
 /// included; the two that return before the loop, the map unchanged, save
 /// nothing. **`index.metadata` is restated at each `\connect`ed
 /// database's first `COPY` block** — the first after a change of name, a
@@ -215,7 +215,7 @@ async fn interrupted(ctx: &PassContext<'_>, index: &DumpIndex) -> Result<MapStop
 /// **Each reader draws what its carry holds past its chunk from `ctx`'s
 /// ledger**, the run's (`docs/design/decisions.md`, "D157"): this loop's own,
 /// which returns its draw before the leader hands a region to workers that
-/// read past it, and each worker's ([`scan_region`]).
+/// read past it, and each worker's (`scan_region`).
 pub async fn map_forward(
     ctx: &PassContext<'_>,
     index: &mut DumpIndex,

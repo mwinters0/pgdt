@@ -9,7 +9,7 @@ use std::ops::Range;
 pub(crate) const XZ_MAGIC: [u8; 6] = [0xFD, b'7', b'z', b'X', b'Z', 0x00];
 
 /// Where an `.xz` file's streams and blocks sit, as a walk of its stream
-/// footers found them: [`CompressionIndex::Xz`]'s layout.
+/// footers found them: [`CompressionIndex::Xz`](crate::CompressionIndex::Xz)'s layout.
 ///
 /// **Opaque**: `xz_seek`, whose table this wraps, is a vendored, unpublished
 /// crate (`docs/design/decisions.md`, "D14"), so its type is not part of

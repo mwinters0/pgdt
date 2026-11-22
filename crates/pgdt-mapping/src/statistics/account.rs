@@ -293,7 +293,7 @@ impl Drop for Charge {
     }
 }
 
-/// What a [`StatisticsAccount`] held, by term, in bytes of heap.
+/// What a `StatisticsAccount` held, by term, in bytes of heap.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StatisticsTerms {
     /// Finished blocks this pass gathered, which the map holds until it is
@@ -321,7 +321,7 @@ impl StatisticsTerms {
     }
 }
 
-/// A [`StatisticsAccount`] read whole: what one mapping pass's statistics
+/// A `StatisticsAccount` read whole: what one mapping pass's statistics
 /// held when it returned, and the most they held
 /// ([`crate::MapRun::statistics`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

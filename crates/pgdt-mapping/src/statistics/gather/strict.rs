@@ -142,7 +142,7 @@ pub struct UncheckedBound {
 
 /// What a strict parse checks nothing of in `block`, read off the preamble
 /// in `metadata` for `database`, the one the block's span records, as the parse's own check is
-/// ([`field_checks`]): the same resolution, the same plan and grammar per
+/// (`field_checks`): the same resolution, the same plan and grammar per
 /// column, so the two cannot disagree.
 ///
 /// A property of the dump's declarations and the block's own framing, not of

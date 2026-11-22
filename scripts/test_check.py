@@ -169,6 +169,32 @@ FAILED (failures=1, errors=1)
 """
 
 
+RUSTDOC_CLEAN = """\
+ Documenting base v0.1.0 (/work/base)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 10.42s
+   Generated /state/target/doc/base/index.html and 15 other files
+"""
+
+RUSTDOC_FAIL = """\
+ Documenting base v0.1.0 (/work/base)
+error: unresolved link to `nope`
+  --> base/src/lib.rs:44:7
+   |
+44 | /// [`nope`] and [`gone`]
+   |       ^^^^ no item named `nope` in scope
+   |
+   = note: `-D rustdoc::broken-intra-doc-links` implied by `-D warnings`
+
+error: public documentation for `f` links to private item `g`
+  --> base/src/lib.rs:44:18
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+error: could not document `base`
+warning: build failed, waiting for other jobs to finish...
+"""
+
+
 class Summaries(unittest.TestCase):
     def test_nextest_passing_carries_its_summary_line(self):
         o = check.summarize_nextest(NEXTEST_PASS, 0)
@@ -213,6 +239,22 @@ class Summaries(unittest.TestCase):
         self.assertEqual(o.headline, "2 warnings, 0 errors")
         self.assertEqual(
             o.details, ("warning: unused variable: `x`  (pgdump_query/src/lib.rs:3:9)",)
+        )
+
+    def test_clean_rustdoc_passes(self):
+        o = check.summarize_rustdoc(RUSTDOC_CLEAN, 0)
+        self.assertEqual((o.status, o.headline), ("ok", "0 warnings, 0 errors"))
+
+    def test_each_rustdoc_diagnostic_is_named_and_its_tallies_are_not(self):
+        o = check.summarize_rustdoc(RUSTDOC_FAIL, 101)
+        self.assertEqual(o.status, "FAILED")
+        self.assertEqual(o.headline, "0 warnings, 2 errors")
+        self.assertEqual(
+            o.details,
+            (
+                "error: unresolved link to `nope`  (base/src/lib.rs:44:7)",
+                "error: public documentation for `f` links to private item `g`  (base/src/lib.rs:44:18)",
+            ),
         )
 
     def test_clean_alone_builds_pass(self):
@@ -488,10 +530,18 @@ class RunAndVerify(unittest.TestCase):
             check.verify(repo, edits, before)
             self.assertIn("did not pass; running the checks", before.getvalue())
 
-    def test_the_real_checks_are_the_rounds_nine_commands(self):
+    def test_the_real_checks_are_the_rounds_ten_commands(self):
         self.assertEqual(
             [c.name for c in check.CHECKS],
-            ["fmt", "clippy", "alone", "nextest", "doctest", "graph", "unittest", "repoint", "seams"],
+            [
+                "fmt", "clippy", "alone", "nextest", "doctest", "rustdoc", "graph",
+                "unittest", "repoint", "seams",
+            ],
+        )  # fmt: skip
+        rustdoc = next(c for c in check.CHECKS if c.name == "rustdoc")
+        self.assertEqual(
+            rustdoc.argv,
+            ("env", "RUSTDOCFLAGS=-D warnings", "cargo", "doc", "--workspace", "--no-deps"),
         )
         alone = next(c for c in check.CHECKS if c.name == "alone")
         self.assertEqual(alone.argv, check.alone_check(()).argv)
@@ -708,7 +758,8 @@ class Affected(unittest.TestCase):
         plan = self.plan("base/src/lib.rs")
         built = [c for c in plan.checks if c.name not in check.ALWAYS]
         self.assertEqual(
-            [c.name for c in built], ["fmt", "clippy", "alone", "nextest", "doctest", "graph"]
+            [c.name for c in built],
+            ["fmt", "clippy", "alone", "nextest", "doctest", "rustdoc", "graph"],
         )
         self.assertTrue(all(c.image for c in built))
 
@@ -785,7 +836,8 @@ class Affected(unittest.TestCase):
             self.repo, ["base/src/lib.rs"], lambda _: self.packages, {"base/src/lib.rs"}
         )
         self.assertEqual(
-            [c.name for c in plan.checks], ["fmt", "clippy", "alone", "unittest", "repoint", "seams"]
+            [c.name for c in plan.checks],
+            ["fmt", "clippy", "alone", "rustdoc", "unittest", "repoint", "seams"],
         )
         self.assertEqual(argv_of(plan)["clippy"][-2:], ["-p", "base"])
         self.assertEqual(argv_of(plan)["alone"][-1], "base")
@@ -877,6 +929,11 @@ class Affected(unittest.TestCase):
     def test_a_test_change_runs_its_own_package_only(self):
         argv = argv_of(self.plan("base/tests/t.rs"))
         self.assertEqual(argv["nextest"], ["cargo", "nextest", "run", "--no-fail-fast", "-p", "base"])
+        # `cargo doc` reads no test's source.
+        self.assertNotIn("rustdoc", argv)
+
+    def test_a_binary_change_runs_rustdoc_over_the_workspace(self):
+        self.assertEqual(argv_of(self.plan("app/src/main.rs"))["rustdoc"], list(check.RUSTDOC))
 
     def test_a_read_path_runs_its_readers_and_lints_nothing(self):
         plan = self.plan("fixtures/a.sql")

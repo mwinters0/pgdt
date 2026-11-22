@@ -61,12 +61,12 @@ pub mod internal {
 
 /// **Bump whenever a persisted field is added, removed or reshaped.** A cache
 /// written under a different version is unusable
-/// ([`pgdt_dump::cache::Unusable::UnsupportedVersion`]) rather than partially trusted
+/// (`pgdt_dump::cache::Unusable::UnsupportedVersion`) rather than partially trusted
 /// (`docs/design/roadmap.md`, "Four decisions that keep later phases
 /// additive"); pre-1.0 a bump is free, nothing migrates (`CLAUDE.md`,
 /// "Pre-1.0"), and nothing records it (`docs/design/decisions.md`, "D22").
 /// A new way of *reading* an existing on-disk shape needs no bump:
-/// [`pgdt_dump::cache::LoadedCache::is_complete`] reinterprets `scanned_through` against an extent
+/// `pgdt_dump::cache::LoadedCache::is_complete` reinterprets `scanned_through` against an extent
 /// already stored. A new way of *choosing* what an unchanged field holds does:
 /// a block recording the request that sized it is read back as already sized
 /// under it, so a cache whose sizes today's rule would not choose is as

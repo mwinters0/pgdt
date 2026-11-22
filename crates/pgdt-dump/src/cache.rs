@@ -43,10 +43,10 @@
 //! every step of that protocol in one call; a caller with no source reads the
 //! cache alone ([`OfflineCache`]).
 //!
-//! The comparisons, and which signals bind, are [`identity`]'s; the file's
+//! The comparisons, and which signals bind, are `identity`'s; the file's
 //! format and what a read of it finds, [`file`]'s; a cache read against its
-//! source and written beside it, [`store`]'s; how a caller asks for the
-//! cache handled, [`mode`]'s; and the open, [`open`]'s.
+//! source and written beside it, `store`'s; how a caller asks for the
+//! cache handled, `mode`'s; and the open, `open`'s.
 
 pub(crate) mod file;
 pub(crate) mod identity;

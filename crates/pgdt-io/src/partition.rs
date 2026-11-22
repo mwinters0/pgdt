@@ -70,7 +70,7 @@ pub enum RetainedUnit {
     /// the leader's window guarantees and a query's cut does not** — `KD23`.
     /// `pgdt_mapping::interior::run_region` sizes its window with
     /// [`Partitioning::window_end`] and is held to
-    /// [`BOUNDARIED_PARTITION_UNITS`](crate::partition::BOUNDARIED_PARTITION_UNITS); `pgdt_query`'s `plan_partitions` cuts a
+    /// `BOUNDARIED_PARTITION_UNITS`; `pgdt_query`'s `plan_partitions` cuts a
     /// whole `CopyBlock` into `min(workers, max_partitions)` pieces, so a
     /// piece may span more units than `partition_bytes` charged for.
     Partition,
@@ -89,16 +89,16 @@ pub enum PartitionRead {
     /// `ReadOptions::chunk_size_bytes` at a time, repeating until the piece is
     /// consumed. A plain file's answer, and **the default, for the reason
     /// [`RetainedUnit::ReadChunk`] is one**: a chunk-sized read is the
-    /// announced length, so [`BufferPool::keeps`](crate::source::pool::BufferPool::keeps) pools every buffer a worker
+    /// announced length, so `BufferPool::keeps` pools every buffer a worker
     /// takes, where a partition-length read would allocate a buffer `keeps`
     /// refuses to pool.
     #[default]
     Chunked,
     /// One of the source's own `unit`s in a single call — the whole piece
     /// where the piece is one unit, which is what
-    /// [`BOUNDARIED_PARTITION_UNITS`](crate::partition::BOUNDARIED_PARTITION_UNITS) makes it. A block-decoding source's
+    /// `BOUNDARIED_PARTITION_UNITS` makes it. A block-decoding source's
     /// answer, where that read is a **zero-copy slice** of a block the worker
-    /// was going to decode anyway, against one [`BlockCache::claim`](crate::source::compressed::blocks::BlockCache::claim) per
+    /// was going to decode anyway, against one `BlockCache::claim` per
     /// chunk on the chunked arm.
     ///
     /// **The unit is what bounds the buffer, and it is the source's number
@@ -111,7 +111,7 @@ pub enum PartitionRead {
     /// (`docs/design/decisions.md`, "D8").
     Whole {
         /// The source's own unit, in bytes — the decoded unit on the
-        /// block-decoding path, where [`BlockCache::unit`](crate::source::compressed::blocks::BlockCache::unit)
+        /// block-decoding path, where `BlockCache::unit`
         /// is the codec's largest unit. Never zero: a source with no unit has
         /// nothing to state and stays [`PartitionRead::Chunked`].
         unit: u64,
@@ -204,8 +204,8 @@ impl Partitioning {
     /// **the buffers the source itself allocates per partition**, and nothing
     /// else.
     ///
-    /// For a plain file that is [`PLAIN_PARTITION_CHUNKS`](crate::source::local::PLAIN_PARTITION_CHUNKS) read chunks, capped
-    /// at [`POOL_MAX_BYTES`](crate::source::pool::POOL_MAX_BYTES) and floored at one chunk, which is the **cut**
+    /// For a plain file that is `PLAIN_PARTITION_CHUNKS` read chunks, capped
+    /// at `POOL_MAX_BYTES` and floored at one chunk, which is the **cut**
     /// size and not what a worker of it holds, so this over-bills that source
     /// (`KD25`). For a block-decoding compressed one it
     /// is the block unit **once** — the block being decoded is the block the
@@ -241,12 +241,12 @@ impl Partitioning {
     }
 
     /// Whether a smaller read chunk makes one reader of this source cheaper —
-    /// the question a plan note's [`pgdt_query::PlanLever::SmallerReadChunk`]
+    /// the question a plan note's `pgdt_query::PlanLever::SmallerReadChunk`
     /// answers of [`Partitioning::partition_bytes`].
     ///
     /// **Read off how a reader reads**: a [`PartitionRead::Chunked`] reader
     /// holds chunk buffers, so what it is charged is a count of chunks — a
-    /// plain file's [`PLAIN_PARTITION_CHUNKS`](crate::source::local::PLAIN_PARTITION_CHUNKS), and the one chunk a compressed
+    /// plain file's `PLAIN_PARTITION_CHUNKS`, and the one chunk a compressed
     /// source's piecewise arm charges. A [`PartitionRead::Whole`] reader holds
     /// the source's own unit, a decoded block the chunk does not size, and a
     /// source charging nothing has no reader cost to lower.
@@ -276,7 +276,7 @@ impl Partitioning {
     /// - [`PartitionBoundaries::Anywhere`] has no seams to respect, so a
     ///   window is `want` charges wide;
     /// - [`PartitionBoundaries::At`] ends the window at the
-    ///   **`want × `[`BOUNDARIED_PARTITION_UNITS`]-th boundary strictly past
+    ///   **`want × ``BOUNDARIED_PARTITION_UNITS`-th boundary strictly past
     ///   `start`**, so the window holds `want` pieces of that many units each
     ///   and [`cut`]'s thinning picks every `k`-th boundary.
     ///   Fewer boundaries left is the region's tail: the window runs to

@@ -64,7 +64,7 @@ pub fn jsonb_order(text: FieldText<'_>, bound: Option<&OrderKey>) -> Option<Orde
 /// declared PostgreSQL types with a total order (I34), and are carried as
 /// their position in that order (`docs/design/decisions.md`, "D56"). A
 /// `real`/`double precision` special is not here: IEEE has all three, so the
-/// column's own decoder yields them inside `Float` and [`pg_float_cmp`]
+/// column's own decoder yields them inside `Float` and `pg_float_cmp`
 /// orders them PostgreSQL's way.
 #[derive(Debug, Clone, PartialEq)]
 pub enum OrderKey {
@@ -92,7 +92,7 @@ pub enum OrderKey {
     },
     Network(NetworkKey),
     /// A `jsonb` document, with a top-level scalar already wrapped in the
-    /// pseudo-array PostgreSQL stores it in — see [`jsonb_key`].
+    /// pseudo-array PostgreSQL stores it in — see `jsonb_key`.
     Jsonb(Jsonb),
     Bytes(Vec<u8>),
     Text(String),
@@ -233,7 +233,7 @@ fn network_key(text: &str, cidr: bool) -> Read<OrderKey> {
 /// for the filter's own literal `Error::PredicateValueDecode`, raised before
 /// a row is read.
 ///
-/// A special value is answered by [`special_order_key`] first: it is a legal
+/// A special value is answered by `special_order_key` first: it is a legal
 /// value of the declared type that the *Arrow* type cannot hold, a separate
 /// population from text that is malformed for the column.
 ///
@@ -468,7 +468,7 @@ pub(crate) fn pg_float_cmp(a: f64, b: f64) -> Ordering {
 }
 
 /// Rank first, value second. A special value on either side is decided by
-/// [`OrderKey::rank`] alone, so two of the same special are equal —
+/// `OrderKey::rank` alone, so two of the same special are equal —
 /// `-infinity = -infinity`, `infinity = infinity`, `NaN = NaN` (I34) — and a
 /// special against a finite never has to name a number.
 ///
@@ -478,7 +478,7 @@ pub(crate) fn pg_float_cmp(a: f64, b: f64) -> Ordering {
 /// test `the_key_is_a_total_order_over_every_committed_value` pins it.
 ///
 /// Both sides come from one column's [`CompareKind`], so a finite pair of
-/// two representations is unreachable here; [`order_keys`] is the comparison
+/// two representations is unreachable here; `order_keys` is the comparison
 /// that answers one.
 pub fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
     order_keys(a, b).unwrap_or_else(|| {

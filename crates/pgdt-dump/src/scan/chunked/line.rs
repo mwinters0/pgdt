@@ -106,7 +106,7 @@ impl CarriedLine {
 /// rather than copied and unmapped on drop, so none of an outgrown buffer
 /// stays resident beside its successor, and nothing waits on an allocator's
 /// purge (`docs/design/runtime-invariants.md`, "RT29"). **It grows in steps
-/// of [`step`], its start kept aligned to one**, so its commit, address space
+/// of `step`, its start kept aligned to one**, so its commit, address space
 /// and resident set are what it was reserved for or has written, whichever
 /// is longer, and less than one step more, and
 /// the kernel can back each step it fills with a transparent huge page and

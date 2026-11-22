@@ -34,8 +34,8 @@ use pgdt_core::CopyHeader;
 use pgdt_core::Error;
 
 /// What a read does with a field its type's `*_in` refuses
-/// ([`pgdt_codec::decode::Unread::Refused`]), stated for a parse as `pgdt_mapping::map_file`'s argument
-/// and for a query on [`pgdt_query::QueryOptions`] (`docs/design/decisions.md`,
+/// (`pgdt_codec::decode::Unread::Refused`), stated for a parse as `pgdt_mapping::map_file`'s argument
+/// and for a query on `pgdt_query::QueryOptions` (`docs/design/decisions.md`,
 /// "D103").
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PostgresInvalidValues {
@@ -386,7 +386,7 @@ pub struct ColumnStatisticsParts {
     pub null_counts: Vec<u64>,
     /// Present for a scalar column, in the register's order where that is
     /// exact and DataFusion semantics' otherwise — as its text for a column
-    /// nothing declared ([`pgdt_codec::ResolvedColumn::bounds_kinds`]):
+    /// nothing declared (`pgdt_codec::ResolvedColumn::bounds_kinds`):
     /// [`BoundsSet::Primary`].
     pub bounds: Option<ColumnBounds>,
     /// A second set in DataFusion semantics' order, present only where the
@@ -407,7 +407,7 @@ pub struct ColumnStatisticsParts {
 }
 
 /// Which of a column's stored sets of bounds and row order a statistic is read
-/// from ([`pgdt_codec::compare::ComparisonPlan::bounds_kinds`]).
+/// from (`pgdt_codec::compare::ComparisonPlan::bounds_kinds`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoundsSet {
     /// The register's order where it is exact, DataFusion semantics'
@@ -421,7 +421,7 @@ pub enum BoundsSet {
 /// Which values a reading of a column's statistics takes as its values, and
 /// which as NULL — a column's type being unable to hold some that PostgreSQL
 /// accepts (`docs/design/decisions.md`, "D96", "D97"). A query's is
-/// [`pgdt_query::QueryOptions::statistics_view`].
+/// `pgdt_query::QueryOptions::statistics_view`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatisticsView {
     /// Every value, in PostgreSQL's order, a special value ranked

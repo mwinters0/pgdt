@@ -47,7 +47,7 @@ pub struct MapRun {
     /// The map as it stands after the run: whole-file when `interrupted` is
     /// false or the interrupt came during the back-fill, and otherwise
     /// everything up to the last *spliced* watermark, which is also the last
-    /// save ([`SaveThrottle`]).
+    /// save (`SaveThrottle`).
     pub index: DumpIndex,
     /// The frontier this run started from.
     pub resumed_from: u64,

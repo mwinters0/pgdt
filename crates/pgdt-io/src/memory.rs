@@ -10,10 +10,10 @@ use std::path::{Path, PathBuf};
 /// nor a limit says otherwise.
 ///
 /// **It is the serial path's budget and deliberately not the largest block
-/// anyone might write**: [`POOL_DEPTH`](crate::source::pool::POOL_DEPTH) slots at the largest chunk size the
+/// anyone might write**: `POOL_DEPTH` slots at the largest chunk size the
 /// `chunk-size` figure measured, so no chunk size in that range loses a slot
 /// to it. It is also the line a compressed source's whole-block decode is
-/// refused above ([`BlockCache::affordable`](crate::source::compressed::blocks::BlockCache::affordable)). See
+/// refused above (`BlockCache::affordable`). See
 /// `docs/design/decisions.md`, "D3".
 pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 
@@ -31,13 +31,13 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// [`MEMORY_MARGIN_PERCENT`] of the limit**, a cgroup's killer reading one
 /// run's peak. This is the smallest candidate measured against that criterion
 /// (`reserve`); what it covers is the remainder above
-/// [`BlockCache::reader_bytes`](crate::source::compressed::blocks::BlockCache::reader_bytes) and not a per-reader term, the block pool's
+/// `BlockCache::reader_bytes` and not a per-reader term, the block pool's
 /// retention list being billed by [`WorkerMemory`](crate::WorkerMemory).
 ///
 /// **It is the cap, and it is not the bound on that excess** — that is
-/// [`MEMORY_UNPOOLED_BOUND`], which [`margin_allowance`] predicts with. This
+/// [`MEMORY_UNPOOLED_BOUND`], which `margin_allowance` predicts with. This
 /// one comes off the top of the allowance and decides what
-/// [`BlockCache::affordable`](crate::source::compressed::blocks::BlockCache::affordable) sees, so **raising it is also what declines the
+/// `BlockCache::affordable` sees, so **raising it is also what declines the
 /// block path**. One constant, taken from the compressed leg, a source's own
 /// answer being downstream of recognition and so of I/O.
 ///
@@ -92,22 +92,22 @@ pub const MEMORY_RESERVE: u64 = 384 << 20;
 /// the few hundred bytes under it its rounding down reaches, nowhere below.
 ///
 /// **It bounds the count, and so the budget that count spends**:
-/// [`Parallelism::fit`](crate::Parallelism::fit) keeps one worker at whatever the
+/// `Parallelism::fit` keeps one worker at whatever the
 /// cap is and reports the budget that count spends, up to the cap, and
-/// [`BlockCache::affordable`](crate::source::compressed::blocks::BlockCache::affordable) reads the budget the cap leaves, lowered only by
-/// the holdings [`Parallelism::within_shared`](crate::Parallelism::within_shared) cannot fit under the margin.
+/// `BlockCache::affordable` reads the budget the cap leaves, lowered only by
+/// the holdings `Parallelism::within_shared` cannot fit under the margin.
 ///
 /// **What a gathering pass holds is inside it too**, and a held line: the
 /// statistics account and the ledger are billed against this same margin,
-/// [`margin_room`] being what the resolved arrangement leaves under it, and a
+/// `margin_room` being what the resolved arrangement leaves under it, and a
 /// block that does not fit declining (`docs/design/decisions.md`, "D85",
 /// "D157").
 pub const MEMORY_MARGIN_PERCENT: u64 = 20;
 
 /// What a scan holds resident **outside the pools the budget bills**, bounded:
 /// the runtime's threads, the allocators' per-thread retention, the decoder
-/// state a compressed source keeps beyond [`BlockCache::reader_bytes`](crate::source::compressed::blocks::BlockCache::reader_bytes), and
-/// the binary itself. [`margin_allowance`] predicts with it, and nothing else
+/// state a compressed source keeps beyond `BlockCache::reader_bytes`, and
+/// the binary itself. `margin_allowance` predicts with it, and nothing else
 /// reads it.
 ///
 /// **A bound, not a term, and it is read off a grid rather than fitted**: the

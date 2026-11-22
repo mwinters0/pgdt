@@ -335,7 +335,7 @@ const DAY_MICROS: i64 = 86_400_000_000;
 
 /// Whether `micros` since midnight is a time of day a `time` holds,
 /// `24:00:00` included, as `time_overflows` bounds it: what
-/// [`time_of_day_micros`] reads and a renderer may write.
+/// `time_of_day_micros` reads and a renderer may write.
 pub fn time_in_range(micros: i64) -> bool {
     (0..=DAY_MICROS).contains(&micros)
 }
@@ -440,7 +440,7 @@ pub(crate) fn timestamp_micros_wide(s: &str, with_tz: bool) -> Read<i128> {
 }
 
 /// Whether `unix_micros` from the 1970 UTC epoch is an instant a timestamp
-/// holds, `IS_VALID_TIMESTAMP`'s range: what [`timestamp_micros_wide`] reads
+/// holds, `IS_VALID_TIMESTAMP`'s range: what `timestamp_micros_wide` reads
 /// and a renderer may write. Wide because the range's end is past what `i64`
 /// counts from 1970.
 pub fn timestamp_in_range(unix_micros: i128) -> bool {
@@ -620,7 +620,7 @@ pub(crate) fn interval_parts(text: &str) -> Read<(i32, i32, i64)> {
 
 /// `interval`, as Arrow's `Interval(MonthDayNano)` holds it: months, days and
 /// a **nanosecond** time part, which are exactly PostgreSQL's own three
-/// independent fields. `None` for a spelling outside [`interval_parts`]'s
+/// independent fields. `None` for a spelling outside `interval_parts`'s
 /// grammar, which `interval_in` may read, and for three classes of value,
 /// each a decode failure by construction the way [`decode_date32`]'s
 /// infinities are:
@@ -630,7 +630,7 @@ pub(crate) fn interval_parts(text: &str) -> Read<(i32, i32, i64)> {
 /// - a time part past `2562047:47:16.854775807` — PostgreSQL's field is
 ///   `int64` *microseconds* against Arrow's `int64` nanoseconds, a
 ///   thousandth of the range, and nothing normalizes hours into days (I40);
-/// - a value `interval_in` refuses, which [`interval_parts`] refuses (I62).
+/// - a value `interval_in` refuses, which `interval_parts` refuses (I62).
 // deficiency: KD99 — a field is read as written, not through its column's
 // typmod: `AdjustIntervalForTypmod` zeroes the fields right of an `interval`'s
 // qualifier and rounds its time part to the precision, and

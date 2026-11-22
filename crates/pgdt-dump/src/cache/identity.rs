@@ -83,7 +83,7 @@ pub enum WeakIdentity {
     /// Neither side states a `Last-Modified`, and the entity tags are equal
     /// once a `W/` is set aside but at least one is weak: a weak tag promises
     /// equivalent content, not the bytes a map of offsets describes, so it
-    /// confirms nothing ([`SourceIdentity::weak_against`]). **Silent by
+    /// confirms nothing (`SourceIdentity::weak_against`). **Silent by
     /// default, as `Absent` is** — an advisory warning reports evidence of a
     /// change, and there is none — and refused under [`StrictIdentity::time`],
     /// naming the weak tag. Both tags travel, so a source stating a strong one

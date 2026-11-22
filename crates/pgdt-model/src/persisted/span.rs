@@ -19,7 +19,7 @@ use pgdt_core::CopyHeader;
 /// `[start, end)` never overlaps another span's range, and every span
 /// together tiles the file, a partial scan's unread rest one `Unscanned`
 /// span — or tiles it to the scan's watermark where the file's end is not
-/// known yet — see [`pgdt_dump::check_tiling`].
+/// known yet — see `pgdt_dump::check_tiling`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Span {
     pub start: u64,
@@ -35,7 +35,7 @@ pub struct Span {
     pub database: Option<String>,
     /// The span's own bytes, sliced from the file by offset and stored in the
     /// cache so `pgdt info` answers without re-reading the dump
-    /// (`docs/design/decisions.md`, "D30"). `None` until [`pgdt_dump::attach_text`] has
+    /// (`docs/design/decisions.md`, "D30"). `None` until `pgdt_dump::attach_text` has
     /// run, and permanently `None` for [`SpanBody::Data`] and
     /// [`SpanBody::Unscanned`] spans, whose bytes are unbounded.
     pub text: Option<SpanText>,
@@ -141,7 +141,7 @@ pub struct InsertRun {
 /// The large-object data region (I12) — every `BEGIN;`/`COMMIT;`-wrapped
 /// `lo_open`/`lowrite`/`lo_close` run in the file, merged into a single `Data`
 /// span regardless of how many archive entries `pg_dump` split it across (one
-/// on v13-16, one per object on v17+ — see [`pgdt_dump::internal::Builder::on_large_object_start`]).
+/// on v13-16, one per object on v17+ — see `pgdt_dump::internal::Builder::on_large_object_start`).
 /// No identity at all: the region's only identity is the OID in each
 /// `lo_create('<oid>')` opener, and recovering it costs a walk of the whole
 /// region (`docs/design/decisions.md`, "D33").
@@ -178,7 +178,7 @@ pub enum SpanBody {
     Data(DataBlock),
     /// A `\connect <name>` meta-command — distinct from
     /// [`Framing`](SpanBody::Framing) because
-    /// [`pgdt_dump::dump_metadata_from_spans`] needs the database name
+    /// `pgdt_dump::dump_metadata_from_spans` needs the database name
     /// itself to reconstruct `DumpMetadata`'s per-database segmenting.
     Connect {
         database: String,
@@ -194,7 +194,7 @@ pub enum SpanBody {
     },
     /// A `--binary-upgrade` dump's `ALTER TYPE <name> ADD VALUE '<label>';`
     /// (I6), or a hand-written one placing the label `BEFORE` or `AFTER`
-    /// another — recognized so [`pgdt_dump::dump_metadata_from_spans`] can
+    /// another — recognized so `pgdt_dump::dump_metadata_from_spans` can
     /// fold the label into the [`TypeDef`](SpanBody::TypeDef) span it
     /// targets. `placement` is `None` for the label appended, which is all
     /// `pg_dump` writes.
@@ -206,7 +206,7 @@ pub enum SpanBody {
     /// A `--binary-upgrade` dump's `ALTER TYPE <name> DROP ATTRIBUTE
     /// <attr>;`, dropping a composite's placeholder for an attribute the type
     /// has dropped — recognized so
-    /// [`pgdt_dump::dump_metadata_from_spans`] can remove the field from
+    /// `pgdt_dump::dump_metadata_from_spans` can remove the field from
     /// the [`TypeDef`](SpanBody::TypeDef) span it targets.
     AlterTypeDropAttribute {
         type_name: String,
@@ -216,7 +216,7 @@ pub enum SpanBody {
     /// `pgdt_dump::ddl` does not read — `RENAME VALUE`, `ADD VALUE IF NOT
     /// EXISTS`, a label no plain `'…'` literal spells — naming the type it alters, or `None`
     /// where it names none this grammar reads. No `pg_dump` writes one; it is
-    /// recognized so [`pgdt_dump::dump_metadata_from_spans`] can mark
+    /// recognized so `pgdt_dump::dump_metadata_from_spans` can mark
     /// the labels it may have changed inexact.
     EnumLabelsUnread {
         type_name: Option<String>,
@@ -226,7 +226,7 @@ pub enum SpanBody {
     /// `--binary-upgrade` dump's `INHERIT <parent>`, `OF <type>` or `ADD
     /// CONSTRAINT … CHECK`, a pre-v18 `SET NOT NULL`, an `ATTACH PARTITION`,
     /// whose `table` is the partition it attaches — recognized so
-    /// [`pgdt_dump::dump_metadata_from_spans`] can fold the reference
+    /// `pgdt_dump::dump_metadata_from_spans` can fold the reference
     /// into the [`Table`](SpanBody::Table) span it targets.
     AlterTableReference {
         table: String,
@@ -342,7 +342,7 @@ pub struct BlockRecord {
     pub checked_in_full: bool,
     /// What a pass reading every row of this block found — its array-shape
     /// census and its unrepresentable count — and `None` for a block mapped
-    /// at the [`pgdt_mapping::statistics::StatisticsLevel::Metadata`] level,
+    /// at the `pgdt_mapping::statistics::StatisticsLevel::Metadata` level,
     /// which records no census of its rows
     /// (`docs/design/decisions.md`, "D35", "D96"). Recording one puts the
     /// block at the data level.

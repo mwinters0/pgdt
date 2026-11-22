@@ -144,7 +144,7 @@ impl CompressionShape {
 /// does (`docs/design/decisions.md`, "D67").
 ///
 /// **Opaque to Rust, whole to serde**: the fields stay private, so no caller
-/// matches on [`SourceIdentity`] or reads the index through this, and its
+/// matches on `SourceIdentity` or reads the index through this, and its
 /// `Serialize` is the persisted types' own, variant tags included. The index
 /// serializes as `compression_index`, the name `compression` being
 /// [`CompressionShape`]'s wherever the two sit side by side. Moved out of the
@@ -200,7 +200,7 @@ pub struct LoadedCache {
     /// What the source's origin says against the recorded one, as advisory
     /// as `weak`.
     pub origin: OriginMatch,
-    /// [`CacheFile::extent`]: a reporting caller states coverage against
+    /// `CacheFile::extent`: a reporting caller states coverage against
     /// it, and a cache-only caller has no live source to stat.
     pub extent: Extent,
     /// The container's shape where one sits under these offsets and `None` for

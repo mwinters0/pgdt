@@ -229,11 +229,11 @@ impl TableProvider for PgDumpTable {
     /// library as one conjunction. `limit` is left to the plan, which stops
     /// pulling once it is met, after the filter. A column the map proves every
     /// partition emits in order is declared that ordering
-    /// ([`output_orderings`]), so a sort it satisfies is not planned.
+    /// (`output_orderings`), so a sort it satisfies is not planned.
     ///
     /// **What the plan settled is reported here**, to the sink the table was
     /// built with ([`PgDump::table`]), and what statistics pruned
-    /// is the plan node's metric ([`ScanMetrics`]).
+    /// is the plan node's metric (`ScanMetrics`).
     async fn scan(
         &self,
         state: &dyn Session,

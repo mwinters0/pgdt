@@ -724,7 +724,7 @@ fn resolve_array(element: &str, types: &[TypeDef], visits: Visits) -> TypeOutcom
 /// The array check runs first because a declared array type still carries its
 /// element type's own qualification (`public.mood[]` contains a `.` too), and
 /// `pg_dump` never preserves dimensionality (I21). It runs through
-/// [`array_element`], so every spelling of the array-bounds production
+/// `array_element`, so every spelling of the array-bounds production
 /// collapses to the element type plus one array level (I28) before anything
 /// else looks at the string.
 pub fn resolve_declared_type(declared: &str, types: &[TypeDef]) -> TypeOutcome {

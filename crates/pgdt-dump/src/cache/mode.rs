@@ -69,7 +69,7 @@ impl CacheMode {
     /// of equal stored size from different hosts, read in one working
     /// directory, read each other's map. The default path is what makes that
     /// reachable; the origin the cache records is what makes it visible
-    /// ([`OriginMatch`]).
+    /// ([`OriginMatch`](crate::cache::OriginMatch)).
     pub fn resolve(origin: &Origin, cache_path: Option<&Path>) -> CacheMode {
         match cache_path {
             Some(p) => CacheMode::enabled(p),
@@ -180,7 +180,7 @@ impl CacheMode {
     /// is written, by design. A caller whose operation exists to populate the
     /// cache rejects a disabled mode up front with
     /// [`CacheMode::require_enabled`] instead of relying on this. `watch` is
-    /// what an enabled save checks before it writes ([`save`]).
+    /// what an enabled save checks before it writes (`save`).
     pub async fn save(
         &self,
         watch: &SourceWatch,

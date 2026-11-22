@@ -11,7 +11,7 @@ use pgdt_model::{TypeDef, TypeKind};
 
 /// **A position a container holds a value at, which a NULL may sit at** — an
 /// array's element or a composite's field — and whether its type refuses one
-/// there: a `NOT NULL` domain, or a domain over one ([`domain_not_null`]),
+/// there: a `NOT NULL` domain, or a domain over one (`domain_not_null`),
 /// whose `domain_in` `array_in` and `record_in` hand a NULL element or field
 /// (I76). A range's bound is no such position: `range_in` hands an infinite
 /// bound to no input function, so its plan is bare. `plan` is a

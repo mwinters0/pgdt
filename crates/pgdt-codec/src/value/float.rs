@@ -9,7 +9,7 @@ use pgdt_model::PostgresInvalidValues;
 use crate::decode::{Read, Unread};
 use crate::value::libc::{StrtodToken, is_c_space, strtod_token};
 
-/// A float field, as [`float_in`] reads it — or, under
+/// A float field, as `float_in` reads it — or, under
 /// [`PostgresInvalidValues::Ignore`], a spelling it refuses as out of range
 /// read as the parse rounds it: past the largest finite value, that value of
 /// its sign, as `*_out` meant it (I57), and below the smallest, zero.
@@ -28,7 +28,7 @@ pub fn float_field<F: Float>(text: &str, invalid: PostgresInvalidValues) -> Opti
     }
 }
 
-/// What [`float_in`] needs of `f32` and `f64`.
+/// What `float_in` needs of `f32` and `f64`.
 pub trait Float: std::str::FromStr + Copy {
     /// The significand's bits, the implicit one included.
     const SIGNIFICAND_BITS: u32;
@@ -124,12 +124,12 @@ fn format_shortest(neg: bool, digits: &str, exp: i32, sig_digits: i32) -> String
     out
 }
 
-/// `real`'s text, read by [`float_in`].
+/// `real`'s text, read by `float_in`.
 pub fn decode_f32(s: &str) -> Option<f32> {
     float_in(s).ok()
 }
 
-/// `double precision`'s text, read by [`float_in`].
+/// `double precision`'s text, read by `float_in`.
 pub fn decode_f64(s: &str) -> Option<f64> {
     float_in(s).ok()
 }

@@ -54,7 +54,7 @@ pub(super) const ORIGIN_LEADING_BYTES: usize = RECOGNITION_BYTES;
 ///
 /// A probe that fails is **not** cached: the failure belongs to whoever is in
 /// a position to say something about it, which is the open that follows
-/// (see [`pgdt_dump::cache::claim`]).
+/// (see `pgdt_dump::cache::CacheMode::open`).
 #[derive(Debug)]
 pub struct Origin {
     pub(super) location: Location,

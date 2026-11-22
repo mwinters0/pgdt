@@ -106,7 +106,7 @@ pub enum Severity {
     Error,
 }
 
-/// What [`pgdt_dump::check_tiling`] found wrong, if anything.
+/// What `pgdt_dump::check_tiling` found wrong, if anything.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum TilingIssue {
     /// `spans[i]` and `spans[i + 1]` overlap or leave a gap between them.
@@ -172,7 +172,7 @@ pub enum DiagnosticKind {
     /// to check it against (`docs/design/decisions.md`,
     /// "The compressed source and the cache") — unverified, there being no
     /// live source to compare its recorded size and mtime with. Pushed unconditionally by
-    /// [`pgdt_dump::cache::OfflineCache::load`] on every successful
+    /// `pgdt_dump::cache::OfflineCache::load` on every successful
     /// cache-only load, an incomplete one included.
     CacheOffline,
     /// A compressed source has no usable seek structure, so a read inside its

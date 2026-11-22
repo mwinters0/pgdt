@@ -185,9 +185,9 @@ pub fn push_array_null(out: &mut String) {
 /// at `out[mark..]`.
 ///
 /// **The common element needs no quoting and this copies nothing** — a bare
-/// element costs one [`needs_quote`] walk and no move. One that does need
+/// element costs one `needs_quote` walk and no move. One that does need
 /// quoting is taken aside into `scratch` and re-emitted through
-/// [`push_token`]; `scratch` is cleared per element and reused across the
+/// `push_token`; `scratch` is cleared per element and reused across the
 /// whole value, so a value allocates only if some element was quotable, and
 /// again only for a longer one. The scratch is unavoidable: the quoting decision is made
 /// from the *finished* element text and escaping expands it, so there is no
@@ -669,7 +669,7 @@ fn canonical_int2(token: &str) -> Option<i16> {
 ///
 /// A fourth container form sharing nothing with the other three — no wrapper,
 /// no separator an element could contain, no quoting, no escaping and no NULL
-/// element — so it needs neither a [`Syntax`] nor a token scanner.
+/// element — so it needs neither a `Syntax` nor a token scanner.
 ///
 /// Strict, as every `decode_*` here is: an element is read only in the
 /// spelling `pg_itoa` writes, so `+1`, `01`, `-0` and a doubled space are all

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """The per-round checks, each run once, logged whole, summarized short.
 
-A round of work ends on the same nine commands every time -- `cargo fmt
+A round of work ends on the same ten commands every time -- `cargo fmt
 --check`, `cargo clippy`, each library linted alone, the suite under `cargo
-nextest`, the doctests, `module_graph.py`, the scripts' own `unittest`,
-`repoint.py` and `file_limits.py` -- and a session reading their raw
+nextest`, the doctests, `cargo doc`, `module_graph.py`, the scripts' own
+`unittest`, `repoint.py` and `file_limits.py` -- and a session reading their raw
 output pipes it through `grep` and `head` to find the lines that matter, then
 re-runs the suite when the pipe cut what it needed. This runs each command
 once, writes its whole output to a log under `runs/check/`, and prints a
@@ -45,6 +45,12 @@ fails.
 **Clippy passes only with no diagnostic**: its exit status is zero over
 warnings, and a warning left for the next round is one nobody fixes.
 
+**So does rustdoc** (`cargo doc --workspace --no-deps`, under `RUSTDOCFLAGS="-D
+warnings"`): the rendered docs are an embedder's, and a doc link rustdoc cannot
+resolve, or one from a public item to a private one, is dead there. Such a
+name is written as a code span instead, as `module_graph.py`'s docstring
+states; allowing `rustdoc::private_intra_doc_links` would keep them dead.
+
 **Each library is linted alone too** (`--alone`, `run_alone`): one cargo run
 per member holding a library, read off `cargo metadata`, as an embedder builds
 it and then with every target. One workspace build unifies features across
@@ -68,7 +74,7 @@ and then lints combinations nobody builds.
 **The cargo checks run in the release image** (`release.py run`), as the
 invoking user under its memory limit and on every CPU but one physical core's
 (`release.py`, `RESERVE_CORES`): fmt, clippy, the libraries alone, the
-suite, the doctests and the module graph, whose rust-analyzer builds and runs the workspace's build
+suite, the doctests, rustdoc and the module graph, whose rust-analyzer builds and runs the workspace's build
 scripts. A whole-workspace test build compiles and links dozens of binaries at
 once, and on a host without swap one outgrowing memory stalls the whole machine
 rather than failing; under the limit the kernel kills a compiler or a linker
@@ -113,6 +119,11 @@ first of the other three rules it meets gives it:
   under its feature sets, and runs none of its tests, doctests or dependents: clippy reads doc
   comments, and no build reads the rest. A target reading the file still
   runs, by the first rule.
+
+Beside those, **a `.rs` file of a member's own sources** -- outside its
+`tests/`, `benches/` and `examples/`, which `cargo doc` does not read --
+runs rustdoc over the workspace, a comment's change included: a doc link
+in one crate can name another's item.
 - **`docs/`, `.claude/` or a Markdown file** runs nothing. No Rust target
   names such a path or reads `docs/` or `.claude/` whole, a Markdown file in
   a data directory documenting it; the one Rust test reaching one does so
@@ -354,6 +365,27 @@ def summarize_unittest(text: str, exit_code: int) -> Outcome:
     return Outcome("FAILED", headline, tuple(details) or _tail(text))
 
 
+#: Lines rustdoc's output closes a failure with, which name no diagnostic.
+RUSTDOC_TALLY_RE = re.compile(r"^(error: could not document|warning: build failed)")
+
+
+def summarize_rustdoc(text: str, exit_code: int) -> Outcome:
+    """Clippy's reading of rustdoc's diagnostics, each listed once with its
+    location; under `-D warnings` every one is an error."""
+    found = [d for d in _diagnostics(text.splitlines()) if not RUSTDOC_TALLY_RE.match(d[1])]
+    warnings = sum(1 for _, line, _ in found if line.startswith("warning"))
+    errors = len(found) - warnings
+    details: list[str] = []
+    for _, line, where in found:
+        detail = f"{line}  ({where})" if where else line
+        if detail not in details:
+            details.append(detail)
+    headline = f"{warnings} warnings, {errors} errors"
+    if exit_code == 0 and not found:
+        return Outcome("ok", headline)
+    return Outcome("FAILED", headline, tuple(details) or _tail(text))
+
+
 #: `repoint.py`'s two problems that are its meters rather than caps
 #: (`meter_problems`); `test_check` pins them against the real script's output.
 REPOINT_METER_RE = re.compile(
@@ -400,7 +432,12 @@ def summarize_file_limits(text: str, exit_code: int) -> Outcome:
     return Outcome("FAILED", headline, problems or _tail(text))
 
 
-#: The round's nine commands. `every_check` is what a run without
+#: rustdoc over the workspace, every warning an error (`summarize_rustdoc`).
+RUSTDOC = (
+    "env", "RUSTDOCFLAGS=-D warnings", "cargo", "doc", "--workspace", "--no-deps",
+)  # fmt: skip
+
+#: The round's ten commands. `every_check` is what a run without
 #: `--affected` runs: these, the doctests narrowed to the libraries holding one.
 CHECKS: tuple[Check, ...] = (
     Check("fmt", ("cargo", "fmt", "--check"), ".", summarize_fmt, image=True),
@@ -426,6 +463,7 @@ CHECKS: tuple[Check, ...] = (
         summarize_doctest,
         image=True,
     ),
+    Check("rustdoc", RUSTDOC, ".", summarize_rustdoc, image=True),
     Check(
         "graph", ("uv", "run", "module_graph.py"), "scripts", summarize_module_graph, image=True
     ),
@@ -1016,6 +1054,7 @@ def plan_changes(
         for t in p.targets
     }
     whole, roots, local, linted = None, set(), set(), set()
+    documented = False
     reader_ids: set[tuple[str, str]] = set()
     for path in changed:
         found = {
@@ -1033,6 +1072,7 @@ def plan_changes(
         home = next((p for p in packages if path.startswith(p.dir + "/")), None)
         if home is not None:
             rest = path[len(home.dir) + 1 :]
+            documented |= path.endswith(".rs") and not rest.startswith(PACKAGE_LOCAL)
             if path in comment_only:
                 linted.add(home.name)
             else:
@@ -1079,6 +1119,8 @@ def plan_changes(
         checks.append(Check("nextest", tuple(argv), ".", summarize_nextest, image=True))
     if doc_pkgs:
         checks.append(doctest_check(doc_pkgs))
+    if documented:
+        checks.extend(c for c in CHECKS if c.name == "rustdoc")
     if whole_pkgs:
         checks.extend(c for c in CHECKS if c.name == "graph")
     parts = [f"{_paths(len(changed))} changed since HEAD"]

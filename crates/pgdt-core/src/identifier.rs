@@ -106,7 +106,7 @@ impl<'a> Cursor<'a> {
 
 /// Parse a (possibly schema-qualified) type name from the start of `s` into
 /// its **canonical spelling**, returning it and how many bytes of `s` it
-/// consumed — what [`pgdt_model::TypeDef::name`] holds, and what every lookup of a type by
+/// consumed — what `pgdt_model::TypeDef::name` holds, and what every lookup of a type by
 /// name compares ([`canonical_type_name`]).
 ///
 /// Each part is read as the server reads it — an unquoted identifier folded to
