@@ -11,6 +11,7 @@ from pathlib import Path
 
 from measurement import config
 from measurement import gating
+from measurement import runspec
 from measurement import shapes
 from measurement import staging
 from measurement import test_support
@@ -188,6 +189,40 @@ class TimeRunHandlesAKill(unittest.TestCase):
                 session.time_run(spec)
         self.assertEqual(asked, ["alloc:jemalloc"])
         self.assertNotIn("gate twin", str(caught.exception))
+
+
+class TimeRunMountsTheCacheOut(unittest.TestCase):
+    """The warm directory is mounted where a shape writes its cache out, for
+    the shapes `shapes.CACHE_OUT_SHAPES` names and no other."""
+
+    TIMED = "\nreal\t0m0.012s\nuser\t0m0.008s\nsys\t0m0.004s\n"
+
+    def _mounts(self, command):
+        cfg = config.Config()
+        session = timing.Session(cfg, staging.Stager(cfg, lambda _m: None), lambda _m: None)
+        session.figure_id = "blocks"
+        session.input_path = lambda name, regime: Path("/dev/null")
+        session.binary_path = lambda which: Path("/dev/null")
+        argvs = []
+
+        def run(argv, *a, **k):
+            argvs.append(argv)
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr=self.TIMED)
+
+        with unittest.mock.patch.object(subprocess, "run", run):
+            session.time_run(runspec.RunSpec("pgdt", "blocks4000", command, "warm", command))
+        return [argvs[-1][i + 1] for i, a in enumerate(argvs[-1]) if a == "-v"]
+
+    def test_a_cache_out_shape_has_the_warm_directory_at_its_mount(self):
+        for command in shapes.CACHE_OUT_SHAPES:
+            with self.subTest(command=command):
+                self.assertIn(
+                    f"{config.Config().warm_dir}:{shapes.CACHE_OUT_MOUNT}", self._mounts(command)
+                )
+
+    def test_another_shape_has_nothing_there(self):
+        mounts = self._mounts("parse")
+        self.assertFalse([m for m in mounts if m.endswith(f":{shapes.CACHE_OUT_MOUNT}")], mounts)
 
 
 if __name__ == "__main__":

@@ -1203,6 +1203,14 @@ RESERVE_STEP_BUDGETS: tuple[int, ...] = (
 #: one a reader of the table is relying on.
 RESERVE_FIT_MIN_COUNTS = 3
 
+#: Where a shape that writes its cache out of the container's own layer writes
+#: it: `Session.time_run` mounts the sitting's warm directory here for every
+#: shape in `CACHE_OUT_SHAPES`, and for no other.
+CACHE_OUT_MOUNT = "/out"
+
+#: The shapes writing their cache under `CACHE_OUT_MOUNT`.
+CACHE_OUT_SHAPES: tuple[str, ...] = ("parse-cache-out",)
+
 
 def _script(command: str) -> str:
     """The in-container shell for one command shape.
@@ -1285,10 +1293,8 @@ def _script(command: str) -> str:
     if command == "parse-cache-out":
         # The cache goes to the mounted tmpfs, not the container's own layer,
         # and the removal is outside the timer.
-        return (
-            "rm -f /out/measure.pgdt; "
-            f"{q} parse --source /dump.sql --cache /out/measure.pgdt {j} {ns} >/dev/null"
-        )
+        cache = f"{CACHE_OUT_MOUNT}/measure.pgdt"
+        return f"rm -f {cache}; {q} parse --source /dump.sql --cache {cache} {j} {ns} >/dev/null"
     if command in ("query-typed", "query-strings"):
         # Over a data-level cache built ahead of the timer (`DATA_LEVEL_QUERIES`).
         mode = command.split("-")[1]

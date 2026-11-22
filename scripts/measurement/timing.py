@@ -497,8 +497,8 @@ class Session:
             else ""
         )
         cpus = self.leg_cpus(spec)
-        if spec.command == "parse-cache-out":
-            mounts.append(f"{self.cfg.warm_dir}:/out")
+        if spec.command in shapes.CACHE_OUT_SHAPES:
+            mounts.append(f"{self.cfg.warm_dir}:{shapes.CACHE_OUT_MOUNT}")
         # The instrument writes to a file rather than to a stream, so the leg
         # needs somewhere to put it and a variable saying where. Neither
         # touches the argv: the command shape a figure records is the shape

@@ -92,6 +92,16 @@ class Scripts(unittest.TestCase):
         script = shapes._script("parse-cache-out")
         self.assertLess(script.index("rm -f"), script.index("time "))
 
+    def test_the_cache_out_shapes_and_only_they_write_under_its_mount(self):
+        # `Session.time_run` mounts the warm directory for exactly these, so a
+        # shape writing there unnamed would write into the container's layer.
+        for command in shapes.command_shapes():
+            with self.subTest(command=command):
+                self.assertEqual(
+                    f" {shapes.CACHE_OUT_MOUNT}/" in shapes._script(command),
+                    command in shapes.CACHE_OUT_SHAPES,
+                )
+
     def test_an_unknown_command_is_an_error(self):
         with self.assertRaises(ValueError):
             shapes._script("no-such-command")
