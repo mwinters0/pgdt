@@ -73,7 +73,10 @@ PREBUILT_MOUNT = "/out"
 #: mattered: `parallel-peak-rss` once measured 3067 MiB inside a 3072 MiB
 #: container, and a licence written across the harness would have swallowed it
 #: into a footnote. A shape outside this tuple that is killed still raises, and
-#: says so in those words, which the exit code cannot.
+#: says so in those words, which the exit code cannot. **So it is granted here,
+#: in the session whose verdict on a kill it changes**, never on a figure's
+#: declaration: one site keeps widening it a visible change, where a field
+#: would let any figure set it.
 #:
 #: **A censored cell is not a number.** The reading is a lower bound on a peak
 #: the process never reached, so it enters neither a fit nor a headroom column;
