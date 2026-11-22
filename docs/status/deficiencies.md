@@ -592,6 +592,5 @@ than reading as a phase nobody has sliced.
 - **KD183** — a resume token's fingerprint names its table by `schema.table`
   alone, so a token from one database's table resumes on a table of that name
   in another database of the same file, read under equal options, where it is
-  meant to be refused as another table's. **(c) unowned**; promoted by an
-  embedder resuming across a `pg_dumpall` file's databases. Detail:
+  meant to be refused as another table's. **(b) owned by M313**. Detail:
   `crates/pgdt-query/src/stream/resume.rs`.

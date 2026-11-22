@@ -74,3 +74,5 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
+| M313 | | A resume token's fingerprint (`stream/resume.rs`, `query_fingerprint`) hashes the table's database beside `schema.table`, so a token one database's table produced is refused as another table's on a same-named table of another database (`Error::ResumeQueryMismatch`), a test resuming across two databases of one `pg_dumpall` file; strikes `KD183` | | [2026-11-22](../status/history/2026-11-22.md), "M313, M314: a resume token's database, and rustdoc's warnings" |
+| M314 | | `cargo doc --workspace --no-deps` builds without a warning: each doc link rustdoc cannot resolve, a link into a higher crate most of them, and each from a public item's doc to a private item, rewritten | | [2026-11-22](../status/history/2026-11-22.md), "M313, M314: a resume token's database, and rustdoc's warnings" |
