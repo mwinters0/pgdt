@@ -1,6 +1,8 @@
 # The release publication: a pushed `v*` tag publishes the draft Release
 # `release-build.yml` made for it, once the arm64 archive attached to it has
-# run on arm64 (`scripts/release_ci.py`, "Build first, tag second").
+# run on arm64 (`scripts/release_ci.py`, "Build first, tag second"), and
+# tags the container image assembled from its two archives once each
+# architecture has run it (`scripts/release_container.py`).
 #
 # The tag must be annotated, its message becomes the Release body, and the
 # draft is found by the tag's name and checked against the tag's commit; a tag
@@ -20,9 +22,9 @@ env:
   PGDT_RELEASE_CONTAINER: docker
 
 jobs:
-  # The draft's arm64 archive, the bytes to be published: a draft is visible
-  # only to a token with push access, so this job hands it to the smoke run,
-  # which holds none.
+  # The draft's archives, the bytes to be published: a draft is visible only
+  # to a token with push access, so this job hands them to the smoke run and
+  # the image, which hold none.
   fetch:
     runs-on: ubuntu-24.04
     permissions:
@@ -34,10 +36,19 @@ jobs:
       - run: python3 scripts/release_ci.py fetch --target=aarch64-unknown-linux-gnu
         env:
           GH_TOKEN: ${{ github.token }}
+      - run: python3 scripts/release_ci.py fetch --target=x86_64-unknown-linux-gnu
+        env:
+          GH_TOKEN: ${{ github.token }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: archive-aarch64-unknown-linux-gnu
-          path: dist/*.tar.xz
+          path: dist/*-aarch64-unknown-linux-gnu.tar.xz
+          if-no-files-found: error
+          compression-level: 0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: archive-x86_64-unknown-linux-gnu
+          path: dist/*-x86_64-unknown-linux-gnu.tar.xz
           if-no-files-found: error
           compression-level: 0
 
@@ -58,15 +69,80 @@ jobs:
           path: dist
       - run: python3 scripts/release_ci.py smoke --target=aarch64-unknown-linux-gnu
 
-  publish:
+  # The image, from the draft's two archives once both have run: built for
+  # both platforms on this runner, nothing in it compiled or emulated, pushed
+  # untagged, its amd64 manifest run and only then attested -- the arm64
+  # manifest's binary being one no runner built (D109, D171).
+  container:
     needs: [fetch, arm64-smoke]
     runs-on: ubuntu-24.04
     permissions:
-      contents: write
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: archive-*
+          merge-multiple: true
+          path: dist
+      - run: python3 scripts/release_container.py push
+        id: push
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: python3 scripts/release_container.py smoke
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONTAINER_DIGEST: ${{ steps.push.outputs.digest }}
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.push.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.amd64_digest }}
+
+  # The pushed image's arm64 manifest, run on arm64 and held to the archive
+  # the release ships.
+  arm64-container-smoke:
+    needs: container
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: archive-aarch64-unknown-linux-gnu
+          path: dist
+      - run: python3 scripts/release_container.py smoke
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONTAINER_DIGEST: ${{ needs.container.outputs.digest }}
+
+  # The image's tags, then the Release: the publication is the one
+  # irreversible call, so it is last. A publication failing after the tags
+  # leaves them on an image whose release a re-run of this job publishes.
+  publish:
+    needs: [fetch, arm64-smoke, container, arm64-container-smoke]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 scripts/release_container.py tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONTAINER_DIGEST: ${{ needs.container.outputs.digest }}
       - run: python3 scripts/release_ci.py publish
         env:
           GH_TOKEN: ${{ github.token }}

@@ -7,7 +7,7 @@ in its topic's file under `decisions/`, which opens with what the topic is and i
 index and the citation target: cite as `docs/design/decisions.md`, "D12". The rules, the caps and the meter included,
 are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D170 -->
+<!-- decision-watermark: D171 -->
 
 ## I/O, memory and parallelism
 [`decisions/io.md`](decisions/io.md)
@@ -192,3 +192,4 @@ are `docs/process.md`, "The decision register".
 - **D109** arm64's archive is built on the maintainer's machine and attested by its release alone; x86-64's is CI's, with build provenance
 - **D110** The release suite is the round's, less the never-shipped measurement apparatus
 - **D111** CMake is a `mise.toml` pin for the apparatus, and a build is refused where a crate `pgdt` depends on ran it
+- **D171** The GHCR image is the two archives on slim Debian, run on each architecture and tagged before the Release publishes

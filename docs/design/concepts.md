@@ -566,9 +566,10 @@ The image `pgdt` is built in, the archives built there and published, and the
 window its Debian pin must sit in ([`decisions.md`](decisions.md), "D104",
 "D109", "D110"; [`release-invariants.md`](release-invariants.md)).
 
-- **scripts** — `release.py`, `release_ci.py`, `debian_window.py`: the image,
-  the builds and the suite run in it; what the two release workflows do with
-  them; and the pin against the window.
+- **scripts** — `release.py`, `release_ci.py`, `release_container.py`,
+  `debian_window.py`: the image, the builds and the suite run in it; what the
+  two release workflows do with them; the container image the archives are
+  published as (D171); and the pin against the window.
 
 ## The apparatus
 

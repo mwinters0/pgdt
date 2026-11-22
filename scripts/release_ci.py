@@ -40,14 +40,16 @@ bytes from one commit, and a difference is an input the two did not share
 
 The workflows
 (`.github/workflows/release-build.yml`, `release-publish.yml`) hold no logic of
-their own: each `run:` step is one line calling `release.py` or this script,
-the rest being pinned actions that check out, upload, download and attest, so
+their own: each `run:` step is one line calling `release.py`, this script or
+`release_container.py`, the rest being pinned actions that check out, upload,
+download and attest, so
 what a workflow does is what these tests hold it to, and the first live run is
 not the first time any of it has run but for the GitHub calls the tests fake
 (`Gh`). **A workflow never interpolates an input into a
-shell line**: the commit a build is dispatched for and the tag a publish is
-triggered by arrive as environment variables (`INPUT_REF`, `GITHUB_REF_NAME`)
-and are validated here before anything is built or published from them.
+shell line**: the commit a build is dispatched for, the tag a publish is
+triggered by and the image digest one job hands the next arrive as
+environment variables (`INPUT_REF`, `GITHUB_REF_NAME`, `CONTAINER_DIGEST`)
+and are validated before anything is built or published from them.
 
 **A draft is matched by tag.** The build creates it as `v<manifest version>`;
 `attach` and the publish find it by that tag and then check its commit, so a

@@ -13,12 +13,13 @@ it is installed with. A change there surfaces as a release users cannot verify,
 or one announced before it exists, rather than as an error of ours. The
 trigger to walk this file is a release whose rehearsal or publication meets
 something unexpected, a `mise` upgrade (`RL1`), and a change GitHub announces
-to releases, their attestations or their feed (`RL2`, `RL3`).
+to releases, their attestations, their feed or the container registry
+(`RL2`–`RL4`).
 Only the first has a carrier, `/release`'s step 5; the other two are events no
 session sees, and a release meeting the unexpected is their backstop.
 
-**Identifiers are `RL<n>`**, allocated on discovery and never reused. **`RL1`–`RL3`
-are allocated**, and nothing at or below `RL3` is reused.
+**Identifiers are `RL<n>`**, allocated on discovery and never reused. **`RL1`–`RL4`
+are allocated**, and nothing at or below `RL4` is reused.
 
 **A citation into `mise` is a repo-relative path against a stated tag**, as the
 siblings cite theirs; `https://github.com/jdx/mise` at that tag serves it.
@@ -150,3 +151,44 @@ curl -fsS https://github.com/mwinters0/pgdt/releases.atom | grep -m4 -E '<id>|<t
 
 It holds while the first's ids end in a tag name and its titles name tags no
 Release carries, and the second's ids end in `v<version>`.
+
+## RL4 — a container package a workflow's token first pushes is linked to its repository, and private
+
+**Claim.** The first push of `ghcr.io/<owner>/<repo>` by a workflow holding
+`packages: write` with its `GITHUB_TOKEN` creates the package, linked to the
+workflow's repository, so that token may push to it again; the package is
+private, whatever the repository's visibility, until someone with admin rights
+to it makes it public. A package of that name pushed earlier and not linked to
+the repository refuses the token.
+
+**Proof.** Documentation only: GitHub's "Working with the Container registry"
+("The easiest way to connect a repository to a container package is to publish
+the package from a workflow using `${{secrets.GITHUB_TOKEN}}`", "the
+`GITHUB_TOKEN` will not have permission to push the package if you have
+previously pushed a package to the same namespace, but have not connected the
+package to the repository") and "Configuring a package's access control and
+visibility" ("When you first publish a package, the default visibility is
+private"). Not yet observed: on 2026-11-22 no package `pgdt` was readable
+under `mwinters0` (a token without `read:packages`, so a private one would read
+the same).
+
+**Scope limit.** A package under a user account. Whether a public package can
+be made private again is not claimed.
+
+**Verified against:** GitHub's documentation, 2026-11-22.
+
+**Relied on by:** [`decisions.md`](decisions.md), "D171" — the publish
+workflow pushing and tagging with its own token;
+[`.claude/skills/release/SKILL.md`](../../.claude/skills/release/SKILL.md),
+step 5 — the package made public by hand once.
+
+**Re-verify** — after a release, with a token holding `read:packages`
+(`gh auth refresh -s read:packages`):
+
+```sh
+gh api users/mwinters0/packages/container/pgdt --jq '{visibility, repository: .repository.full_name}'
+```
+
+It holds while a first release's run leaves `visibility` `private` and
+`repository` `mwinters0/pgdt`, and later releases push without a step of ours
+linking it.

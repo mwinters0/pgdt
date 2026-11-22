@@ -19,7 +19,9 @@ applies.
    **The compiler and the release image move here too**, each an apparatus
    change: `rust-toolchain.toml`'s `channel`, and `release/Dockerfile`'s
    `FROM` digest, which pins every package the image installs
-   (`docs/design/decisions.md`, "D104"). **So do
+   (`docs/design/decisions.md`, "D104"); `release/container/Dockerfile`'s
+   slim base on the same codename and `release_container.py`'s `BUILDKIT`
+   move by digest as that one does (D171). **So do
    `mise.toml`'s tools**, each pinned to an exact version that the image
    installs too: a bump there moves the image's tag, and `upstream.md` and the
    invariants are walked for a tool as for a crate.

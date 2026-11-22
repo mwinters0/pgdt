@@ -15,7 +15,9 @@ distribution whose `ldd --version` says 2.41 or more. That includes the
 and Windows have no release; build from source there, with
 `cargo build --release -p pgdt` (see [`CONTRIBUTING.md`](../../CONTRIBUTING.md)).
 
-Beside the archives is a `SHA256SUMS`.
+Beside the archives is a `SHA256SUMS`. The same binaries are published as a
+container image for both machines, `ghcr.io/mwinters0/pgdt` (see "Container
+image" below).
 
 ## Install
 
@@ -37,6 +39,23 @@ its symbols, so a panic's backtrace names its functions.
 
 `pgdt --version` prints `pgdt <version> (…)`. **A release's says nothing more
 about itself; a build from source adds `(unreleased)` after the version.**
+
+## Container image
+
+`ghcr.io/mwinters0/pgdt` is each release's binary on a slim Debian 13, for
+x86-64 and arm64, tagged with the version (`0.4.1`), its minor line (`0.4`,
+which no breaking change moves) and `latest`. Its `pgdt` is the archive's, byte
+for byte. The entrypoint is `pgdt` and the working directory `/data`: mount the
+directory holding your dump there, and run as yourself, since `pgdt` writes its
+cache beside the dump:
+
+```sh
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/data" \
+  ghcr.io/mwinters0/pgdt:$v parse --source mydb.dump
+```
+
+`pgdt sql` is interactive, so it needs `-it` as well. The licences are in
+`/usr/share/doc/pgdt/`.
 
 ## Verify
 
@@ -70,5 +89,16 @@ the archive is an asset of this immutable release, uploaded by someone with
 write access to the repository; it does not prove which commit or which
 machine built it.
 
-Every check your archive carries must pass. A failure of any is a reason not to
-run the binary, and to open an issue.
+**The image's amd64 manifest carries the build's attestation**, like the x86-64
+archive; the arm64 one carries none, and its binary is the arm64 archive's.
+Name the amd64 manifest by its digest, since the tag names the multi-platform
+index:
+
+```sh
+img=ghcr.io/mwinters0/pgdt:$v
+amd64=$(docker buildx imagetools inspect $img --format '{{range .Manifest.Manifests}}{{if eq .Platform.Architecture "amd64"}}{{.Digest}}{{end}}{{end}}')
+gh attestation verify oci://ghcr.io/mwinters0/pgdt@$amd64 -R mwinters0/pgdt --source-digest $sha
+```
+
+Every check your archive or image carries must pass. A failure of any is a
+reason not to run the binary, and to open an issue.

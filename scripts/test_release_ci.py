@@ -4,8 +4,9 @@
 The archive, the checksums, the smoke run's checks, the attachment's and the
 publication's refusals are held here against stand-ins for `gh` and the container runtime,
 and `Workflows` holds the two committed workflow files to what
-`release_ci.py`'s docstring commits them to: no step but a `release.py` or
-`release_ci.py` line the parsers accept, no input interpolated into a shell,
+`release_ci.py`'s docstring commits them to: no step but a `release.py`,
+`release_ci.py` or `release_container.py` line the parsers accept, no input
+interpolated into a shell,
 every action pinned, each job holding exactly the permissions it uses. The
 files are read by line, not
 parsed as YAML: the standard library has no parser, and the scripts'
@@ -30,6 +31,7 @@ from typing import Any
 import check
 import release
 import release_ci
+import release_container
 from release import ReleaseError
 
 SHA = "a" * 40
@@ -690,7 +692,11 @@ class Workflows(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in WORKFLOWS.iterdir()), sorted(self.names))
 
     def test_every_step_is_a_checked_in_script_line_the_parsers_accept(self):
-        parsers = {"scripts/release.py": release.build_parser(), "scripts/release_ci.py": release_ci.build_parser()}
+        parsers = {
+            "scripts/release.py": release.build_parser(),
+            "scripts/release_ci.py": release_ci.build_parser(),
+            "scripts/release_container.py": release_container.build_parser(),
+        }
         for name in self.names:
             runs = [m.group(1) for line in lines_of(name) if (m := RUN_RE.match(line))]
             self.assertTrue(runs, name)
@@ -725,8 +731,9 @@ class Workflows(unittest.TestCase):
         self.assertNotIn("workflow_dispatch", publish)
 
     #: Each job's permissions, exactly: the draft's three are what attesting
-    #: a file by `subject-path` uses, `artifact-metadata` being for a
-    #: registry's storage records, which nothing here pushes.
+    #: a file by `subject-path` uses, and the container's what pushing an
+    #: image and attesting it by digest do, `artifact-metadata` being for a
+    #: registry's storage records, which no attestation here makes.
     PERMISSIONS = {
         "release-build.yml": {
             "preflight": {"contents": "write"},
@@ -738,7 +745,9 @@ class Workflows(unittest.TestCase):
         "release-publish.yml": {
             "fetch": {"contents": "write"},
             "arm64-smoke": {"contents": "read"},
-            "publish": {"contents": "write"},
+            "container": {"contents": "read", "packages": "write", "id-token": "write", "attestations": "write"},
+            "arm64-container-smoke": {"contents": "read", "packages": "read"},
+            "publish": {"contents": "write", "packages": "write"},
         },
     }
 
@@ -807,7 +816,11 @@ class Workflows(unittest.TestCase):
         self.assertTrue(all("--release" in a for a in builds))
 
     def test_the_arm64_suite_and_smoke_run_on_an_arm64_runner_and_the_rest_on_x86_64(self):
-        arm = {("release-build.yml", "arm64-suite"), ("release-publish.yml", "arm64-smoke")}
+        arm = {
+            ("release-build.yml", "arm64-suite"),
+            ("release-publish.yml", "arm64-smoke"),
+            ("release-publish.yml", "arm64-container-smoke"),
+        }
         for name in self.names:
             for job, body in jobs_of(name).items():
                 runner = re.search(r"(?m)^    runs-on: (\S+)$", "\n".join(body)).group(1)
@@ -819,9 +832,9 @@ class Workflows(unittest.TestCase):
 
     def test_the_publication_waits_for_the_arm64_smoke_of_the_drafts_own_archive(self):
         jobs = jobs_of("release-publish.yml")
-        self.assertEqual(sorted(jobs), ["arm64-smoke", "fetch", "publish"])
+        self.assertEqual(sorted(jobs), ["arm64-container-smoke", "arm64-smoke", "container", "fetch", "publish"])
         self.assertIn("    needs: fetch", jobs["arm64-smoke"])
-        self.assertIn("    needs: [fetch, arm64-smoke]", jobs["publish"])
+        self.assertIn("    needs: [fetch, arm64-smoke, container, arm64-container-smoke]", jobs["publish"])
         text = "\n".join(lines_of("release-publish.yml"))
         self.assertRegex(text, r"(?m)^  PGDT_RELEASE_CONTAINER: docker$")
         fetch, smoke = "\n".join(jobs["fetch"]), "\n".join(jobs["arm64-smoke"])
@@ -829,6 +842,30 @@ class Workflows(unittest.TestCase):
         self.assertIn(artifact, fetch)
         self.assertIn(artifact, smoke)
         self.assertLess(smoke.index("actions/download-artifact@"), smoke.index("release_ci.py smoke"))
+
+    def test_the_image_is_built_from_both_smoked_archives_run_on_each_architecture_then_tagged_before_the_publication(self):
+        jobs = {job: "\n".join(body) for job, body in jobs_of("release-publish.yml").items()}
+        fetched = [a for s, a in commands_of("release-publish.yml") if a[0] == "fetch"]
+        self.assertEqual(sorted(fetched), sorted(["fetch", f"--target={t}"] for t in release.TARGETS))
+        for target in release.TARGETS:
+            self.assertIn(f"name: archive-{target}\n          path: dist/*-{target}.tar.xz", jobs["fetch"], target)
+        container = jobs["container"]
+        self.assertIn("    needs: [fetch, arm64-smoke]", container)
+        self.assertIn("pattern: archive-*\n          merge-multiple: true\n          path: dist", container)
+        order = [container.index(s) for s in (
+            "release_container.py push", "release_container.py smoke", "actions/attest@",
+        )]  # fmt: skip
+        self.assertEqual(order, sorted(order), "the amd64 manifest is attested once it has run")
+        self.assertIn("digest: ${{ steps.push.outputs.digest }}", container)
+        self.assertIn(f"subject-digest: ${{{{ steps.push.outputs.{release_container.ATTESTED_ARCH}_digest }}}}", container)
+        self.assertNotIn("push-to-registry", container)
+        smoke = jobs["arm64-container-smoke"]
+        self.assertIn("    needs: container", smoke)
+        self.assertIn(f"name: archive-{release.CROSS_TARGET}", smoke)
+        self.assertIn("CONTAINER_DIGEST: ${{ needs.container.outputs.digest }}", smoke)
+        publish = jobs["publish"]
+        self.assertIn("CONTAINER_DIGEST: ${{ needs.container.outputs.digest }}", publish)
+        self.assertLess(publish.index("release_container.py tag"), publish.index("release_ci.py publish"))
 
     def test_the_artifacts_the_jobs_pass_on_are_the_paths_the_scripts_use(self):
         text = "\n".join(lines_of("release-build.yml"))

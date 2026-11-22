@@ -21,7 +21,7 @@ cd scripts && uv run generate_fixtures.py [--version 13..18] [--skip-dumps] [--s
 cd scripts && uv run measure.py --list|--stale|--check|--figure <id>|--all|--render <run-dir>|--count-pair <parent>[..<change>]|--count-span <base>..<tip>
 cd scripts && uv run measure.py --koji-recipe [--wrap] | --profile-recipe | --heaptrack-recipe | --callgrind-recipe   # printed, never run
 cd scripts && uv run release.py image|build|bench|suite|notices|run   # the release image; pgdt built in it, held to its glibc; a bench, the suite, the notices, one command there
-python3 scripts/release_ci.py preflight|archive|smoke|checksums|draft|publish   # what the two release workflows run beside release.py
+python3 scripts/release_ci.py preflight|archive|smoke|checksums|draft|publish   # what the release workflows run beside release.py and release_container.py (build|push|smoke|tag: the GHCR image)
 python3 scripts/debian_window.py      # the image's Debian pin against the window a release allows; `/release`'s step
 cd scripts && uv run citations.py     # every `<doc>.md`, "section" citation resolved
 cd scripts && uv run deficiencies.py  # KD index vs the code marker carrying each detail, vs phase index

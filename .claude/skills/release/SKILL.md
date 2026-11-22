@@ -57,7 +57,8 @@ unpushed commit is as reversible as an edit.
 The workflows' own commands, run for both targets at once rather than a job a
 target, with the scripts' tests beside them and without `preflight` and
 `draft`, which reach GitHub: the image, both targets' release builds, both `THIRD-PARTY-NOTICES` under the allow-list, the
-x86-64 suite, the archives, the smoke run of the x86-64 one, the checksums.
+x86-64 suite, the archives, the smoke run of the x86-64 one, the checksums,
+and the container image built from both archives and its amd64 platform run.
 arm64 is a build only: this host runs no arm64 code. The arm64 archive in
 `dist/` is the one step 5 attaches, so nothing touches `dist/` after it.
 
@@ -74,10 +75,12 @@ setsid bash -c "set -euo pipefail
 trap 'echo REHEARSAL FAILED $ID' EXIT
 (cd scripts && uv run release.py image && uv run release.py build --release \
   && uv run release.py notices && uv run release.py suite \
-  && uv run python -m unittest test_release test_release_ci test_debian_window)
+  && uv run python -m unittest test_release test_release_ci test_release_container test_debian_window)
 python3 scripts/release_ci.py archive
 python3 scripts/release_ci.py smoke --target=x86_64-unknown-linux-gnu
 python3 scripts/release_ci.py checksums
+python3 scripts/release_container.py build
+python3 scripts/release_container.py smoke
 trap - EXIT
 echo REHEARSAL OK $ID" > runs/release-v$V/rehearsal.log 2>&1 < /dev/null &
 ```
@@ -125,7 +128,14 @@ archives, refusing a dirty tree, a draft of another commit, and CI's x86-64
 archive unless it is the rehearsal's byte for byte (D109). **A refusal there
 is a build input the two did not share**, found before anything is attached:
 relay it and stop, the release waiting on that input being found. The tag's
-workflow runs the draft's arm64 archive on real arm64 before it publishes.
+workflow runs the draft's arm64 archive on real arm64 before it publishes,
+and pushes, runs and tags the container image from both archives
+(`scripts/release_container.py`). **GHCR makes a new package private**
+(`release-invariants.md`, "RL4"): while
+`gh api users/<owner>/packages/container/<repo> --jq .visibility` says
+`private` (a token without `read:packages` reads it as not found), tell the
+maintainer to make it public in the package's settings once the workflow has
+pushed.
 
 and the path of the release notes drafted below, which the maintainer edits
 before tagging: **the text is theirs, the draft an aid to it**. **The tag must

@@ -51,3 +51,13 @@ closure that left a `CMakeCache.txt`. Rejected: CMake absent (zlib-ng unbuildabl
 `AWS_LC_SYS_CMAKE_BUILDER=0` in the image (one crate guarded by name, another's fallback onto CMake unseen); Debian's
 `cmake` (a version no checkout shares). Reopens: a shipped dependency built by CMake, the check then narrowed to
 `aws-lc-sys`. Code: `cmake_caches`. Evidence: `test_release.py`'s `CMake`.
+
+### D171 The GHCR image is the two archives on slim Debian, run on each architecture and tagged before the Release publishes
+The image is each archive's files on `debian:<codename>-slim`, pinned by digest on the build image's codename (D104),
+copied and never compiled, so one runner builds both platforms unemulated. The tag's workflow pushes it untagged from
+the draft's archives, holds each platform's `pgdt` to its archive, runs it on that architecture, and tags `<version>`,
+`<major>.<minor>` and `latest` before the publication, which waits on it. Only amd64 is attested (D109). Root by
+default; the manual passes `--user`. Rejected: a build from source (other bytes than the release's, and arm64's
+impossible on CI); a push after the publication (a release out with no image); provenance on the index (vouching for
+arm64's binary as CI's); a fixed unprivileged user (no write into a mounted directory it does not own); BuildKit's own
+provenance (an `unknown/unknown` manifest per platform). Reopens: D109 reopening. Code: `release_container.py`.
