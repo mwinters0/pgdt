@@ -8,18 +8,18 @@ what is `internal`, and how a refusal is spelled for each front end.
 ### D68 Seven crates, the module assignment Cargo enforces
 Seven library crates — core, model, io, dump, codec, mapping, query — each using only those before it, dump and codec
 siblings; front ends and embedders above query. Each module's crate and its reason are `concepts.md`'s;
-`scripts/layering.py` holds every member to the graph. Model is apart from core so an edit there is the one asking
-whether the cache format bumps, and below the parsers so the codec does not recompile with the grammar. Rejected: four
-layers in one crate with upward deviations; the cache a crate of its own (its loader re-derives the map's diagnostics,
-so it is dump's); the mapping pass query's (it reads nothing of query); the graph held to the libraries alone (a new
-member unplaced); codec and query, or dump and query, one crate (D74's boundaries).
+`scripts/layering.py` holds every member to the graph. Model is apart from core so an edit there, or to core's persisted
+`CopyHeader`, is the one asking whether the cache format bumps, and below the parsers so the codec does not recompile
+with the grammar. Rejected: four layers in one crate with upward deviations; the cache a crate of its own (its loader
+re-derives the map's diagnostics, so it is dump's); the mapping pass query's (it reads nothing of query); the graph held
+to the libraries alone (a new member unplaced); codec and query, or dump and query, one crate (D74's boundaries).
 
 ### D74 Below the codec no Arrow, the codec pure, and the core's error naming no dependency
 Core, model, io and dump name no Arrow; codec and mapping only its schema types, the codec also `i256`; model and codec
 do no I/O, the codec synchronous. A decoder takes an unescaped field and returns a value, never a builder: arrays are
-query's, whose views tie building to the read buffers (D46). Anything persisted is model vocabulary — declared type
-strings, never a `DataType` or another codec conclusion; a contract over a block's rows is model's. The core error
-carries a dependency's as an opaque `Cause`, and the provider's refusals reach DataFusion as
+query's, whose views tie building to the read buffers (D46). Anything persisted is model vocabulary (a block's header
+core's) — declared type strings, never a `DataType` or another codec conclusion; a contract over a block's rows is
+model's. The core error carries a dependency's as an opaque `Cause`, and the provider's refusals reach DataFusion as
 `External(datafusion_pgdump::Error)` over it. Rejected: a `#[from]` variant per dependency (each compiled everywhere);
 the core error crossing bare; `OrderKey::Decimal` as digit strings or any integer but `Decimal256`'s.
 

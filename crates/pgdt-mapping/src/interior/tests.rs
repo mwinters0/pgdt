@@ -366,18 +366,6 @@ fn a_cut_inside_a_row_whose_tail_is_a_backslash_dot_is_resynced_past() {
     }
 }
 
-/// The byte counts a fixture-sized block has to be scheduled against.
-///
-/// A dump fixture is kilobytes and the source's own partition is several
-/// read chunks (`pgdt_io`'s `PLAIN_PARTITION_CHUNKS`), so at the shipped
-/// chunk size every block here sits inside one partition and the scheduler
-/// declines it. Announcing 8 bytes as the read size makes the source
-/// advise 64-byte partitions, which is what exercises the window loop, the
-/// tail read and a line carried across a worker's reads at all. **It is bounded above by the
-/// smallest region any fixture here ends with**: [`scan_region`]'s floor
-/// is one whole partition, so a larger partition would decline a trailing
-/// block and the sweeps below, which assert a closed region and a non-empty
-/// read list for every block, would fail on it.
 /// What a pass over a file of `size` bytes reads `source` under: `options`,
 /// `ledger` and `cancel`.
 fn reads<'a>(
@@ -427,6 +415,18 @@ async fn region_recorded(
     Ok((outcome, census_of(recorder)))
 }
 
+/// The byte counts a fixture-sized block has to be scheduled against.
+///
+/// A dump fixture is kilobytes and the source's own partition is several
+/// read chunks (`pgdt_io`'s `PLAIN_PARTITION_CHUNKS`), so at the shipped
+/// chunk size every block here sits inside one partition and the scheduler
+/// declines it. Announcing 8 bytes as the read size makes the source
+/// advise 64-byte partitions, which is what exercises the window loop, the
+/// tail read and a line carried across a worker's reads at all. **It is bounded above by the
+/// smallest region any fixture here ends with**: [`scan_region`]'s floor
+/// is one whole partition, so a larger partition would decline a trailing
+/// block and the sweeps below, which assert a closed region and a non-empty
+/// read list for every block, would fail on it.
 fn scheduled(source: &LocalFileSource, jobs: usize) -> ScanOptions {
     source.hint_read_size(8);
     ScanOptions {

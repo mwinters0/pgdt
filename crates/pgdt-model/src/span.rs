@@ -1,7 +1,8 @@
 //! What a file map answers of its spans: the `COPY` blocks among them, the
 //! tables those hold rows for and the partition roots they are written
 //! through (`docs/design/decisions.md`, "D34", "D136"). The shapes are the
-//! cache's (`crate::persisted::span`); `pgdt_dump::map` builds them and
+//! cache's (`crate::persisted::span`); `pgdt_dump`'s map builder builds them,
+//! the mapping pass splicing what it has scanned into what it holds, and
 //! `pgdt_dump::cache` persists them.
 
 use std::collections::BTreeSet;
@@ -146,8 +147,8 @@ pub fn union_census<'a>(
 }
 
 /// One table as its `COPY` headers name it: the database whose `\connect`
-/// governs the block, the schema qualifier and the table, each exactly as the
-/// header spelled it once unquoted.
+/// governs the block, the schema qualifier and the table, each as the header
+/// spelled it, unquoted and case-folded as `pgdt_core::CopyHeader`'s are.
 ///
 /// **An exact key, never a pattern**: what a caller that read the table off
 /// the map holds, so nothing is split and no two tables can answer to it

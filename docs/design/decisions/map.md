@@ -39,13 +39,13 @@ from re-reading it at the size its groups predict. Rejected: `SparseRowIndex`; p
 back-fill dropping only re-read blocks' columns.
 
 ### D35 The census is type-blind, records both dimension bounds, and runs at the data level
-`ArrayShape::observe` reads the leading brace run off still-escaped bytes in the model (I15, I25); min and max depth, or
-`{1,2}` beside `{{1,2}}` resolves to a wrong `List`. A table any column of which is at the data level is censused, and
-so is every block a query's pass maps: gating on a full scan left early blocks uncensused. The metadata level records
-`None` and, but under a strict parse or in a TimescaleDB catalog block (D133), splits no field; a typed query re-reads
-such a table for itself, writing nothing, and a `Dump`'s plan refuses it. Rejected: degrading to the DDL's `List`; a
-census-only level a user can reach; the census as a `Table`'s own step, which a `Dump`'s would offer. Evidence:
-`statistics-gathering`, profiled.
+The census (`CensusFold`) reads the leading brace run off still-escaped bytes in the model (I15, I25); min and max
+depth, or `{1,2}` beside `{{1,2}}` resolves to a wrong `List`. A table any column of which is at the data level is
+censused, and so is every block a query's pass maps: gating on a full scan left early blocks uncensused. The metadata
+level records `None` and, but under a strict parse or in a TimescaleDB catalog block (D133), splits no field; a typed
+query re-reads such a table for itself, writing nothing, and a `Dump`'s plan refuses it. Rejected: degrading to the
+DDL's `List`; a census-only level a user can reach; the census as a `Table`'s own step, which a `Dump`'s would offer.
+Evidence: `statistics-gathering`, profiled.
 
 ### D96 The unrepresentable count rides the census, typed by the DDL, in two tiers, under a recorded calendar
 Every census-taking read counts, per block and column, the values the declared type's typed pair (no census) cannot
@@ -98,15 +98,15 @@ Reopens: an identity that must outlive its process. Code: `pgdt_model::BlockId`.
 tests and `tests/pruning.rs`, which key on it.
 
 ### D168 A block is its header, its address and its record, the record shared and copied on write
-`CopyBlock` holds what it holds rows of (`header`, `partition_root`), where it is (`BlockAddress`, the four offsets its
-`BlockId` derives from) and what a pass found (`BlockRecord`): count, census, statistics, refusals, recorded rows,
+`CopyBlock` holds what it holds rows of (`header`, `partition_root`), where it is (`BlockAddress`, four offsets,
+`BlockId` from the header's) and what a pass found (`BlockRecord`): count, census, statistics, refusals, recorded rows,
 longest line, each offset in it from the block's data, so a record means the same at any address. The record is behind
 an `Arc`: a map, a table's read or a plan copies a reference, and the two that change one, the back-fill and a query's
 census over a metadata-level table, copy it on write (`Arc::make_mut`). A replay's segment holds header and address
-alone; a dynamic filter takes the record of the block it enters from its plan, by id. An `INSERT` run holds one
-too. Rejected: one struct holding all three, which an address that is not a file offset, or a run's rows, would
-each have to carve; a record unshared, every clone copying its census; a segment holding the block, every cut
-copying it. Code: `pgdt_model::CopyBlock`. Evidence: `pgdt-query`'s `a_replay_holds_no_block_s_statistics`.
+alone; a dynamic filter takes the record of the block it enters from its plan, by id. An `INSERT` run holds one too.
+Rejected: one struct holding all three, which an address that is not a file offset, or a run's rows, would each have to
+carve; a record unshared, every clone copying its census; a segment holding the block, every cut copying it. Code:
+`pgdt_model::CopyBlock`. Evidence: `pgdt-query`'s `a_replay_holds_no_block_s_statistics`.
 
 ### D169 One recorder takes a block's rows, a held row split once, and a piece observes rows alone
 `Recorder` holds what a pass records of a block — census and unrepresentable count (D96), observer, rows as text — and
@@ -119,13 +119,13 @@ rows: a gathered block's groups check each is handed on; one trait, a piece answ
 recorder carries up; the builder hosting the row path. Code: `pgdt_model::internal::Recorder`. Evidence:
 `a_row_held_whole_is_censused_as_one_folded_in_runs`, `pieces_absorbed_in_file_order_record_the_whole_block`.
 
-### D170 A block is opened in one place under its pass's policy, and a re-read merged by the record's one rule
+### D170 A block is opened in one place under its pass's policy, and a back-fill's re-read merged by the record's one rule
 One `open` turns a block's header, its DDL and the pass's `Policy` into its `Recorder` — census, observer, rows as text
 — and says whether it streams and is offered to the interior: a parse censuses by level and attaches its request's
 observer, a query censuses alone, as the fixtures' eager pass does serially, all recording the catalog's rows (D133); a
 re-read censuses and builds what its `Reread` names, a back-fill's gatherer or checker, or no observer for a query's
-census. A re-read's record merges into the block's by `BlockRecordExt::merge`, crediting what it replaced to the
-back-fill's account. Rejected: each pass opening its own, written three times; a re-read's caller building its
-observer, written twice; the open taking the pass context, which it reads none of, a re-read outside a pass holding
-none and `reread_rows` the read half alone; the merge in the back-fill, a rule of the record every re-read shares.
-Code: `pgdt-mapping`'s `open::open`, `pgdt_model::internal::BlockRecordExt`. Evidence: `span/tests.rs`.
+census. A back-fill's re-read merges into the block's record by `BlockRecordExt::merge`, crediting what it replaced to
+its account; a query's takes the census alone into its own copy. Rejected: each pass opening its own, written three
+times; a re-read's caller building its observer, written twice; the open taking the pass context, which it reads none
+of; the merge in the back-fill, a rule of the record's, not the pass's. Code: `pgdt-mapping`'s `open::open`,
+`pgdt_model::internal::BlockRecordExt`. Evidence: `span/tests.rs`.

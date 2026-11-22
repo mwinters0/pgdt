@@ -48,8 +48,8 @@ impl<'a> ReadContext<'a> {
 }
 
 /// A mapping pass's context: what its readers read under, and the mode and
-/// watch it saves through, the watch being the open's, which every save
-/// checks the source against ([`CacheMode::save`]).
+/// watch it saves through, the watch being the open's, which every save an
+/// enabled mode writes checks the source against ([`CacheMode::save`]).
 #[derive(Clone, Copy)]
 pub struct PassContext<'a> {
     /// What every reader of the pass reads under.

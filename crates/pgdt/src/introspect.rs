@@ -520,7 +520,8 @@ mod enabled {
 #[cfg(any(feature = "introspect", test))]
 mod xml {
     /// `malloc_info`'s document-level totals — the sums over every arena,
-    /// which glibc prints after the last `<heap>` element.
+    /// which glibc prints after the last `<heap>` element — and the count of
+    /// those elements, the arenas.
     #[derive(Debug, PartialEq, Eq)]
     pub struct Totals {
         pub heaps: usize,

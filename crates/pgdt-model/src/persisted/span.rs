@@ -276,13 +276,14 @@ pub struct CopyBlock {
     pub address: BlockAddress,
     /// What the passes that read the block found. **Shared, and changed by
     /// copying on write** ([`Arc::make_mut`]): a clone of the block or the map
-    /// copies a reference, and the one pass changing a record copies that
+    /// copies a reference, and each site changing a record — the back-fill, a
+    /// query's census, the cache dropping statistics it loaded — copies that
     /// record alone (`docs/design/decisions.md`, "D168").
     pub record: Arc<BlockRecord>,
 }
 
 /// **Where a `COPY` block is in a plain dump**: its four absolute file
-/// offsets, from which its identity is derived ([`BlockAddress::id`]).
+/// offsets, its identity derived from the header's ([`BlockAddress::id`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockAddress {
     /// Absolute file offset of the `C` in `COPY`.

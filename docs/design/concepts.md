@@ -230,8 +230,9 @@ file map and the preamble").
 ## TimescaleDB's catalog
 
 The rows of a database's `_timescaledb_catalog` blocks, as the dump states
-them, the recipe joining them by era, and what they conclude: the release,
-hypertables, chunks and continuous aggregates
+them, the recipe joining them by the release they state or else their
+shape, and what they conclude: the release, hypertables, chunks and
+continuous aggregates
 ([`decisions.md`](decisions.md), "D133";
 [`timescaledb-invariants.md`](timescaledb-invariants.md)).
 
@@ -258,8 +259,9 @@ Persisting a map and reloading it, the dump it was saved from identified
 format is pgdt-model's, `CACHE_FORMAT_VERSION` at that crate's root.
 
 - **pgdt-model** — `persisted.rs`: the namespace holding every shape the
-  cache persists and nothing else, each shape's file claimed by its own
-  concept, so an edit under it is the one asking whether the format bumps
+  cache persists but a block's header, `pgdt-core`'s `CopyHeader`, and
+  nothing else, each shape's file claimed by its own concept, so an edit
+  under it, or to that header, is the one asking whether the format bumps
   (D68).
 
 - **pgdt-dump** — `cache/`: the loader re-derives the map's diagnostics with

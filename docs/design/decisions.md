@@ -87,7 +87,7 @@ are `docs/process.md`, "The decision register".
 - **D167** A block's identity is derived from its address, ordered in dump order, and never persisted
 - **D168** A block is its header, its address and its record, the record shared and copied on write
 - **D169** One recorder takes a block's rows, a held row split once, and a piece observes rows alone
-- **D170** A block is opened in one place under its pass's policy, and a re-read merged by the record's one rule
+- **D170** A block is opened in one place under its pass's policy, and a back-fill's re-read merged by the record's one rule
 
 ## Type resolution and decoders
 [`decisions/types.md`](decisions/types.md)

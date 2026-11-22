@@ -2,11 +2,13 @@
 //! whole file mapped serially in one scan ([`build_index`], [`build_map`]),
 //! and one block the map holds back-filled outside any pass
 //! ([`backfill_block`]). Tests alone call them, so they are no part of the
-//! mapping pass's designed surface (`docs/design/decisions.md`, "D106"); each
-//! stays an independent oracle — serial, whole-file, no interior, no resume,
-//! no saves — sharing with the passes it checks only the block's open and
-//! its recorder, the mechanism under test (`docs/design/decisions.md`,
-//! "D170").
+//! mapping pass's designed surface (`docs/design/decisions.md`, "D106"). The
+//! whole-file two stay an independent oracle — serial, no interior, no
+//! resume, no saves — sharing with the passes they check the block's open,
+//! its recorder and the builder tiling its spans, the mechanism under test
+//! (`docs/design/decisions.md`, "D170"); [`backfill_block`] is the
+//! back-fill's own per-block step, run under a caller's arrangement with no
+//! cache and no watch.
 
 use std::ops::ControlFlow;
 use std::sync::Arc;

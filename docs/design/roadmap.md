@@ -1176,7 +1176,7 @@ inbox](roadmap-P24-python-inbox.md).
 dispatches on a different one.** Decode and render dispatch on
 `(NestedPlan, DataType)`, order keys on `CompareKind`, and the strict parse on
 `ComparisonPlan` or else a text grammar. The unrepresentable test dispatches
-on a private `Leaf` recovered from the Arrow type (`unrepresentable.rs`,
+on a private `Leaf` recovered from the Arrow type and the plan (`unrepresentable.rs`,
 `Leaf::of`), which falls to `Leaf::Held` for any type it does not list. Six
 walks re-read the declared string — `resolve_walk`, `comparison_walk`,
 `extension_for`, `text_grammar`, `unread`/`domains_beneath`,
@@ -1201,7 +1201,8 @@ What it inherits:
   and `field_key`, the slice reader the batch and the order key read with
   (P40), keeps a monomorphic entry. Scalar keying has six entry points for two
   real parameters (`order_key`, `field_key`, `read_key`, `literal_key`,
-  `special_order_key`, `ValueKey`), and only `nested_key` takes a `Side`. They
+  `special_order_key`, `ValueKey`), and only `nested_key` and `ValueKey`'s
+  private `read` take a `Side`. They
   are collapsed only as far as `--count-pair` allows (D108).
 - **Three codec duplications it removes.** `json` is identified by
   `ComparisonDivergence::AsText` at six sites, so a second type given that

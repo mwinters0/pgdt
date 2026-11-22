@@ -25,8 +25,9 @@ pub struct FieldRefusal {
     pub column: usize,
     /// The column's declared type.
     pub declared_type: String,
-    /// The field's text as a restore's error quotes it — its first 100 bytes
-    /// and `...` where longer (I94) — or `None` for a NULL its column's `NOT
+    /// The field's text as a restore's error quotes it — at most its first
+    /// 100 bytes, cut at a character boundary, and `...` where longer (I94) —
+    /// or `None` for a NULL its column's `NOT
     /// NULL` refuses ([`pgdt_core::Error::NullRefused`]).
     pub value: Option<String>,
 }

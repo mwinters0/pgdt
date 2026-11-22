@@ -49,8 +49,9 @@ use crate::value::nested::key::{NestedKey, nested_key};
 /// A value's place in its column's order, its representation hidden: the key
 /// a filter orders a row by, for an embedder ordering values of a column as
 /// a filter of a semantics would — a nested one's included. No library code
-/// in this workspace holds one, `datafusion-pgdump` only re-exporting its
-/// order: the filter, the statistics gatherer and the summary
+/// in this workspace holds one, `datafusion-pgdump` only relating two its
+/// engine coerces (`compare_value_keys`): the filter, the statistics gatherer
+/// and the summary
 /// key through `internal` by the kind or tree they already hold, and a
 /// stored bound is ordered as gathering kept it, which is `internal`'s
 /// alone (`docs/design/decisions.md`, "D79", "D106").
@@ -59,8 +60,9 @@ use crate::value::nested::key::{NestedKey, nested_key};
 /// plan's order at every level — which [`ValueKey::compare`] checks before
 /// it reads a value, so two keys are ordered only where the semantics'
 /// engine relates their orders. There is no `Ord`
-/// (`docs/design/decisions.md`, "D56"). **A key read in DataFusion's
-/// semantics carries its column's emitted Arrow type besides**, never read
+/// (`docs/design/decisions.md`, "D56"). **A scalar key read in DataFusion's
+/// semantics carries its column's emitted Arrow type besides**, where that
+/// type holds its value, never read
 /// to order it: what DataFusion coerces two orders by
 /// ([`ValueKey::emitted`]; `docs/design/decisions.md`, "D40").
 #[derive(Debug, Clone)]

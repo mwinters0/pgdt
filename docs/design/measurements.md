@@ -5685,8 +5685,8 @@ seven on the platform allocator: 1.012 / 4.56 / 19.03, 1.004 / 3.98 / 19.07,
 1.027 / 4.26 / 19.17, 1.070 / 4.35 / 19.68, 0.505 / 2.84 / 17.08 and
 0.490 / 2.43 / 16.34 s.
 `--cache none` makes `cache::CacheMode::save` a no-op, so the throttle has no
-cost to amortize, its gate never closes, and the map is rebuilt at every
-`CopyEnd`. Across the seven the 1000- and 4000-block rows held inside 9% and 7%
+cost to amortize, its gate seldom closes, and the map is rebuilt at nearly
+every `CopyEnd`. Across the seven the 1000- and 4000-block rows held inside 9% and 7%
 and the 2000-block row moved, 3.86–4.65 s; the last two are not read against
 them, differing by the allocator and every commit between, and within them the
 2000-block row's reps span 2.25–3.08 s and 2.37–2.55 s. The sizes, which are

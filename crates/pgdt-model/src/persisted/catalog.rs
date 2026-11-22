@@ -13,7 +13,8 @@ pub struct DumpMetadata {
     pub databases: Vec<DatabaseMetadata>,
 }
 
-/// One database's preamble, in DDL order.
+/// One database's preamble: its extensions, types and collations in DDL
+/// order, its tables by qualified name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DatabaseMetadata {
     /// `None` for a plain `pg_dump` output, which has no `\connect` and so

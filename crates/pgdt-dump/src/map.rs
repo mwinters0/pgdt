@@ -44,10 +44,10 @@
 //! ([`tiling`]).
 //!
 //! - **Boundaries and classification.** [`Builder`] is the state machine,
-//!   driven directly by [`crate::preamble::scan_preamble`] and
-//!   `pgdt_mapping`'s mapping passes, fed the same [`crate::scan::Event`]
-//!   stream those already walk. `pgdt_fixtures::build_map` is a thin wrapper for
-//!   tests that just want a span list.
+//!   driven directly by [`crate::preamble::scan_preamble`],
+//!   `pgdt_mapping`'s forward pass and the fixtures' eager pass
+//!   (`pgdt_fixtures::build_index`, `build_map`), fed the same
+//!   [`crate::scan::Event`] stream those already walk.
 //!
 //!   A [`Builder`] that starts partway through a file opens its first span at
 //!   its own first recognized content, **not** at the byte it began reading;
@@ -191,9 +191,9 @@ enum Mode {
 }
 
 /// The statement-driven boundary/classification pass, shared by
-/// `pgdt_fixtures::build_map` (a standalone, always-to-EOF scan) and
-/// `pgdt_fixtures::build_index`/[`crate::preamble::scan_preamble`], which drive
-/// it directly off the events [`crate::scan::scan`] already walks
+/// [`crate::preamble::scan_preamble`], `pgdt_mapping`'s forward pass and the
+/// fixtures' eager pass (`pgdt_fixtures::build_index`, `build_map`), each
+/// driving it directly off the events its scan already walks
 /// (`docs/design/decisions.md`, "D34").
 pub struct Builder {
     mode: Mode,
@@ -518,8 +518,8 @@ impl Builder {
     /// and, at a statement boundary, any line that does not restate this run's
     /// own `INSERT INTO <table>` prefix byte for byte. Rust's ASCII whitespace
     /// leaves out a vertical tab, which `step`'s `str::trim` strips, so a
-    /// VT-led `--` line outside a quote is fed here where `step` would close
-    /// the run.
+    /// VT-led `--` line outside a quote but inside a statement is fed here
+    /// where `step` would close the run.
     ///
     /// Raw bytes where `step` would feed a lossy conversion differ only in a
     /// dollar-quote tag: [`StatementScan`] matches a closing tag byte for

@@ -75,10 +75,10 @@ pub struct ColumnSummary {
     /// — and wrapped at 128 bits, which reduces exactly to any narrower
     /// wrapping sum ([`pgdt_model::ColumnStatistics::sums`];
     /// `docs/design/decisions.md`, "D91"): where
-    /// every group of every block kept one, under the DDL it was gathered
-    /// under, and the column is emitted in the type it was summed as. `None`
-    /// elsewhere, and where the column holds no non-NULL value, whose sum is
-    /// no number.
+    /// every group of every block kept one and counted its NULLs, under the
+    /// DDL it was gathered under, and the column is emitted in the type it
+    /// was summed as. `None` elsewhere, and where the column holds no
+    /// non-NULL value, whose sum is no number.
     pub sum: Option<i128>,
     /// The summed text bytes of the column's non-NULL values, where every
     /// group of every block counted them
@@ -372,15 +372,16 @@ impl<'a> Accumulator<'a> {
 /// **The order every partition of a replay emits each column of `resolved`
 /// in, under Arrow's comparator** — the order DataFusion sorts by — or
 /// [`Sortedness::Unsorted`] where the map proves none. `matches` are the
-/// table's blocks in `database`, statistics included, and `runs` each partition's blocks by
-/// header offset, in the order it replays them; a block may repeat, once per
-/// piece of it.
+/// table's blocks in `database`, statistics included, and `runs` each
+/// partition's blocks by id, in the order it replays them; a block may
+/// repeat, once per piece of it.
 ///
 /// A column is proved `Ascending` or `Descending` only where all three hold:
 ///
-/// - **Every block holding a row recorded that order, or `Constant`**, in the
-///   stored set keyed by the kind DataFusion orders the column by and under
-///   the DDL it was gathered under, as [`table_summary`] reads its bounds. A
+/// - **Every block recorded an order for the column, and every one holding a
+///   row that order or `Constant`**, in the stored set keyed by the kind
+///   DataFusion orders the column by, listing every group, and under the DDL
+///   it was gathered under, as [`table_summary`] reads its bounds. A
 ///   constant block is in both orders, so where every block is, the boundaries
 ///   alone decide, `Ascending` before `Descending`: DataFusion keeps one
 ///   ordering a column.

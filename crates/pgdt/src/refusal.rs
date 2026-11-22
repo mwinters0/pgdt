@@ -16,7 +16,9 @@ use pgdt_io::Origin;
 /// (`docs/design/decisions.md`, "D20", "D21"). A fifth fires before a read,
 /// nothing being able to tell whether the source moves
 /// (`SourceUncheckable`). None of those places has a name for what was being
-/// read, and the user typed one.
+/// read, and the user typed one. Two more are classified so for the same
+/// reason, though no command here meets them: a caller's map short of the
+/// file's end, or holding a table at the metadata level.
 ///
 /// **A cache's own name is not the source's.** Three of the four name the
 /// cache, which settles nothing where that path was *derived*: a remote dump's

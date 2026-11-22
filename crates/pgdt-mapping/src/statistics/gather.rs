@@ -177,8 +177,9 @@ pub(crate) fn observer_tracking(
 /// [`BlockGathered::Checked`](pgdt_model::BlockGathered::Checked), or [`BlockGathered::Refused`](pgdt_model::BlockGathered::Refused) at the first
 /// field its type's `*_in` refuses or NULL its column's `NOT NULL` refuses,
 /// and never declines, holding nothing. What it holds to check — a
-/// comparison plan per column — is charged to no account (D81): fixed per
-/// block, shared with the block's pieces and freed with the observer.
+/// comparison plan per column, fixed per block and shared with its pieces,
+/// and each walking column's walk, which every piece builds at its first
+/// field — is charged to no account (D81), and freed with the observer.
 pub(crate) fn checker(
     header: &CopyHeader,
     metadata: Option<&DumpMetadata>,

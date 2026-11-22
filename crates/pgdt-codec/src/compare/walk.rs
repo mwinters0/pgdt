@@ -1,7 +1,7 @@
 //! The register's walk: a declared type's [`ComparisonPlan`] reached through
 //! the catalog and the built-in table, an array's element, a range's subtype,
 //! a domain's terminal type and a composite's fields each walked to a plan of
-//! its own. `crate::compare` declares [`comparison_for`] and reads nothing
+//! its own. `crate::compare` re-exports [`comparison_for`] and reads nothing
 //! here.
 
 use pgdt_model::{CollationDef, TypeDef, TypeKind};

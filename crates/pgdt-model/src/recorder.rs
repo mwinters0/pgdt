@@ -1,7 +1,8 @@
 //! **What a pass records of one `COPY` block's rows, in one place**: its
 //! census and unrepresentable count, its observer and, for TimescaleDB's
-//! catalog, its rows as text — each part fed every field of a row from one
-//! split of a held row, or from the runs a streaming reader hands over — and
+//! catalog, its rows as text — each part fed the fields it reads of a row
+//! from one split of a held row, or from the runs a streaming reader hands
+//! over, which never reach a recorder holding rows as text — and
 //! the block's record finished from them at its close
 //! (`docs/design/decisions.md`, "D169").
 

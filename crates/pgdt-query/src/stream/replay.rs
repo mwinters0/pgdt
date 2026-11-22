@@ -1,6 +1,7 @@
 //! Pass 2, for one sub-stream: replaying its segments in file order, and a
 //! block made active — at a `COPY` header the scanner read, inside a block
-//! where a partition starts, or where a token resumes — with what the loop
+//! where a piece of it starts (a partition's, a pruned run's, or one a
+//! dynamic filter skips to), or where a token resumes — with what the loop
 //! records of where it is.
 
 pub(super) mod dynamic;
@@ -621,8 +622,9 @@ struct Active {
     /// Each [`ResolvedExpr`] leaf carries the field index it reads — into
     /// the block's **unprojected** column list — plus the typed comparison
     /// it makes. Shared with the block's
-    /// [`PlannedBlock`](self::plan::PlannedBlock), so every piece of a block
-    /// evaluates one tree.
+    /// [`PlannedBlock`](self::plan::PlannedBlock) where the plan's entry holds
+    /// the block's header and database, so every piece of such a block
+    /// evaluates one tree; resolved here where it does not.
     filter: Arc<ResolvedExpr>,
     database: Option<String>,
 }
@@ -646,7 +648,7 @@ impl Active {
 /// hold its rows.
 ///
 /// The three places a block becomes active — a `COPY` header the scanner
-/// read, a partition that started inside a block, and a resumed token —
+/// read, a piece entered inside a block's data, and a resumed token —
 /// differ only in where the block's identity, header and address come from.
 /// None publishes a schema: a
 /// stream holds its plan's from before its first poll
@@ -750,9 +752,9 @@ impl Emits {
 
     /// **The one step every batch is emitted by**: `batcher`'s batch
     /// flushed, the block indices `chunks` cached for its builders cleared,
-    /// the line `holder` drew returned and its reader stood aside, so a
-    /// caller holding the stream back at the yield stalls no line
-    /// (`docs/design/decisions.md`, "D159", "D163"); then published. The
+    /// the line `holder` drew returned, the batch published, and the reader
+    /// stood aside, so a caller holding the stream back at the yield stalls
+    /// no line (`docs/design/decisions.md`, "D159", "D163"). The
     /// sites differ only in `offset`, where the next row starts, and
     /// `in_copy`, the block a token resumes inside, `None` where the batch
     /// ends at its block's `\.` or at its segment's limit. A batch holding

@@ -24,7 +24,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD182 -->
+rather than being deleted. <!-- deficiency-watermark: KD183 -->
 **Every number up to that watermark is allocated, and none is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -563,11 +563,12 @@ than reading as a phase nobody has sliced.
   Detail: `crates/pgdt-mapping/src/interior.rs`.
 
 - **KD178** — a complete map is saved before its watch is finished: at the
-  close of a `COPY` block ending the file, by a settled query or an interrupt,
-  before the text of its spans past the preamble is attached, or by an
-  interrupt landing in the end-of-file finish's fetch on a fetched gzip first
-  pass; its last unit is compared only when a later parse finishes the watch,
-  and no later run attaches the text. **(c) unowned**; promoted by such a map
+  close of a `COPY` block ending the file, by a settled query, an interrupt or
+  a due save the end-of-file path's then fails to overwrite, before the text
+  of its spans past the preamble is attached, or, text attached, by an
+  interrupt in the end-of-file finish's fetch on a fetched gzip first pass;
+  its last unit is compared only when a later parse finishes the watch, and no
+  later run attaches the text. **(c) unowned**; promoted by such a map
   reaching a user. Detail: `crates/pgdt-mapping/src/forward.rs`.
 
 - **KD180** — under `standard_conforming_strings = off` an enum label holding
@@ -587,3 +588,10 @@ than reading as a phase nobody has sliced.
   `text[]` of elements just over 1 MiB holds about twice its text. **(c)
   unowned**; promoted by a reading of such a column's decode. Detail:
   `crates/pgdt-query/src/batch/builder/factor.rs`.
+
+- **KD183** — a resume token's fingerprint names its table by `schema.table`
+  alone, so a token from one database's table resumes on a table of that name
+  in another database of the same file, read under equal options, where it is
+  meant to be refused as another table's. **(c) unowned**; promoted by an
+  embedder resuming across a `pg_dumpall` file's databases. Detail:
+  `crates/pgdt-query/src/stream/resume.rs`.

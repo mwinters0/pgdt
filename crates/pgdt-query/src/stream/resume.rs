@@ -67,6 +67,14 @@ pub(super) fn query_fingerprint(
     use std::hash::{Hash, Hasher};
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    // deficiency: KD183 — `table` is `schema.table` alone
+    // (`TableName::qualified_name`), so a token one database's table produced
+    // passes on a table of that name in another `\connect`ed database read
+    // under equal options, and replays that table's segments from the token's
+    // offset where `TablePartitions::resume` means to refuse it as another
+    // table's. **(c) unowned**; promoted by an embedder resuming across a
+    // `pg_dumpall` file's databases. The fix hashes the database beside the
+    // name.
     table.hash(&mut hasher);
     match partition {
         None => 0u8.hash(&mut hasher),

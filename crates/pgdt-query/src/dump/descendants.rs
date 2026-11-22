@@ -38,7 +38,10 @@ pub(super) fn declared_name(database: Option<&str>, key: &str) -> TableName {
 /// **Every table `index` lists, each once**: each table a block holds rows
 /// for — the one its header names, and the partition a block written
 /// through its root holds — each preceded by every ancestor its database
-/// declares and no earlier block listed, the outermost first. So a
+/// declares and no earlier block listed, in the reverse of
+/// `DatabaseMetadata::ancestors`' nearest-first order: a chain's outermost
+/// first, though of two parents one inheriting from the other, that one
+/// ahead of its own parent. So a
 /// partitioned table, which `pg_dump` writes no block for, is listed where
 /// its first descendant's block is, and every table is in the order its
 /// first block, or its first descendant's, appears.

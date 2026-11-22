@@ -54,8 +54,9 @@ pub enum Resolution {
     /// `table.column` — a whole table missing names each column it needed —
     /// or the columns of fields that do not read: a value not of its
     /// column's type, a NULL or a missing field where one is required, a
-    /// reference to a row the catalog lacks, a `relid` naming no qualified
-    /// table; and the
+    /// dimension's or chunk's hypertable, a chunk's compressed chunk or a
+    /// chunk constraint's slice naming a row the catalog lacks, a chunk's
+    /// `relid` naming no qualified table; and the
     /// hypertables its `hypertable` rows name, read by `schema_name` and
     /// `table_name` alone, as `schema.table` — `None` where those do not
     /// read.

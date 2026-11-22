@@ -13,10 +13,11 @@ use crate::lex::{Lexer, Region};
 ///
 /// Line at a time, as the lexer is: [`crate::map`] holds every statement as
 /// the lines the scanner surfaced. Byte-level rather than `char`-level: the
-/// lexer tells a non-ASCII byte from an ASCII one and no further, and no ASCII
-/// byte occurs inside a multi-byte UTF-8 sequence, so it answers alike over
-/// raw bytes and over their lossy conversion, and an `INSERT` run is
-/// classified off raw bytes with no `String` per line
+/// lexer tells a non-ASCII byte from an ASCII one and no further but in a
+/// dollar-quote tag, which it matches byte for byte, and no ASCII byte occurs
+/// inside a multi-byte UTF-8 sequence, so it answers alike over raw bytes and
+/// over their lossy conversion but where two tags of invalid UTF-8 differ,
+/// and an `INSERT` run is classified off raw bytes with no `String` per line
 /// (`docs/design/decisions.md`, "D33").
 #[derive(Debug, Clone)]
 pub(crate) struct StatementScan {
