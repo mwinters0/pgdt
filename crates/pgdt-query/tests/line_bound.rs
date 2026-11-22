@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use pgdt_core::Error;
-use pgdt_dump::cache::{CacheMode, colocated_path};
+use pgdt_dump::cache::{CacheMode, CacheStatus, colocated_path};
 use pgdt_dump::internal::with_line_bound;
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
@@ -222,14 +222,18 @@ async fn a_resumed_pass_holds_a_line_to_the_bound() {
         let opened = mode.open_source(Arc::new(dying)).await.unwrap();
         let died = map_file(opened, slow, &arranged(1), invalid, request, &token).await;
         assert!(matches!(died, Err(Error::Io(_))), "{died:?}");
+        // What the second pass resumes from is the cache's frontier, read
+        // here offline so a refusal below is shown to be a resumed pass's.
+        let cache = mode.path().expect("an enabled cache");
+        let banked = match pgdt_dump::internal::load(cache, source.as_ref()).await.unwrap() {
+            CacheStatus::Loaded(loaded) => loaded.index.scanned_through,
+            _ => panic!("the dying pass banked no cache"),
+        };
+        assert_eq!(banked, first_end, "the dying pass banked `public.u`'s block and no more");
 
         let opened = mode.open_source(source).await.unwrap();
-        let resumed = map_file(opened, read(64, BOUND), &arranged(1), invalid, request, &token)
-            .await
-            .map(|run| run.resumed_from);
-        if let Ok(resumed_from) = resumed {
-            assert_eq!(resumed_from, first_end);
-        }
+        let resumed =
+            map_file(opened, read(64, BOUND), &arranged(1), invalid, request, &token).await;
         held_to_the_bound(resumed, line, start, "a resumed pass");
     }
 }
