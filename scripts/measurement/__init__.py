@@ -101,6 +101,10 @@ it holds (`module_graph.py` holds the first, `test_layout` the second):
   `verify_additive`, `count_pair`, `recipes` -- what the command line does
   with them (`scripts/measure.py`).
 
+The order is described, not checked: declaring it as `layering.py` declares
+D68's crate graph would hold the scripts stricter than a crate's modules,
+which are held acyclic alone.
+
 A figure family spans that order rather than one module: its command shapes in
 `shapes`, below the session that runs them; its declaration in
 `figures.register`, below the session and the stager that read it by id, with

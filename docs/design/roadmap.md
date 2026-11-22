@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P7, P9–P17, P19, P20, P25, P27–P31, P33, P35, P36, P38 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P43 — the block model: identity, address and record | **Complete** | [spec](roadmap-P43-block-model.md); [notes](roadmap-P43-block-model-notes.md) |
+| P1–P7, P9–P17, P19, P20, P25, P27–P31, P33, P35, P36, P38, P43 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P8 — `--inserts` and `--column-inserts` rows | Sketched; not grilled | this file, below; [inbox](roadmap-P8-inserts-inbox.md) |
 | P18 — zstd and lz4 input | Sketched; not grilled | this file, below; [inbox](roadmap-P18-zstd-inbox.md) — carved out of the gzip work |
 | P41 — archive formats: the shared model, and `--format=custom` | Sketched; not grilled | this file, below; [inbox](roadmap-P41-archive-formats-inbox.md) |
@@ -728,15 +727,6 @@ and "I/O, memory and parallelism").
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
 
-## P43 — The block model: identity, address and record
-
-**Complete.** A block of rows has an identity (`BlockId`), an address
-(`BlockAddress`) and a record (`BlockRecord`), each its own type, and one
-recorder in the model records a block's rows for every pass, opened and closed
-once. Ahead of P8 and the archive phases, each of which starts from one of the
-three. The spec is [`roadmap-P43-block-model.md`](roadmap-P43-block-model.md),
-and what it leaves the next phase its [notes](roadmap-P43-block-model-notes.md).
-
 ## P8 — `--inserts` and `--column-inserts` rows
 
 **Inbox:** [`roadmap-P8-inserts-inbox.md`](roadmap-P8-inserts-inbox.md) — facts earlier
@@ -746,10 +736,11 @@ phases filed for this one. Drain it when grilling this phase.
 the compatibility matrix in `docs/design/pg-dump-compatibility.md` turns up as
 it fills in via the fixture tooling. A second row-source implementation feeding
 the same batch layer, and its target is **already located and attributed** —
-`InsertRun::table` and `row_count` come out of the map, so this phase adds
+`InsertRun::table` and its record's `row_count` come out of the map, so this phase adds
 parsing, not scanning. The scan it extends, `map::statement::StatementScan`,
-holds `KD9`'s three untaken cuts. A run's record is P43's `BlockRecord`,
-which this phase fills rather than designs.
+holds `KD9`'s three untaken cuts. A run's record is a `BlockRecord`
+([`decisions.md`](decisions.md), "D168"), which this phase fills rather than
+designs.
 
 **Not CSV-format `COPY` blocks** — see "Permanent non-goals" above. This phase
 is `--inserts`, and nothing else that once sat beside it.
@@ -835,7 +826,8 @@ P42 adapts directory and tar to it. The shared model is most of the cost:
   I2's partition-root marker read from the entry.
 - **Entry-relative addressing.** A raw file offset is not a resumable position
   inside a compressed stream, so `ResumeToken` stays opaque and the cache gains
-  an entry-relative addressing mode: an entry arm of P43's `BlockAddress`.
+  an entry-relative addressing mode: an entry arm of `BlockAddress`
+  ([`decisions.md`](decisions.md), "D167").
 - **Parallelism by entry**, a compressed entry not being split across readers.
 - **Per-entry decompression.** An archive compresses internally, so the layer
   decompresses an entry rather than a file, and there is no whole-file byte

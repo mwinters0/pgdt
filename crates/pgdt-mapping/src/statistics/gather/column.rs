@@ -78,6 +78,8 @@ impl ColumnGatherer {
     /// group of the values past `tier`, where the type cannot hold every one;
     /// and, as for every tracked column, its NULLs and text bytes per group
     /// ([`ColumnStatistics`]).
+    // Each argument is a resolved column's part; the tests build a gatherer
+    // from a bare `ComparisonPlan`, with no resolved column to take whole.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         declared_type: Option<String>,

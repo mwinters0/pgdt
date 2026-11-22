@@ -33,7 +33,9 @@ pub(in crate::stream) enum SegmentEntry {
 /// straddling a cut belongs to the piece before it, once.
 #[derive(Debug, Clone)]
 pub(in crate::stream) struct Segment {
-    /// What the block this piece is of holds rows of.
+    /// What the block this piece is of holds rows of, cloned rather than
+    /// shared: a header is a name and its columns, and what made cloning a
+    /// block costly was its record (`docs/design/decisions.md`, "D168").
     pub(in crate::stream) header: CopyHeader,
     /// Where that block is. **Its record is not held**: nothing reading a
     /// segment needs it once [`ReplayPlan::new`](super::plan::ReplayPlan::new)

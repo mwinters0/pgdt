@@ -110,7 +110,8 @@ pub struct SpanText {
 
 /// The payload behind [`SpanBody::Data`] — see that variant's docs for why
 /// one `Data` span kind covers all three producers despite them not sharing a
-/// shape.
+/// shape. `Copy` holds its block unboxed: a block is smaller than
+/// [`SpanBody::Table`], so a box would not shrink a span.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataBlock {
     Copy(CopyBlock),

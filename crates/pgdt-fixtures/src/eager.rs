@@ -134,6 +134,8 @@ async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Resu
 /// and stopped by nothing. Answers whether it read the block, as that step
 /// does, a refusal included; it is handed no cache, so persists nothing and
 /// names none.
+// The parameters it had beside the pass: it opens none, so there is no pass
+// context to take.
 #[allow(clippy::too_many_arguments)]
 pub async fn backfill_block(
     source: &dyn ByteRangeSource,

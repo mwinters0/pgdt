@@ -191,6 +191,9 @@ impl Reader {
     }
 
     /// The next `bytes` of field `column`, `ends` where they are its last.
+    /// `gather` is handed in, spilled on the fast path: the reader holding it
+    /// instead is a saving resting on codegen (`docs/design/decisions.md`,
+    /// "D108").
     pub(super) fn fold(
         &mut self,
         column: usize,

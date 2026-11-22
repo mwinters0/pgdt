@@ -14,8 +14,9 @@ facts filed by destination".
 around a loaded cache's statistics, and the replay, carved once that pass has
 settled the table, around the settled table's — those its `Table` and its plan
 keep by `Arc` (`TablePartitions::under`). Nothing the replay gathers is billed:
-`Segment::new` in `crates/pgdt-query/src/stream/replay/segment.rs` drops a
-block's statistics from each segment, and the replay gathers none.
+a `Segment` (`crates/pgdt-query/src/stream/replay/segment.rs`) holds its block's
+header and address and no record ([`decisions.md`](decisions.md), "D168"), and
+the replay gathers none.
 
 **Why P21 cares.** A gather during the replay adds to what its carving billed,
 which is fixed before a row is read: what it keeps or merges into a matched
@@ -32,7 +33,10 @@ nothing.
 location and row count, no census, no statistics — and a query over it maps
 that table's blocks at the data level for itself, census and count only,
 holding them for the query and writing nothing to the cache
-([`decisions.md`](decisions.md), "D35").
+([`decisions.md`](decisions.md), "D35"). That census is a re-read under the one
+open's `Policy::Rereads(Reread::Censuses)` (`crates/pgdt-mapping/src/open.rs`),
+so a gather there is one more `Reread` arm, not a host of its own
+([`decisions.md`](decisions.md), "D170").
 
 **Why P21 cares.** That pass reads every row of the table already, the case
 where a query-time gather observes a column completely; whether it gathers,

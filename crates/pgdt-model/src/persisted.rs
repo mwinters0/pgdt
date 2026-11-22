@@ -13,6 +13,12 @@
 //! contracts over a block's rows, the diagnostics and TimescaleDB's recipe.
 //! A persisted type's field is private to the crate where its meaning is read
 //! only through a method beside it.
+//!
+//! A module tree, not a crate: no layering rule needs the shapes apart from
+//! what reads them (`docs/design/decisions.md`, "D68"), and
+//! `persisted_index_is_pinned_to_the_format_version` catches a bump a fixture
+//! shows. So a shape's doc links to its reader beside the tree, against the
+//! module edges.
 
 pub(crate) mod block;
 pub(crate) mod catalog;

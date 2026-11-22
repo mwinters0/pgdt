@@ -114,12 +114,12 @@ three predicate-column refusals, `UnknownProjectionColumn`, and
 `PartitionThroughRoot` and `PartitionsThroughRoot` each carry a
 `header_offsets: Vec<u64>`. Each is a display site, which prints the block's
 address (D167). Core can name no model type (D68, D74), so it cannot hold the
-`BlockAddress` that P43 places in `pgdt-model`.
+`BlockAddress` that `pgdt-model` holds.
 
 **Why P41 cares.** An archive block's address is an entry in the TOC, not a
 header offset, so each of these errors needs an address core can print. The
 options to grill are a display type core owns, an address rendered to a string
 by the raiser, or the variants leaving core.
 
-**Origin.** The review of 43.3's `CachedBlockChanged` call, 2026-11-20.
+**Origin.** A review of `CachedBlockChanged` as a display site, 2026-11-20.
 *Contingent on* `crates/pgdt-core/src/error.rs`.

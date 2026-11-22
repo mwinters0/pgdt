@@ -27,7 +27,9 @@ use crate::{BlockGathered, BlockRecord, LongestLine};
 /// [`Self::finish`]es it into the block's record; a leader splitting the block
 /// hands each piece one [`Self::piece`] made, a `Recorder<dyn RowObserver>`,
 /// and [`Self::absorb`]s them in file order. Which of the two a recorder is,
-/// its type says: a piece's can neither finish nor split.
+/// its type says: a piece's can neither finish nor split. One type generic
+/// over its observer rather than two composing a shared row part, a piece's
+/// recorder holding each field as a block's does.
 pub struct Recorder<O: ?Sized = dyn BlockObserver> {
     /// The block's first data byte, which its observer places a row against.
     data_offset: u64,
